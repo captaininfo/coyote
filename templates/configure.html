@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Coyote Configuration</title>
+    <style>
+        /* Basic styling for the form */
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f2f2f2;
+        }
+        .container {
+            width: 50%;
+            margin: 50px auto;
+            background-color: #fff;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            text-align: center;
+        }
+        form label {
+            display: block;
+            margin-top: 15px;
+            font-weight: bold;
+        }
+        form input[type="text"],
+        form input[type="password"],
+        form input[type="url"] {
+            width: 100%;
+            padding: 8px;
+            margin-top: 5px;
+        }
+        form button {
+            margin-top: 20px;
+            padding: 10px 15px;
+            background-color: #2980b9;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+        }
+        .message {
+            color: red;
+            margin-top: 10px;
+        }
+        .flash {
+            color: green;
+            font-weight: bold;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Configure Coyote</h1>
+        <!-- Display flash messages -->
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
+        <form method="post">
+            <!-- Hypothes.is Credentials -->
+            <label for="hypothesis_username">Hypothes.is Username:</label>
+            <input type="text" id="hypothesis_username" name="hypothesis_username">
+
+            <label for="hypothesis_token">Hypothes.is API Token:</label>
+            <input type="text" id="hypothesis_token" name="hypothesis_token">
+
+            <!-- Neo4j Credentials -->
+            <label for="neo4j_uri">Neo4j URI:</label>
+            <input type="url" id="neo4j_uri" name="neo4j_uri" placeholder="bolt://localhost:7687" required>
+
+            <label for="neo4j_username">Neo4j Username:</label>
+            <input type="text" id="neo4j_username" name="neo4j_username" required>
+
+            <label for="neo4j_password">Neo4j Password:</label>
+            <input type="password" id="neo4j_password" name="neo4j_password" required>
+
+            <!-- Submit Button -->
+            <button type="submit">Save Configuration</button>
+        </form>
+
+        <!-- Fetch Hypothes.is Data Button -->
+        <form action="/fetch_hypothesis_data" method="get">
+            <button type="submit">Fetch Data from Hypothes.is</button>
+        </form>
+                
+    </div>
+</body>
+</html>

@@ -1,0 +1,51 @@
+# Secret keys
+coyote_secret_key.key
+coyote_encryption_key.key
+
+# Archives and backups
+Archive/
+CoyoteV2-Upload_2024-10-06/
+
+# External applications and large files
+llama_3-1/
+
+# Virtual environment
+coyote_v2-env/
+venv/
+env/
+
+# Personal records
+chatgpt_conversations/
+
+# Database files
+*.db
+
+# Runtime data and user data
+analysis_result.json
+
+# Office documents (if you choose to exclude them)
+*.odt
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs
+*.log
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# VS Code settings
+.vscode/
+
+# Environment variables file (if you have one)
+.env
+
+# Table
+wikidata_cache
