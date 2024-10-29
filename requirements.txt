@@ -14,11 +14,13 @@ blis==0.7.11
 boltons==24.0.0
 catalogue==2.0.10
 certifi==2024.2.2
+cffi==1.17.1
 chardet==5.2.0
 charset-normalizer==3.3.2
 click==8.1.7
 cloudpathlib==0.16.0
 confection==0.1.4
+cryptography==43.0.1
 cymem==2.0.8
 Cython==0.29.37
 datasets==2.20.0
@@ -84,6 +86,7 @@ psutil==6.0.0
 py2neo==2021.2.4
 pyarrow==16.1.0
 pyarrow-hotfix==0.6
+pycparser==2.22
 pydantic==2.6.4
 pydantic_core==2.16.3
 Pygments==2.17.2

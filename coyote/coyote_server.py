@@ -4,21 +4,33 @@ import requests
 import json
 import logging
 from datetime import datetime
-from coyote import process_data_from_server
+from pathlib import Path
+from coyote.coyote_main import process_data_from_server
 
 # Import configuration functions
-from config_manager import (
+from coyote.utils.config_manager import (
     store_setting,
     load_secret_key,
     load_credentials,
-    connect_to_neo4j
 )
 
-app = Flask(__name__)
+# Get the project root directory (one level up from this file)
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Define the data directory
+DATA_DIR = BASE_DIR / 'data'
+
+# Define the templates directory
+TEMPLATE_DIR = BASE_DIR / 'templates'
+
+app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 app.secret_key = load_secret_key()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+LOGS_DIR = DATA_DIR / 'logs'
+LOG_FILE = LOGS_DIR / 'coyote_server.log'
+LOGS_DIR.mkdir(parents=True, exist_ok=True)  # Ensure logs directory exists
+logging.basicConfig(filename=str(LOG_FILE), level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Enable CORS with restricted origins (adjust origins as needed)
@@ -70,8 +82,9 @@ def get_latest_timestamp():
     Returns:
         str or None: The latest timestamp in ISO format, or None if not found.
     """
+    analysis_file = DATA_DIR / 'analysis_result.json'
     try:
-        with open('analysis_result.json', 'r') as file:
+        with analysis_file.open('r') as file:
             data = json.load(file)
         # Filter entries with dataSource set to "Hypothesis" and collect timestamps
         hypothesis_timestamps = [
@@ -224,4 +237,4 @@ def fetch_hypothesis_data():
 
 if __name__ == '__main__':
     # Use threaded mode and disable debug for production-like environment
-    app.run(debug=False, threaded=True)
+    app.run(debug=True, threaded=True)
