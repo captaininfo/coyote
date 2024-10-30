@@ -1,7 +1,8 @@
-# coyote.py
+# coyote_main.py
 
 import json
 import logging
+import uuid  # Import uuid for generating UUIDs
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -56,7 +57,7 @@ def append_to_json_file(file_path: Path, data: Dict[str, Any]) -> None:
             with file_path.open("w", encoding='utf-8') as file:
                 json.dump([data], file, indent=4)
     except Exception as e:
-        logger.error(f"Failed to append data to {file_path}: {e}")
+        logger.error(f"Failed to append data to {file_path}: {e}", exc_info=True)
         raise
 
 
@@ -69,6 +70,7 @@ def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
     """
     for annotation in annotations:
         try:
+            event_id = str(uuid.uuid4())  # Generate a UUID for each annotation
             text = annotation.get('text', '')
             topics_data = get_topic_from_text(text) if text else {"topics_with_weights": {}, "mapped_topics": []}
             ner_data = get_ner_from_text(text) if text else {"topics_with_weights": {}, "mapped_topics": []}
@@ -83,6 +85,7 @@ def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
             highlighted_ner_data = get_ner_from_text(highlighted_text) if highlighted_text else {"topics_with_weights": {}, "mapped_topics": []}
 
             annotation_data = {
+                "event_id": event_id,  # Include event_id in the data
                 "timestamp": annotation['created'],
                 "event": "User annotated webpage",
                 "dataSource": "Hypothesis",
@@ -101,9 +104,14 @@ def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
                 "visibility": "public" if "group:__world__" in annotation['permissions']['read'] else "private"
             }
             append_to_json_file(ANALYSIS_FILE, annotation_data)
-            logger.debug(f"Processed annotation ID: {annotation['id']}")
+            # Record the event_id using coyote_state_manager.py
+            record_event_id(event_id)
+            logger.debug(f"Processed annotation ID: {annotation['id']} with event_id: {event_id}")
         except Exception as e:
-            logger.error(f"Error processing annotation ID {annotation.get('id')}: {e}")
+            logger.error(f"Error processing annotation ID {annotation.get('id')}: {e}", exc_info=True)
+
+    # Trigger json_to_neo4j.py after processing all annotations
+    trigger_json_to_neo4j()
 
 
 def is_google_serp(url: str) -> bool:
@@ -132,12 +140,15 @@ def process_data_from_server(data: Dict[str, Any]) -> Dict[str, Any]:
     if data.get('event') == "User annotated webpage":
         process_hypothesis_annotations(data['annotations'])
     else:
-        results = {
-            "timestamp": data['timestamp'],
-            "event": data.get('event'),
-            "dataSource": data.get('dataSource', 'Coyote Browser Extension')
-        }
         try:
+            event_id = str(uuid.uuid4())  # Generate a UUID for the event
+            results = {
+                "event_id": event_id,  # Include event_id in the data
+                "timestamp": data['timestamp'],
+                "event": data.get('event'),
+                "dataSource": data.get('dataSource', 'Coyote Browser Extension')
+            }
+
             if data['event'] == 'User starts or modifies a search':
                 purpose = data.get('purpose', '')
                 search_terms = data.get('searchTerms', '')
@@ -197,7 +208,7 @@ def process_data_from_server(data: Dict[str, Any]) -> Dict[str, Any]:
                         "webpage_relevanceScores": relevance_score
                     })
 
-            elif data['event'] == 'user clicks hyperlink':
+            elif data['event'] == 'User clicks hyperlink':
                 hyperlink_text = data.get('linkText', '')
                 hyperlink_topics_data = get_topic_from_text(hyperlink_text)
                 hyperlink_ner_data = get_ner_from_text(hyperlink_text)
@@ -217,12 +228,37 @@ def process_data_from_server(data: Dict[str, Any]) -> Dict[str, Any]:
                 })
 
             append_to_json_file(ANALYSIS_FILE, results)
-            logger.debug(f"Processed event: {data.get('event')}")
+            # Record the event_id using coyote_state_manager.py
+            record_event_id(event_id)
+            # Trigger json_to_neo4j.py
+            trigger_json_to_neo4j()
+            logger.debug(f"Processed event: {data.get('event')} with event_id: {event_id}")
             return {"status": "success", "message": "Data processed and stored."}
 
         except Exception as e:
             logger.error(f"Error processing data: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
+
+
+def record_event_id(event_id: str) -> None:
+    """
+    Record the event_id in the state manager by adding it to the event queue.
+
+    Args:
+        event_id (str): The unique identifier of the event.
+    """
+    from coyote.utils.coyote_state_manager import CoyoteStateManager
+    state_manager = CoyoteStateManager()
+    state_manager.add_event_to_queue(event_id)  # Use add_event_to_queue instead of mark_event_as_processed
+    state_manager.close()
+
+
+def trigger_json_to_neo4j() -> None:
+    """
+    Trigger the json_to_neo4j.py script to process new events.
+    """
+    from coyote.neo4j_integration.json_to_neo4j import main as json_to_neo4j_main
+    json_to_neo4j_main()
 
 
 def main() -> None:
