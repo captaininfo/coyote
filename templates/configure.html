@@ -10,10 +10,10 @@
             background-color: #f2f2f2;
         }
         .container {
-            width: 50%;
+            width: 60%;
             margin: 50px auto;
             background-color: #fff;
-            padding: 20px;
+            padding: 30px;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
         }
         h1 {
@@ -48,6 +48,41 @@
             font-weight: bold;
             text-align: center;
         }
+        /* Additional styling */
+        p {
+            line-height: 1.6;
+        }
+        ol, ul {
+            margin-left: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        #feedbackMessage {
+            color: green;
+            font-weight: bold;
+        }
+        a {
+            color: #2980b9;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        button:hover {
+            background-color: #1f6391;
+        }
+        code {
+            background-color: #f2f2f2;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+        section {
+            margin-top: 30px;
+        }
+        hr {
+            margin-top: 40px;
+        }
     </style>
 </head>
 <body>
@@ -60,14 +95,9 @@
             {% endif %}
         {% endwith %}
         <form method="post">
-            <!-- Hypothes.is Credentials -->
-            <label for="hypothesis_username">Hypothes.is Username:</label>
-            <input type="text" id="hypothesis_username" name="hypothesis_username">
-
-            <label for="hypothesis_token">Hypothes.is API Token:</label>
-            <input type="text" id="hypothesis_token" name="hypothesis_token">
-
             <!-- Neo4j Credentials -->
+            <h2>Connect to Neo4j</h2>
+            <p>Before Coyote can record your data, you must create a new Neo4j database, which includes creating a username and password.</p>
             <label for="neo4j_uri">Neo4j URI:</label>
             <input type="url" id="neo4j_uri" name="neo4j_uri" placeholder="bolt://localhost:7687" required>
 
@@ -77,15 +107,49 @@
             <label for="neo4j_password">Neo4j Password:</label>
             <input type="password" id="neo4j_password" name="neo4j_password" required>
 
+            <p>&nbsp;</p>
+            <hr>
+            <p>&nbsp;</p>
+            <!-- Hypothes.is Credentials -->
+            <h2>Connect to Hypothes.is (Optional)</h2>
+            <p>Hypothes.is is a social web annotation tool. Connecting to a Hypothes.is account is optional, but the data it generates will create a clearer picture of your learning and information behavior.</p>
+
+            <section>
+                <h3>Step 1: Log in to Hypothes.is to get your username and API authentication token.</h3>
+                <p><strong><a href="https://hypothes.is/login" target="_blank" rel="noopener noreferrer">Log in to Hypothes.is</a></strong>. The login page will open in a new browser tab. Your Hypothes.is username is displayed at the top right corner of the Hypothes.is website after you log in. It's also the part of your profile URL that comes after <code>https://hypothes.is/users/</code>. After logging in to Hypothes.is and getting your username, return to this page.</p>
+                <p><strong><a href="https://hypothes.is/account/developer" target="_blank" rel="noopener noreferrer">Get your Hypothes.is API token</a></strong>. The Hypothes.is Developer page will open in a new tab. There, you'll find your personal API token. Highlight and copy the token.</li>
+            </section>
+
+            <section>
+                <h3>Step 2: Enter Your Hypothes.is Username and API Token</h3>
+                <div class="form-group">
+                    <label for="hypothesis_username">Hypothes.is Username:</label>
+                    <input type="text" id="hypothesis_username" name="hypothesis_username" placeholder="Enter your Hypothes.is username" required>
+                </div>
+                <div class="form-group">
+                    <label for="hypothesis_token">Hypothes.is API Token:</label>
+                    <input type="password" id="hypothesis_token" name="hypothesis_token" placeholder="Enter your Hypothes.is API Token" required>
+                </div>
+            </section>
+
             <!-- Submit Button -->
             <button type="submit">Save Configuration</button>
         </form>
 
+
         <!-- Fetch Hypothes.is Data Button -->
-        <form action="/fetch_hypothesis_data" method="get">
-            <button type="submit">Fetch Data from Hypothes.is</button>
-        </form>
-                
+        <section>
+            <hr>
+            <p>&nbsp;</p>
+            <h2>Fetch Your Hypothes.is Data</h2>
+            <p>Now that your account is connected, you can now use Hypothes.is to annotate web pages as you browse. Coyote will integrate your annotations into its analysis, enhancing your research by connecting your notes, questions, and highlights across different sources.</p>
+            <p>To pull your annotations into Coyote, you'll need to click the button below to fetch the data. Note that if you have an existing Hypothes.is account with existing data, the first time you fetch your data may take a significant amount of time.</p>
+            <form action="/fetch_hypothesis_data" method="get">
+                <button type="submit">Fetch Data from Hypothes.is</button>
+            </form>
+            <p id="feedbackMessage" aria-live="polite"></p>
+        </section>
+
     </div>
 </body>
 </html>
