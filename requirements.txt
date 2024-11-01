@@ -1,6 +1,7 @@
 accelerate==0.31.0
 aiohttp==3.9.5
 aiosignal==1.3.1
+amqp==5.2.0
 angle-emb==0.4.5
 annotated-types==0.6.0
 async-timeout==4.0.3
@@ -8,16 +9,21 @@ attrs==23.2.0
 beautifulsoup4==4.12.3
 bert-extractive-summarizer==0.10.1
 bertopic==0.16.2
+billiard==4.2.1
 bitsandbytes==0.43.1
 blinker==1.7.0
 blis==0.7.11
 boltons==24.0.0
 catalogue==2.0.10
+celery==5.4.0
 certifi==2024.2.2
 cffi==1.17.1
 chardet==5.2.0
 charset-normalizer==3.3.2
 click==8.1.7
+click-didyoumean==0.3.1
+click-plugins==1.1.1
+click-repl==0.3.0
 cloudpathlib==0.16.0
 confection==0.1.4
 cryptography==43.0.1
@@ -28,6 +34,7 @@ dill==0.3.8
 docker-pycreds==0.4.0
 einops==0.8.0
 en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
+exceptiongroup==1.2.2
 filelock==3.13.3
 Flask==3.0.2
 Flask-Cors==4.0.0
@@ -39,12 +46,14 @@ GitPython==3.1.43
 hdbscan==0.8.37
 huggingface-hub==0.22.0
 idna==3.6
+iniconfig==2.0.0
 interchange==2021.0.4
 isodate==0.6.1
 itsdangerous==2.1.2
 Jinja2==3.1.3
 joblib==1.3.2
 keybert==0.8.5
+kombu==5.4.2
 langcodes==3.3.0
 llvmlite==0.43.0
 markdown-it-py==3.0.0
@@ -79,8 +88,10 @@ peft==0.11.1
 pillow==10.3.0
 platformdirs==4.2.2
 plotly==5.22.0
+pluggy==1.5.0
 preshed==3.0.9
 prettytable==3.10.0
+prompt_toolkit==3.0.48
 protobuf==5.27.1
 psutil==6.0.0
 py2neo==2021.2.4
@@ -92,11 +103,13 @@ pydantic_core==2.16.3
 Pygments==2.17.2
 pynndescent==0.5.13
 pyparsing==3.1.2
+pytest==8.3.3
 python-dateutil==2.9.0.post0
 pytz==2024.1
 PyYAML==6.0.1
 rake-nltk==1.0.6
 rdflib==7.0.0
+redis==5.2.0
 regex==2023.12.25
 requests==2.32.3
 rich==13.7.1
@@ -120,6 +133,7 @@ tenacity==8.4.1
 thinc==8.2.3
 threadpoolctl==3.4.0
 tokenizers==0.15.2
+tomli==2.0.2
 torch==2.2.2
 tqdm==4.66.4
 transformers==4.39.1
@@ -129,6 +143,7 @@ typing_extensions==4.10.0
 tzdata==2024.1
 umap-learn==0.5.6
 urllib3==2.2.1
+vine==5.1.0
 wandb==0.17.2
 wasabi==1.1.2
 wcwidth==0.2.13

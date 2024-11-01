@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  coyote:
+    build: .
+    container_name: coyote_app
+    ports:
+      - "5000:5000"  # Host port : Container port
+    volumes:
+      - ./data:/app/data  # Persist data like analysis_result.json and SQLite DB
+    depends_on:
+      - neo4j
+    environment:
+      # Coyote manages Neo4j username and password via 'configure.html'.
+      - NEO4J_URI=bolt://neo4j:7687  # Internal service name
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:4.4
+    container_name: neo4j_db
+    ports:
+      - "7474:7474"  # Neo4j Browser
+      - "7687:7687"  # Bolt protocol
+    volumes:
+      - neo4j_data:/data
+    environment:
+      - NEO4J_AUTH=neo4j/test  # Initial password; can be changed via Coyote
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
