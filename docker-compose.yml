@@ -13,6 +13,8 @@ services:
     environment:
       # Coyote manages Neo4j username and password via 'configure.html'.
       - NEO4J_URI=bolt://neo4j:7687  # Internal service name
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=test  # Hard-coded password for testing
     restart: unless-stopped
 
   neo4j:

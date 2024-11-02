@@ -18,7 +18,9 @@ Coyote is an AI-powered learning record designed for individuals engaged in self
 * **Docker and Docker Compose:** Ensure you have Docker and Docker Compose installed on your system. Instructions can be found on the Docker website.
 * **Web Browser:** Firefox or Chrome to use the Coyote Browser Extension.
 
-### Getting Started
+### Getting Started: Instructions for Early Testers
+For this early testing phase, the Neo4j credentials are pre-configured in the `docker-compose.yml` file for convenience. Please be aware that these credentials are not secure, and that this process will change when Coyote is made public. 
+
 1. **Obtain Coyote:**
 The easiest way to obtain Coyote is to pull the Docker image from GitHub's Container Registry. 
 
@@ -46,11 +48,10 @@ python3 -m coyote.coyote_server`
 4. **Setting Neo4j Username and Password:**
 
 * **In Docker Container:**
-When using the containerized version of Neo4j, you can set the initial username and password through the NEO4J_AUTH environment variable in the docker-compose.yml file:
-`environment:
-  - NEO4J_AUTH=neo4j/your_password`
-
-The credentials you set here will persist across container restarts because the Neo4j data is stored in a Docker volume.
+For this early testing phase, the Neo4j credentials are pre-configured in the `docker-compose.yml` file for convenience. Please be aware that these credentials are not secure, and that this process will change when Coyote is made public. The following credentials are hard-coded:
+    * `NEO4J_URI=bolt://neo4j:7687`
+    * `NEO4J_USERNAME=neo4j`
+    * `NEO4J_PASSWORD=test`
 
 * **Standalone Neo4j Installation:**
 If you're running Neo4j outside of Docker, you'll be prompted to create a username and password when you first start the Neo4j server. These credentials will persist unless you reset the database.
