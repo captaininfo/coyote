@@ -237,4 +237,5 @@ def fetch_hypothesis_data():
 
 if __name__ == '__main__':
     # Use threaded mode and disable debug for production-like environment
-    app.run(debug=True, threaded=True)
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+

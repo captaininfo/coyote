@@ -18,7 +18,9 @@ from SPARQLWrapper import SPARQLWrapper, JSON
 
 from coyote.utils.config_manager import get_setting
 
+# Configure logging
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Global configuration
 MAX_RECURSION_DEPTH = 5  # Limit recursion depth

@@ -249,7 +249,7 @@ def record_event_id(event_id: str) -> None:
     """
     from coyote.utils.coyote_state_manager import CoyoteStateManager
     state_manager = CoyoteStateManager()
-    state_manager.add_event_to_queue(event_id)  # Use add_event_to_queue instead of mark_event_as_processed
+    state_manager.add_event_to_queue(event_id)  
     state_manager.close()
 
 

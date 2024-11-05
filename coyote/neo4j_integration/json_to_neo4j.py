@@ -34,6 +34,11 @@ def main() -> None:
     username: str = get_setting('neo4j_username')
     password: str = get_setting('neo4j_password', decrypt=True)
 
+    # Add logging to verify credentials
+    logger.info(f"Neo4j URI: {uri}")
+    logger.info(f"Neo4j Username: {username}")
+    logger.info(f"Neo4j Password: {password}")
+
     # Validate that all credentials are available
     if not all([uri, username, password]):
         logger.error("Neo4j credentials not found. Please configure the application.")
