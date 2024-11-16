@@ -21,7 +21,7 @@ from coyote.utils.config_manager import get_setting, DATA_DIR
 
 # Configure logging
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def main() -> None:
@@ -34,10 +34,11 @@ def main() -> None:
     username: str = get_setting('neo4j_username')
     password: str = get_setting('neo4j_password', decrypt=True)
 
-    # Add logging to verify credentials
+    # Add logging to verify credentials and confirm 'json_to_neo4j' is started
     logger.info(f"Neo4j URI: {uri}")
     logger.info(f"Neo4j Username: {username}")
     logger.info(f"Neo4j Password: {password}")
+    logger.info(f"json_to_neo4j's main() is started")
 
     # Validate that all credentials are available
     if not all([uri, username, password]):
@@ -89,7 +90,8 @@ def main() -> None:
                         logger.warning(f"Unknown data source: {data_source} for event_id {event_id}")
                         continue
 
-                    # Mark the event as processed
+                    # Mark the event as processed only if processing was successful
+                    logger.debug(f"Attempting to mark event_id {event_id} as processed")
                     state_manager.mark_event_as_processed(event_id)
                     logger.info(f"Processed event {event_id}")
 
@@ -209,7 +211,6 @@ def trigger_connect_to_ontology() -> None:
     from coyote.neo4j_integration.connect_to_ontology import main as connect_to_ontology_main
     connect_to_ontology_main()
     logger.info("Triggered connect_to_ontology.py to process nodes.")
-
 
 if __name__ == "__main__":
     main()

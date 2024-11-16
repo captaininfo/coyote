@@ -64,7 +64,7 @@ def process_coyote_browser_extension_data(
 
             state['last_search_terms_node_id'] = search_terms_id
 
-        elif event == "Webpage loads" and state.get('last_search_terms_node_id'):
+        elif event == "Webpage loads":
             # Extract and set timestamp and data source
             timestamp = entry.get("timestamp")
             data_source = entry.get("dataSource", "Coyote Browser Extension")
@@ -167,7 +167,7 @@ def _create_purpose_and_search_terms(
 def _create_and_link_webpage(
     tx: Transaction,
     last_webpage_node_id: Optional[int],
-    last_search_terms_node_id: int,
+    last_search_terms_node_id: Optional[int],
     url: str,
     title: str,
     summary: str,
@@ -196,12 +196,19 @@ def _create_and_link_webpage(
     Returns:
         int: The ID of the created Webpage node.
     """
-    if is_serp or last_webpage_node_id is None:
-        target_node_id = last_search_terms_node_id
-        rel_type = 'GENERATES_SERP'
-    else:
+    # Determine the target node and relationship type
+    if last_webpage_node_id is not None:
         target_node_id = last_webpage_node_id
         rel_type = 'LINKS_TO'
+    elif last_search_terms_node_id is not None:
+        target_node_id = last_search_terms_node_id
+        rel_type = 'GENERATES_SERP' if is_serp else 'INITIATES'
+    else:
+        # Handle the case where there is no previous node
+        # Option 1: Create a relationship to a 'User' node or a root node
+        # For this example, we'll assume there's a single 'User' node with id = 0
+        target_node_id = 0  # Replace with actual user node ID or handling logic
+        rel_type = 'VISITS'
 
     query = f"""
     MATCH (node) WHERE id(node) = $node_id

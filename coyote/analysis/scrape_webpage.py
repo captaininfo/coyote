@@ -40,6 +40,7 @@ def get_main_content_text(
     for tag in semantic_tags:
         contents = soup.find_all(tag)
         for content in contents:
+
             if content:
                 text = content.get_text(separator=' ', strip=True)
                 main_content.append(text)
@@ -59,12 +60,14 @@ def get_main_content_text(
     if main_content:
         combined_text = ' '.join(main_content)
         logger.debug("Combined main content text.")
+
         return combined_text
 
     # As a last resort, return the entire body text if it exists
     if soup.body:
         body_text = soup.body.get_text(separator=' ', strip=True)
         logger.debug("Returning entire body text as main content.")
+
         return body_text
 
     logger.debug("No content found in the webpage.")
@@ -84,6 +87,7 @@ def scrape_webpage(url: str) -> str:
     try:
         # Make a request to the given URL
         response = requests.get(url, timeout=10)
+
         response.raise_for_status()  # Raise an HTTPError for bad responses
 
         # Detect the encoding of the response content
@@ -101,12 +105,15 @@ def scrape_webpage(url: str) -> str:
 
         # Extract the main text content from the page
         webpage_text = get_main_content_text(soup)
+
         logger.debug(f"Extracted text content length: {len(webpage_text)} characters.")
 
         return webpage_text
     except requests.RequestException as e:
         logger.error(f"Error scraping webpage at {url}: {e}")
+
         return ""
     except Exception as e:
         logger.error(f"Unexpected error during scraping at {url}: {e}")
+        
         return ""

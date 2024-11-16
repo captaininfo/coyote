@@ -3,6 +3,7 @@ version: '3.8'
 services:
   coyote:
     build: .
+    image: ghcr.io/captaininfo/coyote:latest  # Pulls from GitHub Container Registry
     container_name: coyote_app
     ports:
       - "5000:5000"  # Host port : Container port

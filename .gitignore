@@ -49,3 +49,6 @@ Thumbs.db
 
 # Table
 wikidata_cache
+
+# Coyote's compressed Docker image
+*.tar

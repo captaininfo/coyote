@@ -14,6 +14,7 @@ from typing import List, Optional
 from coyote.utils.config_manager import DATABASE_FILE
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 class CoyoteStateManager:
@@ -86,12 +87,13 @@ class CoyoteStateManager:
             sqlite3.Error: If there is an error adding the event to the queue.
         """
         try:
-            with self._lock, self.conn:
-                self.cursor.execute('''
-                    INSERT OR IGNORE INTO event_queue (event_id)
-                    VALUES (?)
-                ''', (event_id,))
-            logger.info(f"Event {event_id} added to the processing queue.")
+            with self._lock:
+                with self.conn:
+                    self.cursor.execute('''
+                        INSERT OR IGNORE INTO event_queue (event_id)
+                        VALUES (?)
+                    ''', (event_id,))
+                logger.info(f"Event {event_id} added to the processing queue.")
         except sqlite3.Error as e:
             logger.error(f"Error adding event {event_id} to the queue: {e}", exc_info=True)
             raise
@@ -133,13 +135,14 @@ class CoyoteStateManager:
             sqlite3.Error: If there is an error updating the event status.
         """
         try:
-            with self._lock, self.conn:
-                self.cursor.execute('''
-                    UPDATE event_queue
-                    SET status = 'processed', processed_at = CURRENT_TIMESTAMP
-                    WHERE event_id = ?
-                ''', (event_id,))
-            logger.info(f"Event {event_id} marked as processed.")
+            with self._lock:
+                with self.conn:
+                    self.cursor.execute('''
+                        UPDATE event_queue
+                        SET status = 'processed', processed_at = CURRENT_TIMESTAMP
+                        WHERE event_id = ?
+                    ''', (event_id,))
+                logger.info(f"Event {event_id} marked as processed.")
         except sqlite3.Error as e:
             logger.error(f"Error marking event {event_id} as processed: {e}", exc_info=True)
             raise
@@ -189,6 +192,7 @@ class CoyoteStateManager:
         except sqlite3.Error as e:
             logger.error(f"Error retrieving pending events: {e}", exc_info=True)
             raise
+
 
     def add_node_to_queue(self, node_ids: List[int]) -> None:
         """

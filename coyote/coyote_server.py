@@ -149,7 +149,17 @@ def webpage_visit():
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data provided"}), 400
-    return process_request_data(data, "Webpage loads")
+
+    logger.info(f"Processing webpage visit data: {data}")
+
+    # Process the data and store the response
+    response = process_request_data(data, "Webpage loads")
+
+    # Log the response
+    logger.info(f"Processed webpage visit response: {response.get_json()}")
+
+    return response
+
 
 @app.route('/hyperlink_click', methods=['POST'])
 def hyperlink_click():
@@ -235,7 +245,7 @@ def fetch_hypothesis_data():
         flash('An error occurred while fetching data from Hypothes.is.')
         return redirect(url_for('configure'))
 
-if __name__ == '__main__':
-    # Use threaded mode and disable debug for production-like environment
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+# Start the Flask app
+app.run(host='0.0.0.0', port=5000, debug=True, threaded=True, use_reloader=False)
+
 

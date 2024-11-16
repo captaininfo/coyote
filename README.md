@@ -127,6 +127,8 @@ The following are features planned for future development. Community contributio
 * **Enhanced NLP Features:** Integrate additional NLP capabilities such as sentiment analysis and advanced entity recognition. Improve existing NLP. 
 * **Additional API Integrations:** Expand data aggregation to include other platforms like Obsidian, YouTube (e.g., NLP of transcripts), web-based word processors (e.g., Google Docs), or task/project management apps.
 * **Integrate an Open, Local LLM as an Interface:** Using an LLM that can be installed locally as a front-end interface and that uses Coyote as a back-end for RAG (Retrieval Augmented Generation) could be interesting. 
+* **Exclude certain URLs from NLP Analysis:** Some webpages don't need NLP analysis and shouldn't be part of the user's personal data record. For example, when users visit the "Configure Coyote" webpage, or log into Hypothes.is, those events needn't be analyzed or recorded. 
+* **Add Simpler NLP Methods for Some Events:** Some user data events in Coyote involve small text excerpts. In 'analysis_result.json', for example, values for the events keys "User starts or modifies a search" and "user clicks hyperlink" might only be a few words or sentences. BERTopic is not designed to work with small data sets. 
 
 
 ## Acknowledgements

@@ -543,6 +543,9 @@ def main() -> None:
     # Configure logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+    # Log that connect_to_ontology is started
+    logger.info("Starting ontology connection process.")
+
     initialize_cache_db()
 
     uri = get_setting('neo4j_uri')
@@ -576,5 +579,3 @@ def main() -> None:
         logger.info("Neo4j driver closed.")
 
 
-if __name__ == "__main__":
-    main()

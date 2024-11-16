@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- [Existing head content] -->
+</head>
+<body>
+    <div class="container">
+        <h1>Configure Coyote</h1>
+
+        <!-- Display flash messages -->
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
+
+        <!-- Form #1: Neo4j Credentials -->
+        <form method="post" action="/save_neo4j_credentials">
+            <h2>Connect to Neo4j</h2>
+            <!-- [Neo4j credentials fields] -->
+            <label for="neo4j_uri">Neo4j URI:</label>
+            <input type="url" id="neo4j_uri" name="neo4j_uri" placeholder="bolt://localhost:7687" required>
+
+            <label for="neo4j_username">Neo4j Username:</label>
+            <input type="text" id="neo4j_username" name="neo4j_username" required>
+
+            <label for="neo4j_password">Neo4j Password:</label>
+            <input type="password" id="neo4j_password" name="neo4j_password" required>
+
+            <button type="submit">Save Neo4j Credentials</button>
+        </form>
+
+        <hr>
+
+        <!-- Form #2: Hypothes.is Credentials (Optional) -->
+        <form method="post" action="/save_hypothesis_credentials">
+            <h2>Connect to Hypothes.is (Optional)</h2>
+            <!-- [Hypothes.is credentials fields] -->
+            <label for="hypothesis_username">Hypothes.is Username:</label>
+            <input type="text" id="hypothesis_username" name="hypothesis_username" placeholder="Enter your Hypothes.is username">
+
+            <label for="hypothesis_token">Hypothes.is API Token:</label>
+            <input type="password" id="hypothesis_token" name="hypothesis_token" placeholder="Enter your Hypothes.is API Token">
+
+            <button type="submit">Save Hypothes.is Credentials</button>
+        </form>
+
+        <hr>
+
+        <!-- Form #3: Fetch Hypothes.is Data -->
+        <form method="post" action="/fetch_hypothesis_data">
+            <h2>Fetch Your Hypothes.is Data</h2>
+            <p>Now that your account is connected, you can use Hypothes.is to annotate web pages as you browse...</p>
+            <button type="submit">Fetch Data from Hypothes.is</button>
+        </form>
+    </div>
+</body>
+</html>
