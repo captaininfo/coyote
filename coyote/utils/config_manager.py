@@ -1,3 +1,5 @@
+# config_manager.py
+
 """
 config_manager.py
 
@@ -12,20 +14,24 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from cryptography.fernet import Fernet
-from neo4j import GraphDatabase, Driver
+from neo4j import GraphDatabase
+from neo4j import Driver
 
 logger = logging.getLogger(__name__)
 
-# Get the project root directory (two levels up from this file)
-BASE_DIR = Path(__file__).resolve().parents[2]
-
-# Define the data directory
-DATA_DIR = BASE_DIR / 'data'
+# Define the base directory and data directory
+BASE_DIR: Path = Path(__file__).resolve().parent
+DATA_DIR: Path = BASE_DIR / 'data'
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Paths to key files
-KEY_FILE = DATA_DIR / 'coyote_encryption_key.key'
-SECRET_KEY_FILE = DATA_DIR / 'coyote_secret_key.key'
-DATABASE_FILE = DATA_DIR / 'coyote_state.db'
+KEY_FILE: Path = DATA_DIR / 'coyote_encryption_key.key'
+SECRET_KEY_FILE: Path = DATA_DIR / 'coyote_secret_key.key'
+
+# Paths to database files
+STATE_DB_FILE: Path = DATA_DIR / 'coyote_state.db'
+EVENT_DATA_DB_FILE: Path = DATA_DIR / 'coyote_event_data.db'
+WIKIDATA_CACHE_DB_FILE: Path = DATA_DIR / 'wikidata_cache.db'
 
 
 def load_encryption_key() -> bytes:
@@ -42,7 +48,6 @@ def load_encryption_key() -> bytes:
                 logger.debug(f"Encryption key loaded from '{KEY_FILE}'.")
         else:
             encryption_key = Fernet.generate_key()
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
             with KEY_FILE.open('wb') as key_file:
                 key_file.write(encryption_key)
             logger.info(f"Generated new encryption key and stored it in '{KEY_FILE}'.")
@@ -66,7 +71,6 @@ def load_secret_key() -> bytes:
                 logger.debug(f"Secret key loaded from '{SECRET_KEY_FILE}'.")
         else:
             secret_key = os.urandom(24)
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
             with SECRET_KEY_FILE.open('wb') as key_file:
                 key_file.write(secret_key)
             logger.info(f"Generated new secret key and stored it in '{SECRET_KEY_FILE}'.")
@@ -78,12 +82,57 @@ def load_secret_key() -> bytes:
 
 # Load or generate the encryption key
 encryption_key: bytes = load_encryption_key()
-cipher_suite = Fernet(encryption_key)
+cipher_suite: Fernet = Fernet(encryption_key)
+
+
+def get_state_db_connection() -> sqlite3.Connection:
+    """
+    Returns a connection to the state database.
+
+    Returns:
+        sqlite3.Connection: The SQLite connection object.
+    """
+    try:
+        conn = sqlite3.connect(STATE_DB_FILE)
+        return conn
+    except sqlite3.Error as e:
+        logger.error(f"Error connecting to state database: {e}")
+        raise
+
+
+def get_event_data_db_connection() -> sqlite3.Connection:
+    """
+    Returns a connection to the event data database.
+
+    Returns:
+        sqlite3.Connection: The SQLite connection object.
+    """
+    try:
+        conn = sqlite3.connect(EVENT_DATA_DB_FILE)
+        return conn
+    except sqlite3.Error as e:
+        logger.error(f"Error connecting to event data database: {e}")
+        raise
+
+
+def get_wikidata_cache_db_connection() -> sqlite3.Connection:
+    """
+    Returns a connection to the Wikidata cache database.
+
+    Returns:
+        sqlite3.Connection: The SQLite connection object.
+    """
+    try:
+        conn = sqlite3.connect(WIKIDATA_CACHE_DB_FILE)
+        return conn
+    except sqlite3.Error as e:
+        logger.error(f"Error connecting to Wikidata cache database: {e}")
+        raise
 
 
 def get_setting(setting_name: str, decrypt: bool = False) -> Optional[str]:
     """
-    Retrieves a setting value from the database.
+    Retrieves a setting value from the state database.
 
     Args:
         setting_name (str): The name of the setting.
@@ -93,7 +142,7 @@ def get_setting(setting_name: str, decrypt: bool = False) -> Optional[str]:
         Optional[str]: The setting value, or None if not found.
     """
     try:
-        with sqlite3.connect(DATABASE_FILE) as conn:
+        with get_state_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 'SELECT setting_value FROM user_settings WHERE setting_name = ?',
@@ -119,7 +168,7 @@ def get_setting(setting_name: str, decrypt: bool = False) -> Optional[str]:
 
 def store_setting(setting_name: str, setting_value: str, encrypt: bool = False) -> None:
     """
-    Stores a setting value in the database.
+    Stores a setting value in the state database.
 
     Args:
         setting_name (str): The name of the setting.
@@ -127,7 +176,7 @@ def store_setting(setting_name: str, setting_value: str, encrypt: bool = False) 
         encrypt (bool): Whether to encrypt the setting value.
     """
     try:
-        with sqlite3.connect(DATABASE_FILE) as conn:
+        with get_state_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS user_settings (
@@ -152,7 +201,7 @@ def store_setting(setting_name: str, setting_value: str, encrypt: bool = False) 
 
 def load_credentials() -> Optional[Dict[str, str]]:
     """
-    Loads Hypothes.is credentials from the database.
+    Loads Hypothes.is credentials from the state database.
 
     Returns:
         Optional[Dict[str, str]]: A dictionary with 'username' and 'token', or None if not found.
@@ -198,3 +247,7 @@ def connect_to_neo4j() -> Driver:
     except Exception as e:
         logger.error(f"Error connecting to Neo4j: {e}", exc_info=True)
         raise
+
+
+# Additional functions for event data and Wikidata cache operations can be added here
+

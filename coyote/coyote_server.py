@@ -1,3 +1,11 @@
+# coyote_server.py
+
+"""
+coyote_server.py
+
+Main server script for the Coyote application.
+"""
+
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash
 from flask_cors import CORS
 import requests
@@ -5,36 +13,140 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from coyote.coyote_main import process_data_from_server
+from typing import Any, Dict, Optional
 
-# Import configuration functions
+# Import necessary functions and modules
+from coyote.coyote_main import process_data_from_server
 from coyote.utils.config_manager import (
-    store_setting,
-    load_secret_key,
+    store_setting, 
+    load_secret_key, 
     load_credentials,
+    get_event_data_db_connection
 )
 
-# Get the project root directory (one level up from this file)
+from coyote.utils.initialize_databases import (
+    initialize_coyote_state_db,
+    initialize_coyote_event_data_db,
+    initialize_wikidata_cache_db
+)
+
+# Define base directories
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-# Define the data directory
 DATA_DIR = BASE_DIR / 'data'
-
-# Define the templates directory
 TEMPLATE_DIR = BASE_DIR / 'templates'
+LOGS_DIR = DATA_DIR / 'logs'
+LOG_FILE = LOGS_DIR / 'coyote_server.log'
 
+# Ensure directories exist
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Configure logging
+logging.basicConfig(filename=str(LOG_FILE), level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+# Initialize Flask app
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 app.secret_key = load_secret_key()
 
-# Configure logging
-LOGS_DIR = DATA_DIR / 'logs'
-LOG_FILE = LOGS_DIR / 'coyote_server.log'
-LOGS_DIR.mkdir(parents=True, exist_ok=True)  # Ensure logs directory exists
-logging.basicConfig(filename=str(LOG_FILE), level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 # Enable CORS with restricted origins (adjust origins as needed)
 CORS(app, resources={r"/*": {"origins": "*"}})  # Replace '*' with specific origins in production
+
+def initialize_databases() -> None:
+    """
+    Initializes all required databases.
+    """
+    try:
+        logger.info("Initializing databases...")
+        initialize_coyote_state_db()
+        initialize_coyote_event_data_db()
+        initialize_wikidata_cache_db()
+        logger.info("Database initialization completed.")
+    except Exception as e:
+        logger.error(f"An error occurred during database initialization: {e}", exc_info=True)
+        # Depending on your application's needs, you might exit or handle the error differently
+        # For example: sys.exit(1)
+
+def get_latest_timestamp() -> Optional[str]:
+    """
+    Retrieve the latest timestamp from analysis_result.json for Hypothes.is data.
+    Revision needed: Once the 'coyote_event_data.db' is implemented, this function should 
+    retrieve latest timestamps from there instead of 'analysis_result.json'.
+
+    Returns:
+        str or None: The latest timestamp in ISO format, or None if not found.
+    """
+    analysis_file = DATA_DIR / 'analysis_result.json'
+    try:
+        with analysis_file.open('r', encoding='utf-8') as file:
+            data = json.load(file)
+        # Filter entries with dataSource set to "Hypothesis" and collect timestamps
+        hypothesis_timestamps = [
+            item['timestamp'] for item in data
+            if item.get('dataSource') == "Hypothesis" and 'timestamp' in item
+        ]
+        if hypothesis_timestamps:
+            latest_timestamp = max(hypothesis_timestamps)
+            return latest_timestamp
+        return None
+    except FileNotFoundError:
+        logger.warning("File 'analysis_result.json' not found.")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Error parsing JSON file 'analysis_result.json': {e}")
+        return None
+    except Exception as e:
+        logger.exception(f"Unexpected error in get_latest_timestamp: {e}")
+        return None
+
+"""
+def get_latest_timestamp() -> Optional[str]:
+    
+    # Retrieve the latest timestamp of annotations from the coyote_event_data.db. 
+    # Use this function once 'coyote_events_data.db' is implemented.
+
+    # Returns:
+    #    Optional[str]: The latest timestamp in ISO format, or None if not found.
+    
+    try:
+        conn = get_event_data_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT MAX(timestamp) FROM Events
+            WHERE event_type = 'User annotated webpage' AND data_source = 'Hypothesis'
+        ''')
+        result = cursor.fetchone()
+        if result and result[0]:
+            latest_timestamp = result[0]
+            return latest_timestamp
+        return None
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error in get_latest_timestamp: {e}", exc_info=True)
+        return None
+    except Exception as e:
+        logger.exception(f"Unexpected error in get_latest_timestamp: {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+"""
+
+def process_request_data(data: Dict[str, Any], event_description: str) -> Any:
+    """
+    Helper function to process incoming data and add common fields.
+
+    Args:
+        data (dict): The incoming data to process.
+        event_description (str): Description of the event.
+
+    Returns:
+        Response: A Flask JSON response containing the processing result.
+    """
+    data['event'] = event_description
+    data['dataSource'] = "Coyote Browser Extension"
+    response = process_data_from_server(data)
+    return jsonify(response)
 
 @app.route('/configure', methods=['GET', 'POST'])
 def configure():
@@ -74,52 +186,6 @@ def configure():
 
     else:
         return render_template('configure.html')
-
-def get_latest_timestamp():
-    """
-    Retrieve the latest timestamp from analysis_result.json for Hypothes.is data.
-
-    Returns:
-        str or None: The latest timestamp in ISO format, or None if not found.
-    """
-    analysis_file = DATA_DIR / 'analysis_result.json'
-    try:
-        with analysis_file.open('r') as file:
-            data = json.load(file)
-        # Filter entries with dataSource set to "Hypothesis" and collect timestamps
-        hypothesis_timestamps = [
-            item['timestamp'] for item in data
-            if item.get('dataSource') == "Hypothesis" and 'timestamp' in item
-        ]
-        if hypothesis_timestamps:
-            latest_timestamp = max(hypothesis_timestamps)
-            return latest_timestamp
-        return None
-    except FileNotFoundError:
-        logger.warning("File 'analysis_result.json' not found.")
-        return None
-    except json.JSONDecodeError as e:
-        logger.error(f"Error parsing JSON file 'analysis_result.json': {e}")
-        return None
-    except Exception as e:
-        logger.exception(f"Unexpected error in get_latest_timestamp: {e}")
-        return None
-
-def process_request_data(data, event_description):
-    """
-    Helper function to process incoming data and add common fields.
-
-    Args:
-        data (dict): The incoming data to process.
-        event_description (str): Description of the event.
-
-    Returns:
-        Response: A Flask JSON response containing the processing result.
-    """
-    data['event'] = event_description
-    data['dataSource'] = "Coyote Browser Extension"
-    response = process_data_from_server(data)
-    return jsonify(response)
 
 @app.route('/init_search', methods=['POST'])
 def init_search():
@@ -184,8 +250,6 @@ def hyperlink_click():
         return jsonify({"error": error_message}), 400
     return process_request_data(data, "User clicks hyperlink")
 
-from flask import redirect, url_for, flash
-
 @app.route('/fetch_hypothesis_data', methods=['GET'])
 def fetch_hypothesis_data():
     """
@@ -245,7 +309,18 @@ def fetch_hypothesis_data():
         flash('An error occurred while fetching data from Hypothes.is.')
         return redirect(url_for('configure'))
 
-# Start the Flask app
-app.run(host='0.0.0.0', port=5000, debug=True, threaded=True, use_reloader=False)
+def main() -> None:
+    """
+    Main function to run the Coyote server application.
+    """
+    # Initialize databases
+    initialize_databases()
+
+    # Start the Flask app
+    logger.info("Starting the Coyote Flask server...")
+    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True, use_reloader=False)
+
+if __name__ == '__main__':
+    main()
 
 
