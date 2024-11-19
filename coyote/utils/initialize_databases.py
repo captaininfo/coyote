@@ -14,7 +14,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-# Configure logging
+# Get the logger for this module
 logger = logging.getLogger(__name__)
 
 # Define the base directory and data directory

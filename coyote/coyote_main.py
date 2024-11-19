@@ -34,13 +34,6 @@ ANALYSIS_FILE = DATA_DIR / 'analysis_result.json'
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Configure logging
-LOG_FILE = LOGS_DIR / 'coyote.log'
-logging.basicConfig(
-    filename=str(LOG_FILE),
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 
 # Get the logger for this module
 logger = logging.getLogger(__name__)

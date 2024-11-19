@@ -91,9 +91,11 @@ def process_coyote_browser_extension_data(
             )
             logger.info(f"Webpage node created with ID: {webpage_id}")
             state['last_webpage_node_id'] = webpage_id
+        return True  # Indicate success
 
     except Exception as e:
         logger.error(f"Error processing entry: {e}", exc_info=True)
+        return False  # Indicate failure
 
     return purpose_id, search_terms_id
 

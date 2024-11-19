@@ -6,11 +6,12 @@ coyote_server.py
 Main server script for the Coyote application.
 """
 
-from flask import Flask, request, jsonify, render_template, redirect, url_for, flash
+from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, g
 from flask_cors import CORS
 import requests
 import json
 import logging
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -41,8 +42,8 @@ LOG_FILE = LOGS_DIR / 'coyote_server.log'
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Configure logging
-logging.basicConfig(filename=str(LOG_FILE), level=logging.DEBUG)
+# Configure logging globally
+logging.basicConfig(filename=str(LOG_FILE), level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(module)s.%(funcName)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 # Initialize Flask app
@@ -67,46 +68,27 @@ def initialize_databases() -> None:
         # Depending on your application's needs, you might exit or handle the error differently
         # For example: sys.exit(1)
 
+
+@app.teardown_appcontext
+def close_db_connections(exception):
+    """
+    Close all database connections at the end of the request.
+    """
+    db_conns = ['state_db_conn', 'event_data_db_conn', 'wikidata_cache_db_conn']
+    for conn_name in db_conns:
+        conn = g.pop(conn_name, None)
+        if conn is not None:
+            conn.close()
+
+
 def get_latest_timestamp() -> Optional[str]:
     """
-    Retrieve the latest timestamp from analysis_result.json for Hypothes.is data.
-    Revision needed: Once the 'coyote_event_data.db' is implemented, this function should 
-    retrieve latest timestamps from there instead of 'analysis_result.json'.
+    Retrieve the latest timestamp of annotations from the coyote_event_data.db. 
+    Use this function once 'coyote_events_data.db' is implemented.
 
     Returns:
-        str or None: The latest timestamp in ISO format, or None if not found.
+       Optional[str]: The latest timestamp in ISO format, or None if not found.
     """
-    analysis_file = DATA_DIR / 'analysis_result.json'
-    try:
-        with analysis_file.open('r', encoding='utf-8') as file:
-            data = json.load(file)
-        # Filter entries with dataSource set to "Hypothesis" and collect timestamps
-        hypothesis_timestamps = [
-            item['timestamp'] for item in data
-            if item.get('dataSource') == "Hypothesis" and 'timestamp' in item
-        ]
-        if hypothesis_timestamps:
-            latest_timestamp = max(hypothesis_timestamps)
-            return latest_timestamp
-        return None
-    except FileNotFoundError:
-        logger.warning("File 'analysis_result.json' not found.")
-        return None
-    except json.JSONDecodeError as e:
-        logger.error(f"Error parsing JSON file 'analysis_result.json': {e}")
-        return None
-    except Exception as e:
-        logger.exception(f"Unexpected error in get_latest_timestamp: {e}")
-        return None
-
-"""
-def get_latest_timestamp() -> Optional[str]:
-    
-    # Retrieve the latest timestamp of annotations from the coyote_event_data.db. 
-    # Use this function once 'coyote_events_data.db' is implemented.
-
-    # Returns:
-    #    Optional[str]: The latest timestamp in ISO format, or None if not found.
     
     try:
         conn = get_event_data_db_connection()
@@ -130,7 +112,6 @@ def get_latest_timestamp() -> Optional[str]:
         if conn:
             conn.close()
 
-"""
 
 def process_request_data(data: Dict[str, Any], event_description: str) -> Any:
     """

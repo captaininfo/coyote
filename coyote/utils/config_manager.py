@@ -7,9 +7,10 @@ Module for managing configuration settings, encryption keys, and database connec
 for the Coyote application.
 """
 
+from flask import g
+import sqlite3
 import logging
 import os
-import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -17,10 +18,11 @@ from cryptography.fernet import Fernet
 from neo4j import GraphDatabase
 from neo4j import Driver
 
+# Get the logger for this module
 logger = logging.getLogger(__name__)
 
 # Define the base directory and data directory
-BASE_DIR: Path = Path(__file__).resolve().parent
+BASE_DIR: Path = Path(__file__).resolve().parent.parent  # Correct to point to the project root
 DATA_DIR: Path = BASE_DIR / 'data'
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -34,27 +36,24 @@ EVENT_DATA_DB_FILE: Path = DATA_DIR / 'coyote_event_data.db'
 WIKIDATA_CACHE_DB_FILE: Path = DATA_DIR / 'wikidata_cache.db'
 
 
+# Load or generate the encryption key
 def load_encryption_key() -> bytes:
-    """
-    Loads the encryption key from a file, or generates a new one if it doesn't exist.
-
-    Returns:
-        bytes: The encryption key.
-    """
     try:
         if KEY_FILE.exists():
             with KEY_FILE.open('rb') as key_file:
-                encryption_key = key_file.read()
-                logger.debug(f"Encryption key loaded from '{KEY_FILE}'.")
+                return key_file.read()
         else:
-            encryption_key = Fernet.generate_key()
+            key = Fernet.generate_key()
             with KEY_FILE.open('wb') as key_file:
-                key_file.write(encryption_key)
-            logger.info(f"Generated new encryption key and stored it in '{KEY_FILE}'.")
-        return encryption_key
+                key_file.write(key)
+            return key
     except Exception as e:
         logger.error(f"Error loading encryption key: {e}", exc_info=True)
         raise
+
+
+encryption_key: bytes = load_encryption_key()
+cipher_suite: Fernet = Fernet(encryption_key)
 
 
 def load_secret_key() -> bytes:
@@ -80,54 +79,55 @@ def load_secret_key() -> bytes:
         raise
 
 
-# Load or generate the encryption key
-encryption_key: bytes = load_encryption_key()
-cipher_suite: Fernet = Fernet(encryption_key)
-
-
 def get_state_db_connection() -> sqlite3.Connection:
     """
-    Returns a connection to the state database.
+    Returns a per-request connection to the state database.
 
     Returns:
         sqlite3.Connection: The SQLite connection object.
     """
-    try:
-        conn = sqlite3.connect(STATE_DB_FILE)
-        return conn
-    except sqlite3.Error as e:
-        logger.error(f"Error connecting to state database: {e}")
-        raise
+    if 'state_db_conn' not in g:
+        try:
+            g.state_db_conn = sqlite3.connect(STATE_DB_FILE)
+            g.state_db_conn.row_factory = sqlite3.Row  # Optional for dict-like access
+        except sqlite3.Error as e:
+            logger.error(f"Error connecting to state database: {e}")
+            raise
+    return g.state_db_conn
 
 
 def get_event_data_db_connection() -> sqlite3.Connection:
     """
-    Returns a connection to the event data database.
+    Returns a per-request connection to the event data database.
 
     Returns:
         sqlite3.Connection: The SQLite connection object.
     """
-    try:
-        conn = sqlite3.connect(EVENT_DATA_DB_FILE)
-        return conn
-    except sqlite3.Error as e:
-        logger.error(f"Error connecting to event data database: {e}")
-        raise
+    if 'event_data_db_conn' not in g:
+        try:
+            g.event_data_db_conn = sqlite3.connect(EVENT_DATA_DB_FILE)
+            g.event_data_db_conn.row_factory = sqlite3.Row
+        except sqlite3.Error as e:
+            logger.error(f"Error connecting to event data database: {e}")
+            raise
+    return g.event_data_db_conn
 
 
 def get_wikidata_cache_db_connection() -> sqlite3.Connection:
     """
-    Returns a connection to the Wikidata cache database.
+    Returns a per-request connection to the Wikidata cache database.
 
     Returns:
         sqlite3.Connection: The SQLite connection object.
     """
-    try:
-        conn = sqlite3.connect(WIKIDATA_CACHE_DB_FILE)
-        return conn
-    except sqlite3.Error as e:
-        logger.error(f"Error connecting to Wikidata cache database: {e}")
-        raise
+    if 'wikidata_cache_db_conn' not in g:
+        try:
+            g.wikidata_cache_db_conn = sqlite3.connect(WIKIDATA_CACHE_DB_FILE)
+            g.wikidata_cache_db_conn.row_factory = sqlite3.Row
+        except sqlite3.Error as e:
+            logger.error(f"Error connecting to Wikidata cache database: {e}")
+            raise
+    return g.wikidata_cache_db_conn
 
 
 def get_setting(setting_name: str, decrypt: bool = False) -> Optional[str]:
@@ -142,22 +142,22 @@ def get_setting(setting_name: str, decrypt: bool = False) -> Optional[str]:
         Optional[str]: The setting value, or None if not found.
     """
     try:
-        with get_state_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                'SELECT setting_value FROM user_settings WHERE setting_name = ?',
-                (setting_name,)
-            )
-            result = cursor.fetchone()
-            if result:
-                setting_value = result[0]
-                if decrypt:
-                    setting_value = cipher_suite.decrypt(setting_value.encode()).decode()
-                logger.debug(f"Retrieved setting '{setting_name}'.")
-                return setting_value
-            else:
-                logger.warning(f"Setting '{setting_name}' not found in the database.")
-                return None
+        conn = get_state_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT setting_value FROM user_settings WHERE setting_name = ?',
+            (setting_name,)
+        )
+        result = cursor.fetchone()
+        if result:
+            setting_value = result[0]
+            if decrypt:
+                setting_value = cipher_suite.decrypt(setting_value.encode()).decode()
+            logger.debug(f"Retrieved setting '{setting_name}'.")
+            return setting_value
+        else:
+            logger.warning(f"Setting '{setting_name}' not found in the database.")
+            return None
     except sqlite3.Error as e:
         logger.error(f"SQLite error in get_setting: {e}", exc_info=True)
         return None
@@ -176,23 +176,23 @@ def store_setting(setting_name: str, setting_value: str, encrypt: bool = False) 
         encrypt (bool): Whether to encrypt the setting value.
     """
     try:
-        with get_state_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS user_settings (
-                    id INTEGER PRIMARY KEY,
-                    setting_name TEXT NOT NULL UNIQUE,
-                    setting_value TEXT NOT NULL
-                )
-            ''')
-            if encrypt:
-                setting_value = cipher_suite.encrypt(setting_value.encode()).decode()
-            cursor.execute('''
-                INSERT OR REPLACE INTO user_settings (setting_name, setting_value)
-                VALUES (?, ?)
-            ''', (setting_name, setting_value))
-            conn.commit()
-            logger.info(f"Stored setting '{setting_name}' in the database.")
+        conn = get_state_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_settings (
+                id INTEGER PRIMARY KEY,
+                setting_name TEXT NOT NULL UNIQUE,
+                setting_value TEXT NOT NULL
+            )
+        ''')
+        if encrypt:
+            setting_value = cipher_suite.encrypt(setting_value.encode()).decode()
+        cursor.execute('''
+            INSERT OR REPLACE INTO user_settings (setting_name, setting_value)
+            VALUES (?, ?)
+        ''', (setting_name, setting_value))
+        conn.commit()
+        logger.info(f"Stored setting '{setting_name}' in the database.")
     except sqlite3.Error as e:
         logger.error(f"SQLite error in store_setting: {e}", exc_info=True)
     except Exception as e:
@@ -249,5 +249,17 @@ def connect_to_neo4j() -> Driver:
         raise
 
 
-# Additional functions for event data and Wikidata cache operations can be added here
+def close_db_connections(exception: Optional[Exception] = None) -> None:
+    """
+    Close all database connections at the end of the request.
+    """
+    db_conns = ['state_db_conn', 'event_data_db_conn', 'wikidata_cache_db_conn']
+    for conn_name in db_conns:
+        conn = g.pop(conn_name, None)
+        if conn is not None:
+            conn.close()
+            logger.debug(f"Closed {conn_name} connection.")
 
+
+# Example: Registering the teardown function with the Flask app.
+# app.teardown_appcontext(close_db_connections)
