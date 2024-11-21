@@ -7,14 +7,13 @@ using a SQLite database to queue and track processing.
 
 import logging
 import sqlite3
+from flask import g
 from pathlib import Path
-from threading import Lock
-from typing import List, Optional
+from typing import List
 
-from coyote.utils.config_manager import DATABASE_FILE
+from coyote.utils.config_manager import get_event_data_db_connection, get_state_db_connection
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 class CoyoteStateManager:
@@ -23,80 +22,32 @@ class CoyoteStateManager:
     including queuing for processing and updating their status.
     """
 
-    _lock = Lock()  # Thread lock to ensure thread safety
-
-    def __init__(self, db_path: Path = DATABASE_FILE) -> None:
+    def __init__(self) -> None:
         """
-        Initializes the CoyoteStateManager with the given database path.
-
-        Args:
-            db_path (Path): The path to the SQLite database file.
-
-        Raises:
-            sqlite3.Error: If there is an error connecting to the database.
+        Initializes the CoyoteStateManager.
         """
-        try:
-            self.db_path = db_path
-            self.conn = sqlite3.connect(db_path, check_same_thread=False)
-            self.cursor = self.conn.cursor()
-            self._initialize_db()
-            logger.info("Connected to the SQLite database successfully.")
-        except sqlite3.Error as e:
-            logger.error(f"Error connecting to SQLite database: {e}", exc_info=True)
-            raise
+        pass
 
-    def _initialize_db(self) -> None:
-        """
-        Initializes the database by creating necessary tables if they do not exist.
+    def get_connection(self):
+        if 'state_db_conn' not in g:
+            g.state_db_conn = get_state_db_connection()
+        return g.state_db_conn
 
-        Raises:
-            sqlite3.Error: If there is an error initializing the database.
-        """
-        try:
-            with self.conn:
-                self.cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS event_queue (
-                        event_id TEXT PRIMARY KEY,
-                        status TEXT DEFAULT 'pending',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        processed_at TIMESTAMP
-                    )
-                ''')
-                self.cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS node_processing_queue (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        node_id INTEGER NOT NULL,
-                        status TEXT DEFAULT 'pending',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        processed_at TIMESTAMP
-                    )
-                ''')
-            logger.info("Database initialized successfully.")
-        except sqlite3.Error as e:
-            logger.error(f"Error initializing the database: {e}", exc_info=True)
-            raise
 
     def add_event_to_queue(self, event_id: str) -> None:
-        """
-        Adds an event ID to the processing queue.
-
-        Args:
-            event_id (str): The unique identifier of the event.
-
-        Raises:
-            sqlite3.Error: If there is an error adding the event to the queue.
-        """
         try:
-            with self._lock:
-                with self.conn:
-                    self.cursor.execute('''
-                        INSERT OR IGNORE INTO event_queue (event_id)
-                        VALUES (?)
-                    ''', (event_id,))
-                logger.info(f"Event {event_id} added to the processing queue.")
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR IGNORE INTO event_queue (event_id)
+                VALUES (?)
+            ''', (event_id,))
+            conn.commit()
+            logger.info(f"Event {event_id} added to the processing queue.")
         except sqlite3.Error as e:
             logger.error(f"Error adding event {event_id} to the queue: {e}", exc_info=True)
             raise
+
 
     def is_event_processed(self, event_id: str) -> bool:
         """
@@ -124,28 +75,39 @@ class CoyoteStateManager:
             logger.error(f"Error checking if event {event_id} is processed: {e}", exc_info=True)
             raise
 
-    def mark_event_as_processed(self, event_id: str) -> None:
+    def mark_event_as_processing(self, event_id: str) -> None:
         """
-        Marks an event as processed in the database.
-
-        Args:
-            event_id (str): The unique identifier of the event.
-
-        Raises:
-            sqlite3.Error: If there is an error updating the event status.
+        Marks an event as being processed.
         """
         try:
-            with self._lock:
-                with self.conn:
-                    self.cursor.execute('''
-                        UPDATE event_queue
-                        SET status = 'processed', processed_at = CURRENT_TIMESTAMP
-                        WHERE event_id = ?
-                    ''', (event_id,))
-                logger.info(f"Event {event_id} marked as processed.")
+            with self.conn:
+                self.cursor.execute('''
+                    UPDATE event_queue
+                    SET status = 'processing'
+                    WHERE event_id = ?
+                ''', (event_id,))
+            logger.info(f"Event {event_id} marked as processing.")
+        except sqlite3.Error as e:
+            logger.error(f"Error marking event {event_id} as processing: {e}", exc_info=True)
+            raise
+
+
+    def mark_event_as_processed(self, event_id: str) -> None:
+        """
+        Marks an event as processed.
+        """
+        try:
+            with self.conn:
+                self.cursor.execute('''
+                    UPDATE event_queue
+                    SET status = 'processed', processed_at = CURRENT_TIMESTAMP
+                    WHERE event_id = ?
+                ''', (event_id,))
+            logger.info(f"Event {event_id} marked as processed.")
         except sqlite3.Error as e:
             logger.error(f"Error marking event {event_id} as processed: {e}", exc_info=True)
             raise
+
 
     def delete_processed_events(self) -> None:
         """
@@ -167,26 +129,16 @@ class CoyoteStateManager:
     def get_pending_events(self, limit: int = 10) -> List[str]:
         """
         Retrieves a list of pending event IDs from the queue.
-
-        Args:
-            limit (int): The maximum number of event IDs to retrieve.
-
-        Returns:
-            List[str]: A list of pending event IDs.
-
-        Raises:
-            sqlite3.Error: If there is an error retrieving pending events.
         """
         try:
-            with self._lock:
-                self.cursor.execute('''
-                    SELECT event_id FROM event_queue
-                    WHERE status = 'pending'
-                    ORDER BY created_at ASC
-                    LIMIT ?
-                ''', (limit,))
-                rows = self.cursor.fetchall()
-                event_ids = [row[0] for row in rows]
+            self.cursor.execute('''
+                SELECT event_id FROM event_queue
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT ?
+            ''', (limit,))
+            rows = self.cursor.fetchall()
+            event_ids = [row[0] for row in rows]
             logger.info(f"Retrieved {len(event_ids)} pending event(s) from the queue.")
             return event_ids
         except sqlite3.Error as e:
@@ -272,9 +224,6 @@ class CoyoteStateManager:
     def close(self) -> None:
         """
         Closes the database connection.
-
-        Raises:
-            sqlite3.Error: If there is an error closing the database connection.
         """
         try:
             self.conn.close()

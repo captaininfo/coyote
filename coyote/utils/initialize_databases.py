@@ -18,7 +18,8 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Define the base directory and data directory
-BASE_DIR: Path = Path(__file__).resolve().parent
+# Set BASE_DIR to point to the root of the project (two levels up)
+BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
 DATA_DIR: Path = BASE_DIR / 'data'
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -58,6 +59,21 @@ def initialize_coyote_state_db() -> None:
         id INTEGER PRIMARY KEY,
         setting_name TEXT NOT NULL UNIQUE,
         setting_value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS event_queue (
+        event_id TEXT PRIMARY KEY,
+        status TEXT DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS node_processing_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        node_id INTEGER NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP
     );
     '''
     initialize_database(STATE_DB_FILE, schema_sql)

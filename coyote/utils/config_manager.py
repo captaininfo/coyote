@@ -22,7 +22,7 @@ from neo4j import Driver
 logger = logging.getLogger(__name__)
 
 # Define the base directory and data directory
-BASE_DIR: Path = Path(__file__).resolve().parent.parent  # Correct to point to the project root
+BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent  # Correct to point to the project root
 DATA_DIR: Path = BASE_DIR / 'data'
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
