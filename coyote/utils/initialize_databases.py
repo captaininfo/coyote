@@ -5,6 +5,7 @@ initialize_databases.py
 
 Provides functions to initialize the databases used by the Coyote application:
 - coyote_state.db
+- coyote_event_staging.db
 - coyote_event_data.db
 - wikidata_cache.db
 """
@@ -12,19 +13,18 @@ Provides functions to initialize the databases used by the Coyote application:
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
 # Get the logger for this module
 logger = logging.getLogger(__name__)
 
 # Define the base directory and data directory
-# Set BASE_DIR to point to the root of the project (two levels up)
 BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
 DATA_DIR: Path = BASE_DIR / 'data'
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Paths to database files
 STATE_DB_FILE: Path = DATA_DIR / 'coyote_state.db'
+EVENT_STAGING_DB_FILE: Path = DATA_DIR / 'coyote_event_staging.db'
 EVENT_DATA_DB_FILE: Path = DATA_DIR / 'coyote_event_data.db'
 WIKIDATA_CACHE_DB_FILE: Path = DATA_DIR / 'wikidata_cache.db'
 
@@ -77,6 +77,43 @@ def initialize_coyote_state_db() -> None:
     );
     '''
     initialize_database(STATE_DB_FILE, schema_sql)
+
+
+def initialize_coyote_event_staging_db() -> None:
+    """
+    Initializes the coyote_event_staging.db with the required tables.
+    """
+    schema_sql = '''
+    CREATE TABLE EventStaging (
+        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        data_source TEXT NOT NULL,
+
+        -- Event-specific fields (nullable depending on event type)
+        purpose TEXT,
+        search_terms TEXT,
+        url TEXT,
+        webpage_title TEXT,
+        annotation_id TEXT,
+        annotation_text TEXT,
+        highlighted_text TEXT,
+        tags TEXT,
+        user_account TEXT,
+        groups TEXT,
+        visibility TEXT,
+        source_url TEXT,
+        destination_url TEXT,
+        link_text TEXT,
+
+        -- Generic field for any additional data (to support future event types)
+        event_payload TEXT,  -- JSON-encoded key-value pairs
+
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    '''
+    initialize_database(EVENT_STAGING_DB_FILE, schema_sql)
 
 
 def initialize_coyote_event_data_db() -> None:
@@ -164,6 +201,14 @@ def initialize_coyote_event_data_db() -> None:
         FOREIGN KEY(annotation_id) REFERENCES Annotations(annotation_id)
     );
 
+    CREATE TABLE IF NOT EXISTS EventTracking (
+        event_id TEXT PRIMARY KEY,
+        step_name TEXT,
+        step_status TEXT,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (event_id) REFERENCES Events (event_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_events_event_id ON Events(event_id);
     CREATE INDEX IF NOT EXISTS idx_entities_event_id ON Entities(event_id);
     CREATE INDEX IF NOT EXISTS idx_topics_event_id ON Topics(event_id);
@@ -194,6 +239,7 @@ def main() -> None:
     """
     logger.info("Starting database initialization...")
     initialize_coyote_state_db()
+    initialize_coyote_event_staging_db()
     initialize_coyote_event_data_db()
     initialize_wikidata_cache_db()
     logger.info("Database initialization completed.")

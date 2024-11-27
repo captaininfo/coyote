@@ -543,9 +543,9 @@ def trigger_json_to_neo4j() -> None:
     Trigger the json_to_neo4j.py script to process new events.
     """
     logger.info("'coyote_main' triggering json_to_neo4j.")
-    from coyote.neo4j_integration.json_to_neo4j import main as json_to_neo4j_main
+    from coyote.neo4j_integration.events_to_neo4j import main as events_to_neo4j_main
     try:
-        json_to_neo4j_main()
+        events_to_neo4j_main()
         logger.info("Successfully triggered json_to_neo4j.")
     except Exception as e:
         logger.error(f"Error triggering json_to_neo4j: {e}", exc_info=True)

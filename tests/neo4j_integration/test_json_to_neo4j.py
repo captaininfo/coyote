@@ -4,7 +4,7 @@ import pytest
 import json
 from unittest.mock import patch, MagicMock, mock_open
 from pathlib import Path
-from coyote.neo4j_integration.json_to_neo4j import read_json, main
+from coyote.neo4j_integration.events_to_neo4j import read_json, main
 
 
 # Test for `read_json`
