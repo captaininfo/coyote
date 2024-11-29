@@ -8,9 +8,10 @@ Handles writing event data to the database for the Coyote application.
 
 import sqlite3
 import logging
+import json
 from pathlib import Path
 from typing import Dict, Any
-from coyote.utils.config_manager import get_event_data_db_connection
+from coyote.utils.config_manager import get_event_data_db_connection, get_staging_db_connection
 
 # Define base directories
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,6 +24,59 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Get the logger for this module
 logger = logging.getLogger(__name__)
+
+def insert_staging_event(event_data: Dict[str, Any]) -> None:
+    """
+    Inserts an event into the EventStaging table in coyote_event_staging.db.
+
+    Args:
+        event_data (Dict[str, Any]): A dictionary containing event data.
+    """
+    try:
+        # Connect to coyote_event_staging.db
+        conn = get_staging_db_connection()
+        cursor = conn.cursor()
+
+        # Insert the event data into the EventStaging table
+        cursor.execute('''
+            INSERT INTO EventStaging (
+                event_id, event_type, timestamp, data_source, purpose, search_terms,
+                url, webpage_title, annotation_id, annotation_text,
+                highlighted_text, tags, user_account, groups, visibility,
+                source_url, destination_url, link_text, event_payload
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            event_data.get('event_id', ''),
+            event_data.get('event', ''),
+            event_data.get('timestamp', ''),
+            event_data.get('dataSource', ''),
+            event_data.get('purpose', None),
+            event_data.get('search_terms', None),
+            event_data.get('url', None),
+            event_data.get('webpage_title', None),
+            event_data.get('annotation_id', None),
+            event_data.get('annotation_text', None),
+            event_data.get('highlighted_text', None),
+            event_data.get('tags', None),
+            event_data.get('user_account', None),
+            event_data.get('groups', None),
+            event_data.get('visibility', None),
+            event_data.get('source_url', None),
+            event_data.get('destination_url', None),
+            event_data.get('link_text', None),
+            json.dumps(event_data.get('event_payload', {})) if event_data.get('event_payload') else None
+        ))
+
+        # Commit the transaction
+        conn.commit()
+        logger.debug(f"Inserted event {event_data.get('event_id')} into EventStaging table.")
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error in insert_staging_event: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"Error in insert_staging_event: {e}", exc_info=True)
+    finally:
+        if conn:
+            conn.close()
 
 
 def insert_event(event_data: Dict[str, Any]) -> None:

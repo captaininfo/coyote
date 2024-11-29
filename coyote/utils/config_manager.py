@@ -34,6 +34,7 @@ SECRET_KEY_FILE: Path = DATA_DIR / 'coyote_secret_key.key'
 STATE_DB_FILE: Path = DATA_DIR / 'coyote_state.db'
 EVENT_DATA_DB_FILE: Path = DATA_DIR / 'coyote_event_data.db'
 WIKIDATA_CACHE_DB_FILE: Path = DATA_DIR / 'wikidata_cache.db'
+STAGING_DB_FILE: Path = DATA_DIR / 'coyote_event_staging.db'
 
 
 # Load or generate the encryption key
@@ -79,55 +80,82 @@ def load_secret_key() -> bytes:
         raise
 
 
-def get_state_db_connection() -> sqlite3.Connection:
+def get_staging_db_connection() -> sqlite3.Connection:
     """
-    Returns a per-request connection to the state database.
+    Returns a per-request connection to the event staging database.
+
+    This connection uses Flask's `g` to ensure thread safety and correct management 
+    within the context of an HTTP request.
 
     Returns:
         sqlite3.Connection: The SQLite connection object.
     """
-    if 'state_db_conn' not in g:
+    if 'staging_db_conn' not in g:
         try:
-            g.state_db_conn = sqlite3.connect(STATE_DB_FILE)
-            g.state_db_conn.row_factory = sqlite3.Row  # Optional for dict-like access
+            g.staging_db_conn = sqlite3.connect(STAGING_DB_FILE)
+            g.staging_db_conn.row_factory = sqlite3.Row
         except sqlite3.Error as e:
-            logger.error(f"Error connecting to state database: {e}")
+            logger.error(f"Error connecting to event staging database: {e}")
             raise
-    return g.state_db_conn
+    return g.staging_db_conn
+
+
+
+def get_state_db_connection() -> sqlite3.Connection:
+    """
+    Establishes and returns a direct connection to the state database.
+
+    Returns:
+        sqlite3.Connection: The SQLite connection object.
+    """
+    try:
+        conn = sqlite3.connect(STATE_DB_FILE)
+        conn.row_factory = sqlite3.Row  # Optional for dict-like access
+        logger.debug("Created direct connection to the coyote_state database.")
+        return conn
+    except sqlite3.Error as e:
+        logger.error(f"Error connecting to state database: {e}")
+        raise
 
 
 def get_event_data_db_connection() -> sqlite3.Connection:
     """
-    Returns a per-request connection to the event data database.
+    Establishes and returns a direct connection to the event data database.
+
+    This connection does not use Flask's `g` because it may be used outside of the HTTP request
+    lifecycle, such as in the state manager or other background tasks.
 
     Returns:
         sqlite3.Connection: The SQLite connection object.
     """
-    if 'event_data_db_conn' not in g:
-        try:
-            g.event_data_db_conn = sqlite3.connect(EVENT_DATA_DB_FILE)
-            g.event_data_db_conn.row_factory = sqlite3.Row
-        except sqlite3.Error as e:
-            logger.error(f"Error connecting to event data database: {e}")
-            raise
-    return g.event_data_db_conn
+    try:
+        conn = sqlite3.connect(EVENT_DATA_DB_FILE)
+        conn.row_factory = sqlite3.Row
+        logger.debug("Created direct connection to event data database.")
+        return conn
+    except sqlite3.Error as e:
+        logger.error(f"Error connecting to event data database: {e}")
+        raise
 
 
 def get_wikidata_cache_db_connection() -> sqlite3.Connection:
     """
-    Returns a per-request connection to the Wikidata cache database.
+    Establishes and returns a direct connection to the Wikidata cache database.
+
+    This connection does not use Flask's `g` because it is not used exclusively within
+    the HTTP request lifecycle and may be accessed by background tasks.
 
     Returns:
         sqlite3.Connection: The SQLite connection object.
     """
-    if 'wikidata_cache_db_conn' not in g:
-        try:
-            g.wikidata_cache_db_conn = sqlite3.connect(WIKIDATA_CACHE_DB_FILE)
-            g.wikidata_cache_db_conn.row_factory = sqlite3.Row
-        except sqlite3.Error as e:
-            logger.error(f"Error connecting to Wikidata cache database: {e}")
-            raise
-    return g.wikidata_cache_db_conn
+    try:
+        conn = sqlite3.connect(WIKIDATA_CACHE_DB_FILE)
+        conn.row_factory = sqlite3.Row
+        logger.debug("Created direct connection to Wikidata cache database.")
+        return conn
+    except sqlite3.Error as e:
+        logger.error(f"Error connecting to Wikidata cache database: {e}")
+        raise
 
 
 def get_setting(setting_name: str, decrypt: bool = False) -> Optional[str]:

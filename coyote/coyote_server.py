@@ -12,6 +12,7 @@ import requests
 import json
 import logging
 import sqlite3
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -124,10 +125,24 @@ def process_request_data(data: Dict[str, Any], event_description: str) -> Any:
     Returns:
         Response: A Flask JSON response containing the processing result.
     """
+    # Generate a unique event ID for the event
+    event_id = str(uuid.uuid4())
+    
+    # Add common metadata to the data payload
+    data['event_id'] = event_id
     data['event'] = event_description
     data['dataSource'] = "Coyote Browser Extension"
-    response = process_data_from_server(data)
-    return jsonify(response)
+    data['timestamp'] = datetime.now().isoformat()
+
+    # Insert the data into the EventStaging table in the staging database
+    from coyote.coyote_event_writer import insert_staging_event
+    try:
+        insert_staging_event(data)
+        return jsonify({"status": "success", "message": "Data received and staged."})
+    except Exception as e:
+        logger.error(f"Error inserting data into staging: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)})
+
 
 @app.route('/configure', methods=['GET', 'POST'])
 def configure():
