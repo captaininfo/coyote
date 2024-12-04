@@ -29,14 +29,21 @@ logger = logging.getLogger(__name__)
 def insert_staging_event(event_data: Dict[str, Any]) -> None:
     """
     Inserts an event into the EventStaging table in coyote_event_staging.db.
-
-    Args:
-        event_data (Dict[str, Any]): A dictionary containing event data.
     """
     try:
-        # Connect to coyote_event_staging.db
+        # Use the connection from Flask's g
         conn = get_staging_db_connection()
         cursor = conn.cursor()
+        
+        # Process specific fields to ensure SQLite-compatible types
+        highlighted_text = event_data.get('highlighted_text', None)
+        highlighted_text = highlighted_text if isinstance(highlighted_text, str) else None
+
+        tags = event_data.get('tags', None)
+        tags = json.dumps(tags) if tags else None  # Convert list to JSON string
+
+        event_payload = event_data.get('event_payload', {})
+        event_payload = json.dumps(event_payload) if event_payload else None
 
         # Insert the event data into the EventStaging table
         cursor.execute('''
@@ -48,24 +55,24 @@ def insert_staging_event(event_data: Dict[str, Any]) -> None:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             event_data.get('event_id', ''),
-            event_data.get('event', ''),
+            event_data.get('event_type', ''),
             event_data.get('timestamp', ''),
-            event_data.get('dataSource', ''),
+            event_data.get('data_source', ''),
             event_data.get('purpose', None),
             event_data.get('search_terms', None),
             event_data.get('url', None),
             event_data.get('webpage_title', None),
             event_data.get('annotation_id', None),
             event_data.get('annotation_text', None),
-            event_data.get('highlighted_text', None) if isinstance(event_data.get('highlighted_text', None), str) else None,
-            event_data.get('tags', None),
+            highlighted_text,  # Processed highlighted_text
+            tags,              # Processed tags
             event_data.get('user_account', None),
             event_data.get('groups', None),
             event_data.get('visibility', None),
             event_data.get('source_url', None),
             event_data.get('destination_url', None),
             event_data.get('link_text', None),
-            json.dumps(event_data.get('event_payload', {})) if event_data.get('event_payload') else None
+            event_payload       # Processed event_payload
         ))
 
         # Commit the transaction
@@ -75,9 +82,7 @@ def insert_staging_event(event_data: Dict[str, Any]) -> None:
         logger.error(f"SQLite error in insert_staging_event: {e}", exc_info=True)
     except Exception as e:
         logger.error(f"Error in insert_staging_event: {e}", exc_info=True)
-    finally:
-        if conn:
-            conn.close()
+
 
 
 def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
@@ -101,8 +106,8 @@ def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
             annotation_data = {
                 "event_id": event_id,
                 "timestamp": annotation['created'],
-                "event": "User annotated webpage",
-                "dataSource": "Hypothesis",
+                "event_type": "User annotated webpage",
+                "data_source": "Hypothesis",
                 "url": annotation['uri'],
                 "webpage_title": annotation['document']['title'][0] if annotation['document'].get('title') else '',
                 "annotation_id": annotation['id'],
@@ -111,14 +116,25 @@ def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
                 "tags": annotation.get('tags', []),
                 "user_account": annotation['user'],
                 "groups": annotation['group'],
-                "visibility": "public" if "group:__world__" in annotation['permissions']['read'] else "private"
+                "visibility": "public" if "group:__world__" in annotation['permissions']['read'] else "private",
+                # Add default values for missing fields
+                "purpose": None,
+                "search_terms": None,
+                "source_url": None,
+                "destination_url": None,
+                "link_text": None,
+                "event_payload": {}
             }
+
+            # Log the data being passed to insert_staging_event
+            logger.debug(f"Annotation ID: {annotation['id']} - Data passed to insert_staging_event: {annotation_data}")
 
             # Insert into the staging database
             insert_staging_event(annotation_data)
-            logger.debug(f"Processed annotation ID: {annotation['id']} with event_id: {event_id}")
+            logger.debug(f"Successfully processed annotation ID: {annotation['id']} with event_id: {event_id}")
         except Exception as e:
-            logger.error(f"Error processing annotation ID {annotation.get('id')}: {e}", exc_info=True)
+            logger.error(f"Error processing annotation ID {annotation.get('id', 'Unknown')} - Exception: {e}", exc_info=True)
+
 
 
 

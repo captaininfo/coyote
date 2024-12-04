@@ -7,7 +7,7 @@ Module for managing configuration settings, encryption keys, and database connec
 for the Coyote application.
 """
 
-from flask import g
+from flask import g, Flask
 import sqlite3
 import logging
 import os
@@ -82,22 +82,25 @@ def load_secret_key() -> bytes:
 
 def get_staging_db_connection() -> sqlite3.Connection:
     """
-    Returns a per-request connection to the event staging database.
-
-    This connection uses Flask's `g` to ensure thread safety and correct management 
-    within the context of an HTTP request.
-
-    Returns:
-        sqlite3.Connection: The SQLite connection object.
+    Retrieves or initializes a SQLite database connection for the staging database.
     """
-    if 'staging_db_conn' not in g:
+    if 'staging_db' not in g:
         try:
-            g.staging_db_conn = sqlite3.connect(STAGING_DB_FILE)
-            g.staging_db_conn.row_factory = sqlite3.Row
+            g.staging_db = sqlite3.connect(STAGING_DB_FILE)
+            g.staging_db.row_factory = sqlite3.Row  # Optional: better handling of query results
         except sqlite3.Error as e:
             logger.error(f"Error connecting to event staging database: {e}")
             raise
-    return g.staging_db_conn
+    return g.staging_db
+
+# Ensure connection cleanup at the end of the request
+app = Flask(__name__)  # Ensure your Flask app is properly initialized.
+
+@app.teardown_appcontext
+def close_staging_db_connection(exception):
+    db = g.pop('staging_db', None)
+    if db is not None:
+        db.close()
 
 
 
