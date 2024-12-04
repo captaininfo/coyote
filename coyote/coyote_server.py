@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 # Import necessary functions and modules
-from coyote.coyote_main import process_data_from_server
+from coyote.coyote_event_writer import insert_staging_event, process_hypothesis_annotations
 from coyote.utils.config_manager import (
     store_setting, 
     load_secret_key, 
@@ -27,6 +27,7 @@ from coyote.utils.config_manager import (
 )
 
 from coyote.utils.initialize_databases import (
+    initialize_coyote_event_staging_db,
     initialize_coyote_state_db,
     initialize_coyote_event_data_db,
     initialize_wikidata_cache_db
@@ -60,6 +61,7 @@ def initialize_databases() -> None:
     """
     try:
         logger.info("Initializing databases...")
+        initialize_coyote_event_staging_db()
         initialize_coyote_state_db()
         initialize_coyote_event_data_db()
         initialize_wikidata_cache_db()
@@ -125,6 +127,20 @@ def process_request_data(data: Dict[str, Any], event_description: str) -> Any:
     Returns:
         Response: A Flask JSON response containing the processing result.
     """
+
+    # Normalize key names to match database schema
+    key_mapping = {
+        "searchTerms": "search_terms",
+        "sourceURL": "source_url",
+        "destinationURL": "destination_url",
+        "linkText": "link_text",
+    }
+
+    # Map old keys to new keys
+    for old_key, new_key in key_mapping.items():
+        if old_key in data:
+            data[new_key] = data.pop(old_key)
+
     # Generate a unique event ID for the event
     event_id = str(uuid.uuid4())
     
@@ -194,6 +210,7 @@ def init_search():
         Response: JSON response with processing result.
     """
     data = request.get_json()
+    logger.debug(f"Received search event payload: {data}")
     if not data:
         return jsonify({"error": "No data provided"}), 400
     return process_request_data(data, "User starts or modifies a search")
@@ -234,6 +251,7 @@ def hyperlink_click():
         Response: JSON response with processing result or error.
     """
     data = request.get_json()
+    logger.debug(f"Received hyperlink click event payload: {data}")
     if not data:
         return jsonify({"error": "No data provided"}), 400
     logger.info(f"Received hyperlink click data: {data}")
@@ -285,13 +303,9 @@ def fetch_hypothesis_data():
         response = requests.get('https://api.hypothes.is/api/search', headers=headers, params=params)
         response.raise_for_status()
         annotations = response.json().get('rows', [])
-        current_timestamp = datetime.now().isoformat()
+        logger.debug(f"Received annotations: {annotations}")
 
-        process_data_from_server({
-            'annotations': annotations,
-            'event': "User annotated webpage",
-            'timestamp': current_timestamp
-        })
+        process_hypothesis_annotations(annotations)
 
 
         flash('Hypothes.is data fetched and processed successfully!')

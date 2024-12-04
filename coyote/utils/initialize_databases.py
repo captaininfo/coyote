@@ -85,7 +85,7 @@ def initialize_coyote_event_staging_db() -> None:
     """
     schema_sql = '''
     CREATE TABLE EventStaging (
-        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT PRIMARY KEY,
         event_type TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         data_source TEXT NOT NULL,
