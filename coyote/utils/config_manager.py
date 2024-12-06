@@ -103,6 +103,22 @@ def close_staging_db_connection(exception):
         db.close()
 
 
+def get_staging_read_connection() -> sqlite3.Connection:
+    """
+    Retrieves a read-only SQLite database connection for the staging database.
+
+    Returns:
+        sqlite3.Connection: The SQLite connection object for reading from the staging database.
+    """
+    try:
+        conn = sqlite3.connect(STAGING_DB_FILE)
+        conn.row_factory = sqlite3.Row  # Better handling of query results, enabling dictionary-like access
+        logger.debug(f"Successfully established read-only connection to {STAGING_DB_FILE}")
+        return conn
+    except sqlite3.Error as e:
+        logger.error(f"Error connecting to the staging database for read: {e}", exc_info=True)
+        raise
+
 
 def get_state_db_connection() -> sqlite3.Connection:
     """

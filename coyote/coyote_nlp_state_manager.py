@@ -1,5 +1,3 @@
-# coyote_nlp_state_manager.py
-
 """
 coyote_nlp_state_manager.py
 
@@ -8,17 +6,17 @@ State manager for managing the sequence of NLP analysis processes and orchestrat
 
 import logging
 import sqlite3
-import uuid
 from time import sleep
+from threading import Lock
 from typing import Any
-from coyote.utils.config_manager import get_event_data_db_connection
+from coyote.utils.config_manager import get_event_data_db_connection, get_staging_db_connection
 from coyote.analysis.scrape_webpage import scrape_webpage
 from coyote.analysis.summarize_text import summarize_text
 from coyote.analysis.nlp.text_ner_analysis import get_ner_from_text
 from coyote.analysis.nlp.text_bertopic_analysis import get_topic_from_text
 from coyote.analysis.relevance_calculator import calculate_relevance
 
-# Get the logger for this module
+# Get logger
 logger = logging.getLogger(__name__)
 
 class CoyoteNLPStateManager:
@@ -26,63 +24,124 @@ class CoyoteNLPStateManager:
     Manages the state and processing of user events in the Coyote application.
     """
     def __init__(self) -> None:
-        self.conn = get_event_data_db_connection()
-        self.cursor = self.conn.cursor()
+        # Database connections
+        self.staging_conn = get_staging_db_connection()
+        self.staging_cursor = self.staging_conn.cursor()
+        self.data_conn = get_event_data_db_connection()
+        self.data_cursor = self.data_conn.cursor()
+        self.lock = Lock()  # Ensure single-threaded database writes
 
     def process_pending_events(self) -> None:
         """
-        Process pending events from the 'coyote_event_staging.db' to the 'coyote_event_data.db'.
-        Perform NLP analysis and update statuses.
+        Periodically check for new events and process them.
+        """
+        while True:
+            try:
+                if self.is_event_processing():
+                    logger.info("Another event is still processing. Waiting...")
+                    sleep(15)
+                    continue
+
+                # Fetch a new event from staging that is not yet in the data database
+                self.staging_cursor.execute('''
+                    SELECT * FROM EventStaging 
+                    WHERE event_id NOT IN (SELECT event_id FROM EventData)
+                    ORDER BY created_at ASC LIMIT 1
+                ''')
+                event = self.staging_cursor.fetchone()
+
+                if event:
+                    event_id, event_type = event[0], event[2]
+                    logger.info(f"Processing event_id: {event_id}, type: {event_type}")
+
+                    # Insert into data database with 'processing' status
+                    self.insert_new_event(event_id, event)
+
+                    # Perform analyses
+                    self.perform_analysis(event_id, event_type, event)
+
+                    # Update status to 'complete'
+                    self.update_event_status(event_id, 'complete')
+                else:
+                    logger.info("No new events to process.")
+
+                sleep(15)  # Poll every 15 seconds
+
+            except sqlite3.Error as e:
+                logger.error(f"SQLite error during event processing: {e}", exc_info=True)
+
+    def is_event_processing(self) -> bool:
+        """
+        Check if there is an event currently being processed.
+        """
+        self.data_cursor.execute('''
+            SELECT COUNT(*) FROM EventData WHERE status = 'processing'
+        ''')
+        processing_count = self.data_cursor.fetchone()[0]
+        return processing_count > 0
+
+    def insert_new_event(self, event_id: str, event: Any) -> None:
+        """
+        Insert a new event into the data database with 'processing' status.
         """
         try:
-            # Get pending events from staging
-            self.cursor.execute('''
-                SELECT * FROM Events WHERE status = 'pending'
-                ORDER BY created_at ASC LIMIT 1
-            ''')
-            event = self.cursor.fetchone()
-            if event:
-                event_id, event_type = event[0], event[2]
-                # Mark as processing
-                self.update_event_status(event_id, 'processing')
-                # Call appropriate NLP tasks based on event type
-                self.perform_analysis(event_id, event_type, event)
-                # Mark as processed
-                self.update_event_status(event_id, 'processed')
-            else:
-                logger.info("No pending events to process.")
+            self.data_cursor.execute('''
+                INSERT INTO EventData (event_id, status, event_details)
+                VALUES (?, 'processing', ?)
+            ''', (event_id, str(event)))
+            self.data_conn.commit()
+            logger.info(f"Inserted event_id {event_id} into EventData with status 'processing'.")
         except sqlite3.Error as e:
-            logger.error(f"SQLite error during processing events: {e}", exc_info=True)
-        finally:
-            sleep(5)  # Poll every 5 seconds
-            self.conn.commit()
+            logger.error(f"Error inserting event_id {event_id}: {e}", exc_info=True)
 
     def update_event_status(self, event_id: str, status: str) -> None:
         """
-        Update the status of an event in the database.
+        Update the status of an event in the data database.
         """
         try:
-            self.cursor.execute('''
-                UPDATE Events SET status = ? WHERE event_id = ?
+            self.data_cursor.execute('''
+                UPDATE EventData SET status = ? WHERE event_id = ?
             ''', (status, event_id))
-            self.conn.commit()
-            logger.info(f"Updated event {event_id} status to {status}.")
+            self.data_conn.commit()
+            logger.info(f"Updated event_id {event_id} status to {status}.")
         except sqlite3.Error as e:
-            logger.error(f"SQLite error while updating status for event {event_id}: {e}", exc_info=True)
+            logger.error(f"Error updating status for event_id {event_id}: {e}", exc_info=True)
 
     def perform_analysis(self, event_id: str, event_type: str, event: Any) -> None:
         """
-        Perform NLP analysis based on event type and update the database.
+        Perform analyses on the event based on its type.
         """
-        if event_type == 'User starts or modifies a search':
-            purpose, search_terms = event[4], event[5]
-            purpose_topics_data = get_topic_from_text(purpose)
-            search_terms_topics_data = get_topic_from_text(search_terms)
-            search_terms_relevance_score = calculate_relevance(purpose_topics_data, search_terms_topics_data)
-            # Insert analysis results to coyote_event_data.db here
+        try:
+            if event_type == 'User starts or modifies a search':
+                purpose, search_terms = event[4], event[5]
 
-# Script Entry Point for Polling
+                # Perform analyses
+                purpose_topics = get_topic_from_text(purpose)
+                search_terms_topics = get_topic_from_text(search_terms)
+                relevance_score = calculate_relevance(purpose_topics, search_terms_topics)
+
+                # Write results back to the data database
+                with self.lock:
+                    self.data_cursor.execute('''
+                        UPDATE EventData
+                        SET analysis_results = ?, status = 'complete'
+                        WHERE event_id = ?
+                    ''', (str({
+                        "purpose_topics": purpose_topics,
+                        "search_terms_topics": search_terms_topics,
+                        "relevance_score": relevance_score
+                    }), event_id))
+                    self.data_conn.commit()
+
+                logger.info(f"Analysis results for event_id {event_id} written to database.")
+            else:
+                logger.warning(f"Unknown event_type {event_type} for event_id {event_id}. Skipping.")
+
+        except Exception as e:
+            logger.error(f"Error during analysis for event_id {event_id}: {e}", exc_info=True)
+            self.update_event_status(event_id, 'failed')
+
+# Entry point for the script
 if __name__ == '__main__':
     state_manager = CoyoteNLPStateManager()
-    while True:
-        state_manager.process_pending_events()
+    state_manager.process_pending_events()

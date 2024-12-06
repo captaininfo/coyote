@@ -87,7 +87,7 @@ def insert_staging_event(event_data: Dict[str, Any]) -> None:
 
 def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
     """
-    Process Hypothesis annotations and stage them in the database.
+    Process Hypothesis annotations and stage them in the staging database.
 
     Args:
         annotations (List[Dict[str, Any]]): A list of annotations from Hypothesis.
@@ -136,47 +136,15 @@ def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
             logger.error(f"Error processing annotation ID {annotation.get('id', 'Unknown')} - Exception: {e}", exc_info=True)
 
 
-
-
-def insert_event(event_data: Dict[str, Any]) -> None:
-    """
-    Inserts an event into the Events table.
-
-    Args:
-        event_data (Dict[str, Any]): A dictionary containing event data.
-    """
-    try:
-        conn = get_event_data_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO Events (event_id, timestamp, event_type, data_source)
-            VALUES (?, ?, ?, ?)
-        ''', (
-            event_data['event_id'],
-            event_data['timestamp'],
-            event_data['event_type'],
-            event_data.get('data_source', 'Coyote Browser Extension')
-        ))
-        conn.commit()
-        logger.debug(f"Inserted event {event_data['event_id']} into Events table.")
-    except sqlite3.Error as e:
-        logger.error(f"SQLite error in insert_event: {e}", exc_info=True)
-    except Exception as e:
-        logger.error(f"Error in insert_event: {e}", exc_info=True)
-    finally:
-        if conn:
-            conn.close()
-
-
-def insert_search_event(search_event_data: Dict[str, Any]) -> None:
+def insert_search_event(conn: sqlite3.Connection, search_event_data: Dict[str, Any]) -> None:
     """
     Inserts a search event into the SearchEvents table.
 
     Args:
+        conn (sqlite3.Connection): The SQLite connection to the coyote_event_data database.
         search_event_data (Dict[str, Any]): A dictionary containing search event data.
     """
     try:
-        conn = get_event_data_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO SearchEvents (event_id, purpose, search_terms, search_terms_relevance_score)
@@ -191,22 +159,17 @@ def insert_search_event(search_event_data: Dict[str, Any]) -> None:
         logger.debug(f"Inserted search event {search_event_data['event_id']} into SearchEvents table.")
     except sqlite3.Error as e:
         logger.error(f"SQLite error in insert_search_event: {e}", exc_info=True)
-    except Exception as e:
-        logger.error(f"Error in insert_search_event: {e}", exc_info=True)
-    finally:
-        if conn:
-            conn.close()
 
 
-def insert_webpage_loads_event(webpage_loads_event_data: Dict[str, Any]) -> None:
+def insert_webpage_loads_event(conn: sqlite3.Connection, webpage_loads_event_data: Dict[str, Any]) -> None:
     """
     Inserts a webpage load event into the WebpageLoads table in coyote_event_data.db.
 
     Args:
+        conn (sqlite3.Connection): The SQLite connection to the coyote_event_data database.
         webpage_loads_event_data (Dict[str, Any]): A dictionary containing webpage load event data.
     """
     try:
-        conn = get_event_data_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO WebpageLoads (event_id, url, webpage_title, webpage_summary, webpage_relevance_score)
@@ -222,22 +185,17 @@ def insert_webpage_loads_event(webpage_loads_event_data: Dict[str, Any]) -> None
         logger.debug(f"Inserted webpage load event {webpage_loads_event_data['event_id']} into WebpageLoads table.")
     except sqlite3.Error as e:
         logger.error(f"SQLite error in insert_webpage_loads_event: {e}", exc_info=True)
-    except Exception as e:
-        logger.error(f"Error in insert_webpage_loads_event: {e}", exc_info=True)
-    finally:
-        if conn:
-            conn.close()
 
 
-def insert_hyperlink_click_event(hyperlink_click_event_data: Dict[str, Any]) -> None:
+def insert_hyperlink_click_event(conn: sqlite3.Connection, hyperlink_click_event_data: Dict[str, Any]) -> None:
     """
     Inserts a hyperlink click event into the HyperlinkClicks table in coyote_event_data.db.
 
     Args:
+        conn (sqlite3.Connection): The SQLite connection to the coyote_event_data database.
         hyperlink_click_event_data (Dict[str, Any]): A dictionary containing hyperlink click event data.
     """
     try:
-        conn = get_event_data_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO HyperlinkClicks (event_id, source_url, destination_url, link_text)
@@ -252,22 +210,17 @@ def insert_hyperlink_click_event(hyperlink_click_event_data: Dict[str, Any]) -> 
         logger.debug(f"Inserted hyperlink click event {hyperlink_click_event_data['event_id']} into HyperlinkClicks table.")
     except sqlite3.Error as e:
         logger.error(f"SQLite error in insert_hyperlink_click_event: {e}", exc_info=True)
-    except Exception as e:
-        logger.error(f"Error in insert_hyperlink_click_event: {e}", exc_info=True)
-    finally:
-        if conn:
-            conn.close()
 
 
-def insert_annotation_event(annotation_event_data: Dict[str, Any]) -> None:
+def insert_annotation_event(conn: sqlite3.Connection, annotation_event_data: Dict[str, Any]) -> None:
     """
     Inserts an annotation event into the Annotations table in coyote_event_data.db.
 
     Args:
+        conn (sqlite3.Connection): The SQLite connection to the coyote_event_data database.
         annotation_event_data (Dict[str, Any]): A dictionary containing annotation event data.
     """
     try:
-        conn = get_event_data_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO Annotations (
@@ -297,22 +250,17 @@ def insert_annotation_event(annotation_event_data: Dict[str, Any]) -> None:
         logger.debug(f"Inserted annotation event {annotation_event_data['event_id']} into Annotations table.")
     except sqlite3.Error as e:
         logger.error(f"SQLite error in insert_annotation_event: {e}", exc_info=True)
-    except Exception as e:
-        logger.error(f"Error in insert_annotation_event: {e}", exc_info=True)
-    finally:
-        if conn:
-            conn.close()
 
 
-def insert_entity(entity_data: Dict[str, Any]) -> None:
+def insert_entity(conn: sqlite3.Connection, entity_data: Dict[str, Any]) -> None:
     """
     Inserts an entity into the Entities table in coyote_event_data.db.
 
     Args:
+        conn (sqlite3.Connection): The SQLite connection to the coyote_event_data database.
         entity_data (Dict[str, Any]): A dictionary containing entity data.
     """
     try:
-        conn = get_event_data_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO Entities (event_id, entity_context, entity, uri, score)
@@ -328,22 +276,17 @@ def insert_entity(entity_data: Dict[str, Any]) -> None:
         logger.debug(f"Inserted entity '{entity_data.get('entity', '')}' for event {entity_data['event_id']} into Entities table.")
     except sqlite3.Error as e:
         logger.error(f"SQLite error in insert_entity: {e}", exc_info=True)
-    except Exception as e:
-        logger.error(f"Error in insert_entity: {e}", exc_info=True)
-    finally:
-        if conn:
-            conn.close()
 
 
-def insert_topic(topic_data: Dict[str, Any]) -> None:
+def insert_topic(conn: sqlite3.Connection, topic_data: Dict[str, Any]) -> None:
     """
     Inserts a topic into the Topics table in coyote_event_data.db.
 
     Args:
+        conn (sqlite3.Connection): The SQLite connection to the coyote_event_data database.
         topic_data (Dict[str, Any]): A dictionary containing topic data.
     """
     try:
-        conn = get_event_data_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO Topics (event_id, topic_context, topic, uri, score)
@@ -359,22 +302,17 @@ def insert_topic(topic_data: Dict[str, Any]) -> None:
         logger.debug(f"Inserted topic '{topic_data.get('topic', '')}' for event {topic_data['event_id']} into Topics table.")
     except sqlite3.Error as e:
         logger.error(f"SQLite error in insert_topic: {e}", exc_info=True)
-    except Exception as e:
-        logger.error(f"Error in insert_topic: {e}", exc_info=True)
-    finally:
-        if conn:
-            conn.close()
 
 
-def insert_annotation_tag(annotation_tag_data: Dict[str, Any]) -> None:
+def insert_annotation_tag(conn: sqlite3.Connection, annotation_tag_data: Dict[str, Any]) -> None:
     """
     Inserts an annotation tag into the AnnotationTags table in coyote_event_data.db.
 
     Args:
+        conn (sqlite3.Connection): The SQLite connection to the coyote_event_data database.
         annotation_tag_data (Dict[str, Any]): A dictionary containing annotation tag data.
     """
     try:
-        conn = get_event_data_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO AnnotationTags (event_id, annotation_id, tag)
@@ -388,11 +326,6 @@ def insert_annotation_tag(annotation_tag_data: Dict[str, Any]) -> None:
         logger.debug(f"Inserted annotation tag '{annotation_tag_data.get('tag', '')}' for event {annotation_tag_data['event_id']} into AnnotationTags table.")
     except sqlite3.Error as e:
         logger.error(f"SQLite error in insert_annotation_tag: {e}", exc_info=True)
-    except Exception as e:
-        logger.error(f"Error in insert_annotation_tag: {e}", exc_info=True)
-    finally:
-        if conn:
-            conn.close()
 
 
 def insert_topics_and_entities(event_id: str, context: str, topics_data: Dict[str, Any], entities_data: Dict[str, Any]) -> None:
