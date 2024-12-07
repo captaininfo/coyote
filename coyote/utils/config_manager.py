@@ -11,6 +11,7 @@ from flask import g, Flask
 import sqlite3
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -36,6 +37,10 @@ EVENT_DATA_DB_FILE: Path = DATA_DIR / 'coyote_event_data.db'
 WIKIDATA_CACHE_DB_FILE: Path = DATA_DIR / 'wikidata_cache.db'
 STAGING_DB_FILE: Path = DATA_DIR / 'coyote_event_staging.db'
 
+# Locks for individual databases
+state_db_lock = threading.Lock()          # Lock for coyote_state.db
+event_data_db_lock = threading.Lock()      # Lock for coyote_event_data.db
+wikidata_cache_db_lock = threading.Lock()  # Lock for wikidata_cache.db
 
 # Load or generate the encryption key
 def load_encryption_key() -> bytes:
@@ -128,10 +133,11 @@ def get_state_db_connection() -> sqlite3.Connection:
         sqlite3.Connection: The SQLite connection object.
     """
     try:
-        conn = sqlite3.connect(STATE_DB_FILE)
-        conn.row_factory = sqlite3.Row  # Optional for dict-like access
-        logger.debug("Created direct connection to the coyote_state database.")
-        return conn
+        with state_db_lock:  # Lock to ensure thread safety for the state database
+            conn = sqlite3.connect(STATE_DB_FILE)
+            conn.row_factory = sqlite3.Row  # Optional for dict-like access
+            logger.debug("Created direct connection to the coyote_state database.")
+            return conn
     except sqlite3.Error as e:
         logger.error(f"Error connecting to state database: {e}")
         raise
@@ -148,10 +154,11 @@ def get_event_data_db_connection() -> sqlite3.Connection:
         sqlite3.Connection: The SQLite connection object.
     """
     try:
-        conn = sqlite3.connect(EVENT_DATA_DB_FILE)
-        conn.row_factory = sqlite3.Row
-        logger.debug("Created direct connection to event data database.")
-        return conn
+        with event_data_db_lock:  # Lock to ensure thread safety for the event data database
+            conn = sqlite3.connect(EVENT_DATA_DB_FILE)
+            conn.row_factory = sqlite3.Row
+            logger.debug("Created direct connection to event data database.")
+            return conn
     except sqlite3.Error as e:
         logger.error(f"Error connecting to event data database: {e}")
         raise
@@ -168,10 +175,11 @@ def get_wikidata_cache_db_connection() -> sqlite3.Connection:
         sqlite3.Connection: The SQLite connection object.
     """
     try:
-        conn = sqlite3.connect(WIKIDATA_CACHE_DB_FILE)
-        conn.row_factory = sqlite3.Row
-        logger.debug("Created direct connection to Wikidata cache database.")
-        return conn
+        with wikidata_cache_db_lock:  # Lock to ensure thread safety for the Wikidata cache database
+            conn = sqlite3.connect(WIKIDATA_CACHE_DB_FILE)
+            conn.row_factory = sqlite3.Row
+            logger.debug("Created direct connection to Wikidata cache database.")
+            return conn
     except sqlite3.Error as e:
         logger.error(f"Error connecting to Wikidata cache database: {e}")
         raise

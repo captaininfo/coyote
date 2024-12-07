@@ -1,9 +1,16 @@
 
 import logging
 import sqlite3
-from typing import Any
+from typing import Any, Dict
 
 from coyote.utils.config_manager import get_staging_read_connection
+from coyote.coyote_event_writer import (
+    insert_search_event,
+    insert_webpage_loads_event,
+    insert_hyperlink_click_event,
+    insert_annotation_event,
+    insert_annotation_tag
+)
 
 # Get the logger for this module
 logger = logging.getLogger(__name__)
@@ -24,19 +31,32 @@ def fetch_next_event() -> Any:
             ORDER BY created_at ASC LIMIT 1
         ''')
         event = cursor.fetchone()
-        if event:
-            logger.info(f"Fetched event_id {event['event_id']} from staging database.")
-        else:
-            logger.info("No unprocessed events available in staging database.")
-        return event
+        return dict(event) if event else None
     except sqlite3.Error as e:
         logger.error(f"Error fetching the next event: {e}", exc_info=True)
         raise
     finally:
         if conn:
             conn.close()
-            logger.debug("Read-only connection to staging database closed.")
 
+def is_event_processing(data_conn: sqlite3.Connection) -> bool:
+    """
+    Check if there is an event currently being processed.
+
+    Args:
+        data_conn (sqlite3.Connection): The SQLite connection to the data database.
+
+    Returns:
+        bool: True if an event is currently processing, False otherwise.
+    """
+    try:
+        cursor = data_conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM EventData WHERE status = ?', ('processing',))
+        processing_count = cursor.fetchone()[0]
+        return processing_count > 0
+    except sqlite3.Error as e:
+        logger.error(f"Error checking processing status: {e}", exc_info=True)
+        return False
 
 def insert_event(data_conn: sqlite3.Connection, event_id: str, event: dict) -> None:
     """
@@ -60,9 +80,49 @@ def insert_event(data_conn: sqlite3.Connection, event_id: str, event: dict) -> N
         raise
 
 
+def insert_event_specific_data(conn: sqlite3.Connection, event_data: Dict[str, Any]) -> None:
+    """
+    Inserts the event-specific data based on the event type.
+
+    Args:
+        conn (sqlite3.Connection): The SQLite connection to the coyote_event_data database.
+        event_data (Dict[str, Any]): A dictionary containing the event data.
+    """
+    try:
+        with conn:  # Using the context manager to handle transactions
+            event_type = event_data.get('event_type', '')
+
+            # Handle different event types and route data to specific tables
+            if event_type == 'User starts or modifies a search':
+                insert_search_event(conn, event_data)
+            elif event_type == 'User clicks hyperlink':
+                insert_hyperlink_click_event(conn, event_data)
+            elif event_type == 'Webpage loads':
+                insert_webpage_loads_event(conn, event_data)
+            elif event_type == 'User annotated webpage':
+                insert_annotation_event(conn, event_data)
+                
+                # Write each tag to the AnnotationTags table
+                if 'tags' in event_data and isinstance(event_data['tags'], list):
+                    for tag in event_data['tags']:
+                        annotation_tag_data = {
+                            'event_id': event_data['event_id'],
+                            'annotation_id': event_data.get('annotation_id', ''),
+                            'tag': tag
+                        }
+                        insert_annotation_tag(conn, annotation_tag_data)
+            else:
+                logger.warning(f"Unknown event type: {event_type}. Skipping event-specific data insertion.")
+
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error while inserting event-specific data: {e}", exc_info=True)
+        raise
+
+
+
 def update_event_status(data_conn: sqlite3.Connection, event_id: str, status: str) -> None:
     """
-    Update the status of an event in the data database.
+    Update the status of an event in the coyote_event_data database.
 
     Args:
         data_conn (sqlite3.Connection): The SQLite connection to the data database.

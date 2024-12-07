@@ -9,12 +9,20 @@ import sqlite3
 from time import sleep
 from threading import Lock
 from typing import Any
-from coyote.utils.config_manager import get_event_data_db_connection, get_staging_db_connection
+from coyote.utils.config_manager import get_event_data_db_connection
+from coyote.utils.event_data_handler import (
+    fetch_next_event,
+    insert_event,
+    insert_event_specific_data,
+    update_event_status,
+    is_event_processing
+)
 from coyote.analysis.scrape_webpage import scrape_webpage
 from coyote.analysis.summarize_text import summarize_text
 from coyote.analysis.nlp.text_ner_analysis import get_ner_from_text
 from coyote.analysis.nlp.text_bertopic_analysis import get_topic_from_text
 from coyote.analysis.relevance_calculator import calculate_relevance
+from coyote.utils import config_manager
 
 # Get logger
 logger = logging.getLogger(__name__)
@@ -24,75 +32,39 @@ class CoyoteNLPStateManager:
     Manages the state and processing of user events in the Coyote application.
     """
     def __init__(self) -> None:
-        # Database connections
-        self.staging_conn = get_staging_db_connection()
-        self.staging_cursor = self.staging_conn.cursor()
         self.data_conn = get_event_data_db_connection()
         self.data_cursor = self.data_conn.cursor()
-        self.lock = Lock()  # Ensure single-threaded database writes
 
-    def process_pending_events(self) -> None:
+    def poll_and_process_events(self) -> None:
         """
-        Periodically check for new events and process them.
+        Periodically poll for new events and process them.
         """
         while True:
             try:
-                if self.is_event_processing():
-                    logger.info("Another event is still processing. Waiting...")
-                    sleep(15)
-                    continue
+                # Ensure thread-safe access to the event data database
+                with config_manager.event_data_db_lock:
+                    if is_event_processing(self.data_conn):
+                        logger.info("Another event is still processing. Waiting...")
+                        sleep(15)
+                        continue
 
-                # Fetch a new event from staging that is not yet in the data database
-                self.staging_cursor.execute('''
-                    SELECT * FROM EventStaging 
-                    WHERE event_id NOT IN (SELECT event_id FROM EventData)
-                    ORDER BY created_at ASC LIMIT 1
-                ''')
-                event = self.staging_cursor.fetchone()
-
+                event = fetch_next_event()
                 if event:
-                    event_id, event_type = event[0], event[2]
-                    logger.info(f"Processing event_id: {event_id}, type: {event_type}")
+                    event_id = event['event_id']
+                    logger.info(f"Processing event_id: {event_id}.")
 
-                    # Insert into data database with 'processing' status
-                    self.insert_new_event(event_id, event)
+                    # Insert the event into the database
+                    with config_manager.event_data_db_lock:
+                        insert_event(self.data_conn, event_id, dict(event))
 
-                    # Perform analyses
-                    self.perform_analysis(event_id, event_type, event)
-
-                    # Update status to 'complete'
-                    self.update_event_status(event_id, 'complete')
+                    # Process the event
+                    self.process_event(event_id, dict(event))
                 else:
                     logger.info("No new events to process.")
 
-                sleep(15)  # Poll every 15 seconds
-
-            except sqlite3.Error as e:
-                logger.error(f"SQLite error during event processing: {e}", exc_info=True)
-
-    def is_event_processing(self) -> bool:
-        """
-        Check if there is an event currently being processed.
-        """
-        self.data_cursor.execute('''
-            SELECT COUNT(*) FROM EventData WHERE status = 'processing'
-        ''')
-        processing_count = self.data_cursor.fetchone()[0]
-        return processing_count > 0
-
-    def insert_new_event(self, event_id: str, event: Any) -> None:
-        """
-        Insert a new event into the data database with 'processing' status.
-        """
-        try:
-            self.data_cursor.execute('''
-                INSERT INTO EventData (event_id, status, event_details)
-                VALUES (?, 'processing', ?)
-            ''', (event_id, str(event)))
-            self.data_conn.commit()
-            logger.info(f"Inserted event_id {event_id} into EventData with status 'processing'.")
-        except sqlite3.Error as e:
-            logger.error(f"Error inserting event_id {event_id}: {e}", exc_info=True)
+                sleep(15)  # Poll interval
+            except Exception as e:
+                logger.error(f"Error during event polling or processing: {e}", exc_info=True)
 
     def update_event_status(self, event_id: str, status: str) -> None:
         """

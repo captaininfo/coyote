@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 def insert_staging_event(event_data: Dict[str, Any]) -> None:
     """
     Inserts an event into the EventStaging table in coyote_event_staging.db.
+
+    Args:
+        event_data (Dict[str, Any]): A dictionary containing event details.
     """
     try:
         # Use the connection from Flask's g
