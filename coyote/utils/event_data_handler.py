@@ -58,26 +58,61 @@ def is_event_processing(data_conn: sqlite3.Connection) -> bool:
         logger.error(f"Error checking processing status: {e}", exc_info=True)
         return False
 
-def insert_event(data_conn: sqlite3.Connection, event_id: str, event: dict) -> None:
+def insert_event_tracking(data_conn: sqlite3.Connection, event_id: str) -> bool:
     """
-    Insert a new event into the data database with 'processing' status.
+    Insert a new event into the EventTracking table with an initial status.
 
     Args:
-        data_conn (sqlite3.Connection): The SQLite connection to the data database.
+        data_conn (sqlite3.Connection): The SQLite connection to the coyote_event_data database.
         event_id (str): The unique identifier for the event.
-        event (dict): A dictionary containing event details to be inserted.
+
+    Returns:
+        bool: True if the event was successfully inserted, False otherwise.
     """
     try:
         cursor = data_conn.cursor()
         cursor.execute('''
-            INSERT INTO EventData (event_id, status, event_details)
-            VALUES (?, 'processing', ?)
-        ''', (event_id, str(event)))
+            INSERT INTO EventTracking (event_id, status, last_updated)
+            VALUES (?, 'new', CURRENT_TIMESTAMP)
+        ''', (event_id))
         data_conn.commit()
-        logger.info(f"Inserted event_id {event_id} into EventData with status 'processing'.")
+        logger.info(f"Inserted event_id {event_id} into EventData with status 'new'.")
+        return True
     except sqlite3.Error as e:
         logger.error(f"Error inserting event_id {event_id}: {e}", exc_info=True)
-        raise
+        return False
+
+
+def insert_event(data_conn: sqlite3.Connection, event_id: str, event: dict) -> bool:
+    """
+    Insert common event data into the Events table.
+
+    Args:
+        data_conn (sqlite3.Connection): The SQLite connection to the database.
+        event_id (str): The unique identifier for the event.
+        event (dict): A dictionary containing event details like timestamp, event_type, and data_source.
+
+    Returns:
+        bool: True if the event was successfully inserted, False otherwise.
+    """
+    try:
+        cursor = data_conn.cursor()
+        cursor.execute('''
+            INSERT INTO Events (event_id, timestamp, event_type, data_source)
+            VALUES (?, ?, ?, ?)
+        ''', (
+            event_id,  # Use the event_id argument directly
+            event.get('timestamp', ''),  # Provide a default value if missing
+            event.get('event_type', ''),
+            event.get('data_source', 'Coyote')  # Default to 'Coyote' if not provided
+        ))
+        data_conn.commit()
+        logger.info(f"Inserted event_id {event_id} into Events table.")
+        return True
+    except sqlite3.Error as e:
+        logger.error(f"Error inserting event_id {event_id}: {e}", exc_info=True)
+        return False
+
 
 
 def insert_event_specific_data(conn: sqlite3.Connection, event_data: Dict[str, Any]) -> None:

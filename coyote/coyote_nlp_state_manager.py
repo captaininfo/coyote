@@ -41,7 +41,7 @@ class CoyoteNLPStateManager:
         """
         while True:
             try:
-                # Ensure thread-safe access to the event data database
+                # Ensure thread-safe access to the coyote_event_data database
                 with config_manager.event_data_db_lock:
                     if is_event_processing(self.data_conn):
                         logger.info("Another event is still processing. Waiting...")
@@ -53,7 +53,7 @@ class CoyoteNLPStateManager:
                     event_id = event['event_id']
                     logger.info(f"Processing event_id: {event_id}.")
 
-                    # Insert the event into the database
+                    # Insert the event into the coyote_event_data database
                     with config_manager.event_data_db_lock:
                         insert_event(self.data_conn, event_id, dict(event))
 
