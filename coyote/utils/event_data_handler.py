@@ -47,16 +47,21 @@ def is_event_processing(data_conn: sqlite3.Connection) -> bool:
         data_conn (sqlite3.Connection): The SQLite connection to the data database.
 
     Returns:
-        bool: True if an event is currently processing, False otherwise.
+        bool: True if an event is currently processing (i.e., not completed or failed), False otherwise.
     """
     try:
         cursor = data_conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM EventData WHERE status = ?', ('processing',))
+        cursor.execute('''
+            SELECT COUNT(*) 
+            FROM EventTracking 
+            WHERE status NOT IN ('completed', 'failed')
+        ''')
         processing_count = cursor.fetchone()[0]
         return processing_count > 0
     except sqlite3.Error as e:
         logger.error(f"Error checking processing status: {e}", exc_info=True)
         return False
+
 
 def insert_event_tracking(data_conn: sqlite3.Connection, event_id: str) -> bool:
     """
@@ -154,23 +159,16 @@ def insert_event_specific_data(conn: sqlite3.Connection, event_data: Dict[str, A
         raise
 
 
-
-def update_event_status(data_conn: sqlite3.Connection, event_id: str, status: str) -> None:
-    """
-    Update the status of an event in the coyote_event_data database.
-
-    Args:
-        data_conn (sqlite3.Connection): The SQLite connection to the data database.
-        event_id (str): The unique identifier for the event.
-        status (str): The new status for the event.
-    """
+def mark_event_ready_for_nlp(conn: sqlite3.Connection, event_id: str) -> None:
     try:
-        cursor = data_conn.cursor()
+        cursor = conn.cursor()
         cursor.execute('''
-            UPDATE EventData SET status = ? WHERE event_id = ?
-        ''', (status, event_id))
-        data_conn.commit()
-        logger.info(f"Updated event_id {event_id} status to {status}.")
+            UPDATE EventTracking
+            SET status = 'ready_for_nlp', last_updated = CURRENT_TIMESTAMP
+            WHERE event_id = ?
+        ''', (event_id,))
+        conn.commit()
+        logger.info(f"Marked event_id {event_id} as 'ready_for_nlp'.")
     except sqlite3.Error as e:
-        logger.error(f"Error updating status for event_id {event_id}: {e}", exc_info=True)
+        logger.error(f"Error updating event_id {event_id} to 'ready_for_nlp': {e}", exc_info=True)
         raise

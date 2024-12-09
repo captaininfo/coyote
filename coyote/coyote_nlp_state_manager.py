@@ -13,8 +13,9 @@ from coyote.utils.config_manager import get_event_data_db_connection
 from coyote.utils.event_data_handler import (
     fetch_next_event,
     insert_event,
+    insert_event_tracking,
     insert_event_specific_data,
-    update_event_status,
+    mark_event_ready_for_nlp,
     is_event_processing
 )
 from coyote.analysis.scrape_webpage import scrape_webpage
@@ -35,49 +36,59 @@ class CoyoteNLPStateManager:
         self.data_conn = get_event_data_db_connection()
         self.data_cursor = self.data_conn.cursor()
 
-    def poll_and_process_events(self) -> None:
-        """
-        Periodically poll for new events and process them.
-        """
-        while True:
-            try:
-                # Ensure thread-safe access to the coyote_event_data database
-                with config_manager.event_data_db_lock:
-                    if is_event_processing(self.data_conn):
-                        logger.info("Another event is still processing. Waiting...")
-                        sleep(15)
-                        continue
-
-                event = fetch_next_event()
-                if event:
-                    event_id = event['event_id']
-                    logger.info(f"Processing event_id: {event_id}.")
-
-                    # Insert the event into the coyote_event_data database
-                    with config_manager.event_data_db_lock:
-                        insert_event(self.data_conn, event_id, dict(event))
-
-                    # Process the event
-                    self.process_event(event_id, dict(event))
-                else:
-                    logger.info("No new events to process.")
-
-                sleep(15)  # Poll interval
-            except Exception as e:
-                logger.error(f"Error during event polling or processing: {e}", exc_info=True)
-
-    def update_event_status(self, event_id: str, status: str) -> None:
-        """
-        Update the status of an event in the data database.
-        """
+def poll_and_process_events(self) -> None:
+    """
+    Periodically poll for new events and process them.
+    """
+    while True:
         try:
-            self.data_cursor.execute('''
-                UPDATE EventData SET status = ? WHERE event_id = ?
-            ''', (status, event_id))
-            self.data_conn.commit()
-            logger.info(f"Updated event_id {event_id} status to {status}.")
-        except sqlite3.Error as e:
-            logger.error(f"Error updating status for event_id {event_id}: {e}", exc_info=True)
+            # Ensure no event is currently processing
+            with config_manager.event_data_db_lock:
+                if is_event_processing(self.data_conn):
+                    logger.info("Another event is still processing. Waiting...")
+                    sleep(15)
+                    continue
+
+            # Fetch a new event from the coyote_event_staging database
+            event = fetch_next_event()
+            if event:
+                event_id = event['event_id']
+                event_dict = dict(event)
+                logger.info(f"Processing event_id: {event_id}.")
+
+                # Insert the base event into the Events table
+                with config_manager.event_data_db_lock:
+                    if insert_event(self.data_conn, event_id, event_dict):
+                        logger.info(f"Successfully inserted event_id {event_id} into Events table.")
+
+                        # Track the event lifecycle in the EventTracking table
+                        if insert_event_tracking(self.data_conn, event_id):
+                            logger.info(f"Successfully inserted event_id {event_id} into EventTracking table.")
+
+                            # Insert the event-type-specific data into event-type-specific tables
+                            insert_event_specific_data(self.data_conn, event_dict)
+                            logger.info(f"Successfully inserted event-specific data for event_id {event_id}.")
+
+                            # Now mark the event as ready_for_nlp
+                            mark_event_ready_for_nlp(self.data_conn, event_id)
+                            logger.info(f"Marked event_id {event_id} as 'ready_for_nlp'.")
+                        else:
+                            logger.error(f"Failed to track event_id {event_id} in EventTracking.")
+                            # Depending on your logic, you might continue or break here.
+                    else:
+                        logger.error(f"Failed to insert event_id {event_id} into Events table. Skipping processing.")
+                        # Depending on your logic, you might continue or break here.
+
+                # Process the event
+                self.process_event(event_id, dict(event))
+            else:
+                logger.info("No new events to process.")
+
+            sleep(15)  # Poll interval
+        except Exception as e:
+            logger.error(f"Error during event polling or processing: {e}", exc_info=True)
+
+
 
     def perform_analysis(self, event_id: str, event_type: str, event: Any) -> None:
         """
