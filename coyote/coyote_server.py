@@ -9,16 +9,17 @@ Main server script for the Coyote application.
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, g
 from flask_cors import CORS
 import requests
-import json
 import logging
 import sqlite3
 import uuid
+from threading import Thread
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 # Import necessary functions and modules
-from coyote.coyote_event_writer import insert_staging_event, process_hypothesis_annotations
+from coyote.coyote_nlp_state_manager import CoyoteNLPStateManager
+from coyote.coyote_event_writer import process_hypothesis_annotations
 from coyote.utils.config_manager import (
     store_setting, 
     load_secret_key, 
@@ -84,6 +85,18 @@ def close_db_connections(exception):
             conn.close()
 
 
+def start_coyote_state_manager():
+    """
+    Starts the CoyoteNLPStateManager in a background thread.
+    """
+    try:
+        state_manager = CoyoteNLPStateManager()
+        logger.info("Starting CoyoteNLPStateManager...")
+        state_manager.poll_and_process_events()
+    except Exception as e:
+        logger.error(f"Error in CoyoteNLPStateManager: {e}", exc_info=True)
+
+
 def get_latest_timestamp() -> Optional[str]:
     """
     Retrieve the latest timestamp of annotations from the coyote_event_data.db. 
@@ -146,8 +159,8 @@ def process_request_data(data: Dict[str, Any], event_description: str) -> Any:
     
     # Add common metadata to the data payload
     data['event_id'] = event_id
-    data['event'] = event_description
-    data['dataSource'] = "Coyote Browser Extension"
+    data['event_type'] = event_description
+    data['data_source'] = "Coyote Browser Extension"
     data['timestamp'] = datetime.now().isoformat()
 
     # Insert the data into the EventStaging table in the staging database
@@ -325,6 +338,10 @@ def main() -> None:
     """
     # Initialize databases
     initialize_databases()
+
+    # Start the CoyoteNLPStateManager in a background thread
+    state_manager_thread = Thread(target=start_coyote_state_manager, daemon=True)
+    state_manager_thread.start()
 
     # Start the Flask app
     logger.info("Starting the Coyote Flask server...")

@@ -3,7 +3,7 @@ import logging
 import sqlite3
 from typing import Any, Dict
 
-from coyote.utils.config_manager import get_staging_read_connection
+from coyote.utils.config_manager import get_staging_read_connection, get_event_data_db_connection
 from coyote.coyote_event_writer import (
     insert_search_event,
     insert_webpage_loads_event,
@@ -18,26 +18,39 @@ logger = logging.getLogger(__name__)
 def fetch_next_event() -> Any:
     """
     Fetch the next unprocessed event from the staging database.
-    
+
     Returns:
         Any: The next event to be processed or None if no events are available.
     """
     try:
-        conn = get_staging_read_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM EventStaging 
-            WHERE event_id NOT IN (SELECT event_id FROM EventData)
-            ORDER BY created_at ASC LIMIT 1
-        ''')
-        event = cursor.fetchone()
-        return dict(event) if event else None
+        # Connect to both databases
+        staging_conn = get_staging_read_connection()
+        event_data_conn = get_event_data_db_connection()
+        staging_cursor = staging_conn.cursor()
+        event_data_cursor = event_data_conn.cursor()
+
+        # Retrieve all event IDs from the Events table
+        event_data_cursor.execute('SELECT event_id FROM Events')
+        processed_event_ids = {row[0] for row in event_data_cursor.fetchall()}
+
+        # Retrieve the next unprocessed event from EventStaging
+        staging_cursor.execute('SELECT * FROM EventStaging ORDER BY created_at ASC')
+        for row in staging_cursor.fetchall():
+            if row['event_id'] not in processed_event_ids:
+                return dict(row)
+
+        # No unprocessed events found
+        return None
     except sqlite3.Error as e:
         logger.error(f"Error fetching the next event: {e}", exc_info=True)
         raise
     finally:
-        if conn:
-            conn.close()
+        # Close database connections
+        if staging_conn:
+            staging_conn.close()
+        if event_data_conn:
+            event_data_conn.close()
+
 
 def is_event_processing(data_conn: sqlite3.Connection) -> bool:
     """
@@ -79,9 +92,9 @@ def insert_event_tracking(data_conn: sqlite3.Connection, event_id: str) -> bool:
         cursor.execute('''
             INSERT INTO EventTracking (event_id, status, last_updated)
             VALUES (?, 'new', CURRENT_TIMESTAMP)
-        ''', (event_id))
+        ''', (event_id,))
         data_conn.commit()
-        logger.info(f"Inserted event_id {event_id} into EventData with status 'new'.")
+        logger.info(f"Inserted event_id {event_id} into EventTracking with status 'new'.")
         return True
     except sqlite3.Error as e:
         logger.error(f"Error inserting event_id {event_id}: {e}", exc_info=True)

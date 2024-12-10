@@ -36,57 +36,58 @@ class CoyoteNLPStateManager:
         self.data_conn = get_event_data_db_connection()
         self.data_cursor = self.data_conn.cursor()
 
-def poll_and_process_events(self) -> None:
-    """
-    Periodically poll for new events and process them.
-    """
-    while True:
-        try:
-            # Ensure no event is currently processing
-            with config_manager.event_data_db_lock:
-                if is_event_processing(self.data_conn):
-                    logger.info("Another event is still processing. Waiting...")
-                    sleep(15)
-                    continue
-
-            # Fetch a new event from the coyote_event_staging database
-            event = fetch_next_event()
-            if event:
-                event_id = event['event_id']
-                event_dict = dict(event)
-                logger.info(f"Processing event_id: {event_id}.")
-
-                # Insert the base event into the Events table
+    def poll_and_process_events(self) -> None:
+        """
+        Periodically poll for new events and process them.
+        """
+        while True:
+            try:
+                # Ensure no event is currently processing
                 with config_manager.event_data_db_lock:
-                    if insert_event(self.data_conn, event_id, event_dict):
-                        logger.info(f"Successfully inserted event_id {event_id} into Events table.")
+                    if is_event_processing(self.data_conn):
+                        logger.info("Another event is still processing. Waiting...")
+                        sleep(15)
+                        continue
 
-                        # Track the event lifecycle in the EventTracking table
-                        if insert_event_tracking(self.data_conn, event_id):
-                            logger.info(f"Successfully inserted event_id {event_id} into EventTracking table.")
+                # Fetch a new event from the coyote_event_staging database
+                event = fetch_next_event()
+                if event:
+                    event_id = event['event_id']
+                    event_dict = dict(event)
+                    logger.info(f"Processing event_id: {event_id}.")
+                    logger.debug(f"Payload of event_dict: {event_dict}.")
 
-                            # Insert the event-type-specific data into event-type-specific tables
-                            insert_event_specific_data(self.data_conn, event_dict)
-                            logger.info(f"Successfully inserted event-specific data for event_id {event_id}.")
+                    # Insert the base event into the Events table
+                    with config_manager.event_data_db_lock:
+                        if insert_event(self.data_conn, event_id, event_dict):
+                            logger.info(f"Successfully inserted event_id {event_id} into Events table.")
 
-                            # Now mark the event as ready_for_nlp
-                            mark_event_ready_for_nlp(self.data_conn, event_id)
-                            logger.info(f"Marked event_id {event_id} as 'ready_for_nlp'.")
+                            # Track the event lifecycle in the EventTracking table
+                            if insert_event_tracking(self.data_conn, event_id):
+                                logger.info(f"Successfully inserted event_id {event_id} into EventTracking table.")
+
+                                # Insert the event-type-specific data into event-type-specific tables
+                                insert_event_specific_data(self.data_conn, event_dict)
+                                logger.info(f"Successfully inserted event-specific data for event_id {event_id}.")
+
+                                # Now mark the event as ready_for_nlp
+                                mark_event_ready_for_nlp(self.data_conn, event_id)
+                                logger.info(f"Marked event_id {event_id} as 'ready_for_nlp'.")
+                            else:
+                                logger.error(f"Failed to track event_id {event_id} in EventTracking.")
+                                # Depending on your logic, you might continue or break here.
                         else:
-                            logger.error(f"Failed to track event_id {event_id} in EventTracking.")
+                            logger.error(f"Failed to insert event_id {event_id} into Events table. Skipping processing.")
                             # Depending on your logic, you might continue or break here.
-                    else:
-                        logger.error(f"Failed to insert event_id {event_id} into Events table. Skipping processing.")
-                        # Depending on your logic, you might continue or break here.
 
-                # Process the event
-                self.process_event(event_id, dict(event))
-            else:
-                logger.info("No new events to process.")
+                    # Process the event
+                    # self.process_event(event_id, dict(event))
+                else:
+                    logger.info("No new events to process.")
 
-            sleep(15)  # Poll interval
-        except Exception as e:
-            logger.error(f"Error during event polling or processing: {e}", exc_info=True)
+                sleep(15)  # Poll interval
+            except Exception as e:
+                logger.error(f"Error during event polling or processing: {e}", exc_info=True)
 
 
 

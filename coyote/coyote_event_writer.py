@@ -48,6 +48,13 @@ def insert_staging_event(event_data: Dict[str, Any]) -> None:
         event_payload = event_data.get('event_payload', {})
         event_payload = json.dumps(event_payload) if event_payload else None
 
+        # Log the relevant fields before insertion
+        logger.debug(f"Preparing to insert event into staging: "
+                     f"event_id={event_data.get('event_id')}, "
+                     f"event_type={event_data.get('event_type')}, "
+                     f"data_source={event_data.get('data_source')}")
+        logger.debug(f"Full event_data payload: {event_data}")
+
         # Insert the event data into the EventStaging table
         cursor.execute('''
             INSERT INTO EventStaging (
