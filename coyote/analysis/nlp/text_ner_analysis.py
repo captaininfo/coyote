@@ -6,7 +6,7 @@ and mapping them to WikiData entities.
 """
 
 import logging
-from typing import List, Dict, Tuple, Any, Optional
+from typing import List, Dict, Tuple, Any
 
 import spacy
 from nltk.corpus import stopwords
@@ -37,6 +37,35 @@ except LookupError:
     import nltk
     nltk.download('stopwords')
     stop_words_list = list(set(stopwords.words('english')).union(set(custom_stopwords)))
+
+
+def extract_entities(text: str) -> List[Tuple[str, str]]:
+    """
+    Extract named entities from the given text using spaCy.
+
+    Args:
+        text (str): The text to analyze.
+
+    Returns:
+        List[Tuple[str, str]]: A list of tuples containing entities and their labels.edr
+        Returns an empty list if no entities are found or an error occurs.
+    """
+    if nlp is None:
+        logger.error("spaCy model is not initialized.")
+        return []
+
+    try:
+        if not text.strip():
+            logger.warning("Empty or whitespace-only text provided to extract_entities.")
+            return []
+
+        doc = nlp(text)
+        entities = [(ent.text, ent.label_) for ent in doc.ents]
+        logger.debug(f"Extracted Entities: {entities}")
+        return entities
+    except Exception as e:
+        logger.error(f"Error in extract_entities: {e}", exc_info=True)
+        return []
 
 
 def query_wikidata(term: str) -> List[Tuple[str, str]]:
@@ -91,29 +120,25 @@ def replace_named_entities_in_text(
     return text
 
 
-def map_ner_to_wikidata(
-    ner_entities: List[Tuple[str, str]]
-) -> Dict[str, Dict[str, Any]]:
+def map_ner_to_wikidata(entities: List[str]) -> Dict[str, Dict[str, Any]]:
     """
-    Map NER entities to WikiData URIs.
-
-    Args:
-        ner_entities (List[Tuple[str, str]]): List of extracted entities and their labels.
+    Map a list of entity strings to WikiData URIs.
 
     Returns:
-        Dict[str, Dict[str, Any]]: Mapped entities with replacements, URIs, and labels.
+        Dict[str, Dict[str, Any]]: Mapped entities with replacements, URIs, and labels (labels from WikiData).
     """
     try:
         mapped_entities = {}
-        for entity, label in ner_entities:
+        for entity in entities:
             wikidata_result = query_wikidata(entity)
             if wikidata_result:
+                wikidata_label, wikidata_uri = wikidata_result[0]
                 mapped_entities[entity] = {
                     'replacement': entity.replace(" ", "_"),
-                    'uri': wikidata_result[0][1],
-                    'label': label
+                    'uri': wikidata_uri,
+                    'label': wikidata_label  # Using the wikidata_label from the query
                 }
-        logger.debug(f"Mapped NER Entities to WikiData: {mapped_entities}")
+        logger.debug(f"Mapped Entities to WikiData: {mapped_entities}")
         return mapped_entities
     except Exception as e:
         logger.error(f"Error in map_ner_to_wikidata: {e}")

@@ -143,7 +143,9 @@ def initialize_coyote_event_data_db() -> None:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL,
         url TEXT,
+        wayback_machine_url TEXT,
         webpage_title TEXT,
+        scraped_text TEXT,
         webpage_summary TEXT,
         webpage_relevance_score REAL,
         FOREIGN KEY(event_id) REFERENCES Events(event_id)
@@ -177,7 +179,8 @@ def initialize_coyote_event_data_db() -> None:
         event_id TEXT NOT NULL,
         entity_context TEXT NOT NULL,
         entity TEXT NOT NULL,
-        uri TEXT,
+        wikidata_uri TEXT,
+        label TEXT,
         score REAL,
         FOREIGN KEY(event_id) REFERENCES Events(event_id)
     );
@@ -187,7 +190,8 @@ def initialize_coyote_event_data_db() -> None:
         event_id TEXT NOT NULL,
         topic_context TEXT NOT NULL,
         topic TEXT NOT NULL,
-        uri TEXT,
+        wikidata_uri TEXT,
+        label TEXT,
         score REAL,
         FOREIGN KEY(event_id) REFERENCES Events(event_id)
     );

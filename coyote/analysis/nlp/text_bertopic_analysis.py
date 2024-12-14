@@ -71,24 +71,23 @@ def query_wikidata(term: str) -> List[Tuple[str, str]]:
         return []
 
 
-def map_topics_to_wikidata(topics: Dict[int, List[Tuple[str, float]]]) -> Dict[str, Dict[str, str]]:
+def map_topics_to_wikidata(topics: List[str]) -> Dict[str, Dict[str, str]]:
     """
-    Map topics to WikiData URIs.
+    Map a list of topic strings to WikiData URIs.
 
     Args:
-        topics (Dict[int, List[Tuple[str, float]]]): Dictionary of topics from BERTopic.
+        topics (List[str]): A list of topic strings.
 
     Returns:
         Dict[str, Dict[str, str]]: Mapped topics with URIs and labels.
     """
     try:
         mapped_topics = {}
-        for topic_num, words in topics.items():
-            for word, _ in words:
-                wikidata_result = query_wikidata(word)
-                if wikidata_result:
-                    label, uri = wikidata_result[0]
-                    mapped_topics[word] = {'uri': uri, 'label': label}
+        for topic in topics:
+            wikidata_result = query_wikidata(topic)
+            if wikidata_result:
+                label, uri = wikidata_result[0]  
+                mapped_topics[topic] = {'uri': uri, 'label': label}
         logger.debug(f"Mapped Topics to WikiData: {mapped_topics}")
         return mapped_topics
     except Exception as e:
