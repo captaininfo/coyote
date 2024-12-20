@@ -205,12 +205,20 @@ def initialize_coyote_event_data_db() -> None:
         FOREIGN KEY(annotation_id) REFERENCES Annotations(annotation_id)
     );
 
-    CREATE TABLE EventTracking (
+    CREATE TABLE IF NOT EXISTS EventTracking (
         event_id TEXT PRIMARY KEY,
         status TEXT NOT NULL,
         last_step TEXT DEFAULT NULL,  -- Tracks the last completed NLP step (e.g., "NER")
         error_message TEXT DEFAULT NULL,  -- Stores error details if status is "failed"
         last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS CorpusDocuments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        content TEXT,
+        source TEXT,  -- e.g., "TEDTalk"
+        inserted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE INDEX IF NOT EXISTS idx_events_event_id ON Events(event_id);

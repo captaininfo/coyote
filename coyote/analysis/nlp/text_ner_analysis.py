@@ -100,24 +100,22 @@ def query_wikidata(term: str) -> List[Tuple[str, str]]:
         return []
 
 
-def replace_named_entities_in_text(
-    text: str,
-    ner_mapped: Dict[str, Dict[str, Any]]
-) -> str:
+def replace_named_entities_in_text(text: str, entities_mapped: Dict[str, Dict[str, Any]]) -> str:
     """
-    Replace named entities in text with their replacements.
+    Replace entities in text with underscores for multi-word entities.
 
     Args:
         text (str): The original text.
-        ner_mapped (Dict[str, Dict[str, Any]]): The mapped named entities.
+        entities_mapped (Dict[str, Dict[str, Any]]): Mapped entities with URIs (and possibly labels).
 
     Returns:
-        str: The text with named entities replaced.
+        str: The processed text with entities replaced.
     """
-    for entity, data in ner_mapped.items():
-        replacement = data['replacement']
+    for entity in entities_mapped.keys():
+        replacement = entity.replace(" ", "_")
         text = text.replace(entity, replacement)
     return text
+
 
 
 def map_ner_to_wikidata(entities: List[str]) -> Dict[str, Dict[str, Any]]:

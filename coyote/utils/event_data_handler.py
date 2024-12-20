@@ -1,7 +1,7 @@
 
 import logging
 import sqlite3
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from coyote.utils.config_manager import get_staging_read_connection, get_event_data_db_connection
 from coyote.coyote_event_writer import (
@@ -185,3 +185,49 @@ def mark_event_ready_for_nlp(conn: sqlite3.Connection, event_id: str) -> None:
     except sqlite3.Error as e:
         logger.error(f"Error updating event_id {event_id} to 'ready_for_nlp': {e}", exc_info=True)
         raise
+
+
+def update_topics_with_wikidata(self, mapped_topics_records: List[tuple]) -> None:
+    """
+    Update the Topics table with WikiData URIs and labels for the given records.
+    
+    Each record is expected to be a tuple of (uri, label, event_id, topic).
+    """
+    try:
+        # Bulk update each topic record with the corresponding URI and label
+        # We use executemany with an UPDATE statement. Since UPDATE doesn't support multiple bindings
+        # at once by default, we do a loop. Alternatively, we can do a loop of execute() calls.
+        
+        # For better performance, you might consider doing these updates one by one.
+        # Another approach is using a loop:
+        for (uri, label, event_id, topic) in mapped_topics_records:
+            self.data_cursor.execute(
+                "UPDATE Topics SET wikidata_uri=?, label=? WHERE event_id=? AND topic=?",
+                (uri, label, event_id, topic)
+            )
+        
+        # If you prefer a single transaction, it's already encompassed by the main function's transaction.
+        # Just commit at the end of process_search_event().
+        
+    except Exception as e:
+        logger.exception(f"Error updating topics with WikiData: {e}")
+        raise  # re-raise so calling function can handle rollback if needed
+
+
+def update_entities_with_wikidata(self, mapped_entities_records: List[tuple]) -> None:
+    """
+    Update the Entities table with WikiData URIs and labels for the given records.
+    
+    Each record is expected to be a tuple of (uri, label, event_id, entity).
+    """
+    try:
+        # Similarly update each entity record
+        for (uri, label, event_id, entity) in mapped_entities_records:
+            self.data_cursor.execute(
+                "UPDATE Entities SET wikidata_uri=?, label=? WHERE event_id=? AND entity=?",
+                (uri, label, event_id, entity)
+            )
+
+    except Exception as e:
+        logger.exception(f"Error updating entities with WikiData: {e}")
+        raise  # re-raise so calling function can handle rollback if needed

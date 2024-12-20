@@ -117,3 +117,30 @@ def scrape_webpage(url: str) -> str:
         logger.error(f"Unexpected error during scraping at {url}: {e}")
         
         return ""
+
+def should_exempt_url(url: str) -> bool:
+    """
+    Check if a URL should be exempt from NLP processing.
+
+    This includes:
+    - Google SERPs
+    - Hypothes.is account, users, and oauth pages
+    - The local configure page
+    """
+    # Original Google SERP check
+    if "google.com/search" in url:
+        return True
+
+    # Hypothes.is pages to exempt
+    if url.startswith("https://hypothes.is/account"):
+        return True
+    if url.startswith("https://hypothes.is/users"):
+        return True
+    if url.startswith("https://hypothes.is/oauth"):
+        return True
+
+    # Local configure page
+    if url.startswith("http://localhost:5000/configure"):
+        return True
+
+    return False
