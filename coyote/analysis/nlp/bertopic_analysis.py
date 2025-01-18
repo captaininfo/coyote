@@ -1,7 +1,7 @@
 # bertopic_analysis.py
 
 import logging
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional
 
 from bertopic import BERTopic
 import spacy
@@ -18,7 +18,7 @@ except Exception as e:
     logger.error(f"Failed to load spaCy model: {e}")
     nlp = None  # Handle initialization failure
 
-def analyze_topics(text: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[int, Any]]]:
+def analyze_topics(text: str) -> Tuple[Optional[Dict[str, Any]], Optional[List[Tuple[str, float]]]]:
     """
     Analyze topics in the given text using BERTopic.
 
@@ -26,12 +26,9 @@ def analyze_topics(text: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[i
         text (str): The input text to analyze.
 
     Returns:
-        Tuple[Optional[Dict[str, Any]], Optional[Dict[int, Any]]]:
-            A tuple containing the topic information and detailed topics.
+        Tuple[Optional[Dict[str, Any]], Optional[List[Tuple[str, float]]]]:
+            A tuple containing the topic information and a list of detailed topics.
             Returns (None, None) if an error occurs.
-
-    Raises:
-        ValueError: If no sentences are extracted from the input text.
     """
     if nlp is None:
         logger.error("spaCy model is not initialized.")
@@ -59,19 +56,17 @@ def analyze_topics(text: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[i
         topic_info = topic_model.get_topic_info()
         logger.debug(f"Topic Info: {topic_info}")
 
-        # Get detailed topics
-        detailed_topics = {}
+        # Get detailed topics as a flat list
+        detailed_topics = []
         for topic_num in topic_info['Topic']:
             if topic_num != -1:
                 topic_details = topic_model.get_topic(topic_num)
-                detailed_topics[topic_num] = topic_details
+                detailed_topics.extend(topic_details)  # Append all (topic_str, topic_score) tuples
                 logger.debug(f"Topic {topic_num} details: {topic_details}")
 
         return topic_info, detailed_topics
 
-    except ValueError as ve:
-        logger.error(f"ValueError in analyze_topics: {ve}")
-        return None, None
     except Exception as e:
-        logger.error(f"Unexpected error during BERTopic processing: {e}", exc_info=True)
+        logger.exception(f"Error during topic analysis: {e}")
         return None, None
+

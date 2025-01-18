@@ -12,6 +12,7 @@ import requests
 import logging
 import sqlite3
 import uuid
+import time
 from threading import Thread
 from datetime import datetime
 from pathlib import Path
@@ -20,11 +21,14 @@ from typing import Any, Dict, Optional
 # Import necessary functions and modules
 from coyote.coyote_nlp_state_manager import CoyoteNLPStateManager
 from coyote.coyote_event_writer import process_hypothesis_annotations
+from coyote.neo4j_integration.events_to_neo4j import main as events_to_neo4j_main
+from coyote.coyote_nlp_state_manager import CoyoteNLPStateManager
 from coyote.utils.config_manager import (
     store_setting, 
     load_secret_key, 
     load_credentials,
-    get_event_data_db_connection
+    get_event_data_db_connection,
+    get_setting
 )
 
 from coyote.utils.initialize_databases import (
@@ -95,6 +99,15 @@ def start_coyote_state_manager():
         state_manager.poll_and_process_events()
     except Exception as e:
         logger.error(f"Error in CoyoteNLPStateManager: {e}", exc_info=True)
+
+def start_events_to_neo4j():
+    """
+    Starts the events_to_neo4j module in a background thread.
+    """
+    try:
+        events_to_neo4j_main()
+    except Exception as e:
+        logger.error(f"Error in events_to_neo4j module: {e}", exc_info=True)
 
 
 def get_latest_timestamp() -> Optional[str]:
@@ -332,6 +345,7 @@ def fetch_hypothesis_data():
         flash('An error occurred while fetching data from Hypothes.is.')
         return redirect(url_for('configure'))
 
+
 def main() -> None:
     """
     Main function to run the Coyote server application.
@@ -342,12 +356,24 @@ def main() -> None:
     # Start the CoyoteNLPStateManager in a background thread
     state_manager_thread = Thread(target=start_coyote_state_manager, daemon=True)
     state_manager_thread.start()
+    logger.info("Started CoyoteNLPStateManager thread.")
+
+    # Start the events_to_neo4j in a background thread
+    neo4j_thread = Thread(target=start_events_to_neo4j, daemon=True)
+    neo4j_thread.start()
+    logger.info("Started events_to_neo4j thread.")
 
     # Start the Flask app
     logger.info("Starting the Coyote Flask server...")
-    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True, use_reloader=False)
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=True, threaded=True, use_reloader=False)
+    except Exception as e:
+        logger.exception(f"Flask server encountered an error: {e}")
+    finally:
+        logger.info("Flask server has been shut down.")
 
 if __name__ == '__main__':
     main()
+
 
 

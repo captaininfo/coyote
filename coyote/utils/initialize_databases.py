@@ -84,7 +84,7 @@ def initialize_coyote_event_staging_db() -> None:
     Initializes the coyote_event_staging.db with the required tables.
     """
     schema_sql = '''
-    CREATE TABLE EventStaging (
+    CREATE TABLE IF NOT EXISTS EventStaging (
         event_id TEXT PRIMARY KEY,
         event_type TEXT NOT NULL,
         timestamp TEXT NOT NULL,

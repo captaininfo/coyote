@@ -5,10 +5,8 @@ State manager for managing the sequence of NLP analysis processes and orchestrat
 """
 
 import logging
-import sqlite3
 from time import sleep
-from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from nltk.corpus import stopwords
 from coyote.utils.config_manager import get_event_data_db_connection
 from coyote.utils.event_data_handler import (
@@ -17,15 +15,14 @@ from coyote.utils.event_data_handler import (
     insert_event_tracking,
     insert_event_specific_data,
     mark_event_ready_for_nlp,
-    is_event_processing,
-    update_entities_with_wikidata
+    is_event_processing
 )
 from coyote.analysis.scrape_webpage import scrape_webpage, should_exempt_url
 from coyote.analysis.summarize_text import summarize_text
 from coyote.analysis.nlp.extract_topics_with_rake import extract_topics_with_rake
 from coyote.analysis.nlp.text_ner_analysis import extract_entities, map_ner_to_wikidata, replace_named_entities_in_text
 from coyote.analysis.nlp.text_bertopic_analysis import (
-    get_topic_from_text, map_topics_to_wikidata, 
+    map_topics_to_wikidata, 
     calculate_tfidf_on_phrases, 
     extract_and_replace_topics
 )
@@ -228,8 +225,8 @@ class CoyoteNLPStateManager:
             logger.debug(f"Fetched search_terms: {search_terms}")
             
             # Step 3: Extract topics with RAKE
-            purpose_topics_data = self.extract_topics_with_rake(purpose)
-            search_terms_topics_data = self.extract_topics_with_rake(search_terms)
+            purpose_topics_data = extract_topics_with_rake(purpose)
+            search_terms_topics_data = extract_topics_with_rake(search_terms)
             logger.debug(f"Extracted purpose topics: {purpose_topics_data}")
             logger.debug(f"Extracted search terms topics: {search_terms_topics_data}")
             
@@ -308,12 +305,21 @@ class CoyoteNLPStateManager:
                 logger.warning("No mapped entities to update in Entities table.")
             
             # Commit transaction
+            self.data_cursor.execute(
+                "UPDATE EventTracking SET status='completed', last_updated=CURRENT_TIMESTAMP WHERE event_id=?",
+                (event_id,)
+            )
             self.data_conn.commit()
-            logger.info(f"Completed NLP processing for search event_id {event_id}.")
+            logger.info(f"Marked event_id {event_id} as 'completed'.")
         
         except Exception as e:
             logger.exception(f"An error occurred while processing event_id {event_id}: {e}")
-            self.data_conn.rollback()
+            self.data_cursor.execute(
+                "UPDATE EventTracking SET status='failed', error_message=? WHERE event_id=?",
+                (str(e), event_id)
+            )
+            self.data_conn.commit()
+
 
 
     def process_webpage_loads_event(self, event_id: str) -> None:
@@ -517,12 +523,20 @@ class CoyoteNLPStateManager:
                 logger.info(f"Updated Entities table with TF-IDF scores for event_id {event_id}.")
 
             # Commit transaction
+            self.data_cursor.execute(
+                "UPDATE EventTracking SET status='completed', last_updated=CURRENT_TIMESTAMP WHERE event_id=?",
+                (event_id,)
+            )
             self.data_conn.commit()
-            logger.info(f"Completed NLP processing for webpage loads event_id {event_id}.")
-
+            logger.info(f"Marked event_id {event_id} as 'completed'.")
+        
         except Exception as e:
-            logger.exception(f"An error occurred while processing webpage loads event_id {event_id}: {e}")
-            self.data_conn.rollback()
+            logger.exception(f"An error occurred while processing event_id {event_id}: {e}")
+            self.data_cursor.execute(
+                "UPDATE EventTracking SET status='failed', error_message=? WHERE event_id=?",
+                (str(e), event_id)
+            )
+            self.data_conn.commit()
 
 
     def process_hyperlink_event(self, event_id: str) -> None:
@@ -639,12 +653,20 @@ class CoyoteNLPStateManager:
                 logger.warning(f"No mapped hyperlink entities to update in Entities table for event_id {event_id}.")
 
             # Commit transaction
+            self.data_cursor.execute(
+                "UPDATE EventTracking SET status='completed', last_updated=CURRENT_TIMESTAMP WHERE event_id=?",
+                (event_id,)
+            )
             self.data_conn.commit()
-            logger.info(f"Completed NLP processing for hyperlink event_id {event_id}.")
-
+            logger.info(f"Marked event_id {event_id} as 'completed'.")
+        
         except Exception as e:
-            logger.exception(f"An error occurred while processing hyperlink event_id {event_id}: {e}")
-            self.data_conn.rollback()
+            logger.exception(f"An error occurred while processing event_id {event_id}: {e}")
+            self.data_cursor.execute(
+                "UPDATE EventTracking SET status='failed', error_message=? WHERE event_id=?",
+                (str(e), event_id)
+            )
+            self.data_conn.commit()
 
 
     def process_annotation_event(self, event_id: str) -> None:
@@ -809,16 +831,24 @@ class CoyoteNLPStateManager:
                 logger.warning(f"No mapped annotation entities to update in Entities table for event_id {event_id}.")
 
             # Commit transaction
+            self.data_cursor.execute(
+                "UPDATE EventTracking SET status='completed', last_updated=CURRENT_TIMESTAMP WHERE event_id=?",
+                (event_id,)
+            )
             self.data_conn.commit()
-            logger.info(f"Completed NLP processing for annotation event_id {event_id}.")
-
+            logger.info(f"Marked event_id {event_id} as 'completed'.")
+        
         except Exception as e:
-            logger.exception(f"An error occurred while processing annotation event_id {event_id}: {e}")
-            self.data_conn.rollback()
+            logger.exception(f"An error occurred while processing event_id {event_id}: {e}")
+            self.data_cursor.execute(
+                "UPDATE EventTracking SET status='failed', error_message=? WHERE event_id=?",
+                (str(e), event_id)
+            )
+            self.data_conn.commit()
 
 
 
 # Entry point for the script
 if __name__ == '__main__':
     state_manager = CoyoteNLPStateManager()
-    state_manager.process_pending_events()
+    state_manager.poll_and_process_events()

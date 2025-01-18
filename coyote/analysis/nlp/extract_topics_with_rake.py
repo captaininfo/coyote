@@ -5,7 +5,7 @@ from typing import Any, Dict
 # Get logger
 logger = logging.getLogger(__name__)
 
-def extract_topics_with_rake(self, text: str) -> Dict[str, Any]:
+def extract_topics_with_rake(text: str) -> Dict[str, Any]:
     """
     Extracts topics from text using RAKE.
 
