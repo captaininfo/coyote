@@ -118,7 +118,7 @@ def initialize_coyote_event_staging_db() -> None:
 
 def initialize_coyote_event_data_db() -> None:
     """
-    Initializes the coyote_event_data.db with the required tables.
+    Initializes the coyote_event_data.db with the required tables and enables WAL mode.
     """
     schema_sql = '''
     CREATE TABLE IF NOT EXISTS Events (
@@ -224,6 +224,7 @@ def initialize_coyote_event_data_db() -> None:
     CREATE INDEX IF NOT EXISTS idx_events_event_id ON Events(event_id);
     '''
     initialize_database(EVENT_DATA_DB_FILE, schema_sql)
+    enable_wal_mode(EVENT_DATA_DB_FILE)
 
 
 def initialize_wikidata_cache_db() -> None:
@@ -241,6 +242,31 @@ def initialize_wikidata_cache_db() -> None:
     CREATE INDEX IF NOT EXISTS idx_wikidata_cache_entity ON WikidataCache(entity);
     '''
     initialize_database(WIKIDATA_CACHE_DB_FILE, schema_sql)
+
+
+
+def enable_wal_mode(db_file: Path) -> None:
+    """
+    Enables Write-Ahead Logging (WAL) mode for the specified SQLite database.
+
+    Args:
+        db_file (Path): The path to the SQLite database file.
+    """
+    try:
+        conn = sqlite3.connect(db_file, timeout=10.0)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        wal_mode = cursor.fetchone()
+        if wal_mode and wal_mode[0].upper() == 'WAL':
+            logger.info(f"WAL mode enabled for '{db_file}'.")
+        else:
+            logger.warning(f"Failed to enable WAL mode for '{db_file}'. Current mode: {wal_mode[0] if wal_mode else 'Unknown'}")
+        conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error while enabling WAL mode for '{db_file.name}': {e}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def main() -> None:

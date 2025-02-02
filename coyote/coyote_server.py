@@ -21,8 +21,7 @@ from typing import Any, Dict, Optional
 # Import necessary functions and modules
 from coyote.coyote_nlp_state_manager import CoyoteNLPStateManager
 from coyote.coyote_event_writer import process_hypothesis_annotations
-from coyote.neo4j_integration.events_to_neo4j import main as events_to_neo4j_main
-from coyote.coyote_nlp_state_manager import CoyoteNLPStateManager
+from coyote.neo4j_integration.coyote_neo4j_state_manager import CoyoteNeo4jStateManager
 from coyote.utils.config_manager import (
     store_setting, 
     load_secret_key, 
@@ -100,14 +99,16 @@ def start_coyote_state_manager():
     except Exception as e:
         logger.error(f"Error in CoyoteNLPStateManager: {e}", exc_info=True)
 
-def start_events_to_neo4j():
+def start_coyote_neo4j_state_manager():
     """
-    Starts the events_to_neo4j module in a background thread.
+    Starts the CoyoteNeo4jStateManager in a background thread.
     """
     try:
-        events_to_neo4j_main()
+        neo4j_manager = CoyoteNeo4jStateManager()
+        logger.info("Starting CoyoteNeo4jStateManager...")
+        neo4j_manager.poll_and_process_neo4j_events()
     except Exception as e:
-        logger.error(f"Error in events_to_neo4j module: {e}", exc_info=True)
+        logger.error(f"Error in CoyoteNeo4jStateManager: {e}", exc_info=True)
 
 
 def get_latest_timestamp() -> Optional[str]:
@@ -358,10 +359,10 @@ def main() -> None:
     state_manager_thread.start()
     logger.info("Started CoyoteNLPStateManager thread.")
 
-    # Start the events_to_neo4j in a background thread
-    neo4j_thread = Thread(target=start_events_to_neo4j, daemon=True)
+    # Start the Neo4j manager:
+    neo4j_thread = Thread(target=start_coyote_neo4j_state_manager, daemon=True)
     neo4j_thread.start()
-    logger.info("Started events_to_neo4j thread.")
+    logger.info("Started CoyoteNeo4jStateManager thread.")
 
     # Start the Flask app
     logger.info("Starting the Coyote Flask server...")

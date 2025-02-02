@@ -8,7 +8,7 @@ import logging
 from time import sleep
 from typing import List, Optional
 from nltk.corpus import stopwords
-from coyote.utils.config_manager import get_event_data_db_connection
+from coyote.utils.config_manager import get_event_data_db_connection, get_event_data_read_only_connection
 from coyote.utils.event_data_handler import (
     fetch_next_event,
     insert_event,
@@ -54,6 +54,9 @@ class CoyoteNLPStateManager:
     def __init__(self) -> None:
         self.data_conn = get_event_data_db_connection()
         self.data_cursor = self.data_conn.cursor()
+
+        self.read_only_conn = get_event_data_read_only_connection()  # For reads
+        self.read_only_cursor = self.read_only_conn.cursor()
 
     def poll_and_process_events(self) -> None:
         """
@@ -126,8 +129,8 @@ class CoyoteNLPStateManager:
         """
         Fetch a list of event_ids from EventTracking that have status 'ready_for_nlp'.
         """
-        self.data_cursor.execute("SELECT event_id FROM EventTracking WHERE status='ready_for_nlp'")
-        rows = self.data_cursor.fetchall()
+        self.read_only_cursor.execute("SELECT event_id FROM EventTracking WHERE status='ready_for_nlp'")
+        rows = self.read_only_cursor.fetchall()
         return [r[0] for r in rows] if rows else []
 
 
@@ -135,8 +138,8 @@ class CoyoteNLPStateManager:
         """
         Retrieve the event_type for a given event_id from the Events table.
         """
-        self.data_cursor.execute("SELECT event_type FROM Events WHERE event_id=?", (event_id,))
-        row = self.data_cursor.fetchone()
+        self.read_only_cursor.execute("SELECT event_type FROM Events WHERE event_id=?", (event_id,))
+        row = self.read_only_cursor.fetchone()
         return row[0] if row else None
 
 

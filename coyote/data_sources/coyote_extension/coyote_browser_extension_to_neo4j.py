@@ -5,20 +5,25 @@ Module for processing data from the Coyote browser extension and inserting it in
 """
 
 import logging
-from typing import Any, Dict, Optional, Tuple
+import json  # Added to perform JSON serialization
+from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
 
 from neo4j import Session, Transaction
 import sqlite3
 
-from coyote.utils.coyote_state_manager import CoyoteStateManager
+# Removed the direct import to prevent circular dependency
+# from coyote.neo4j_integration.coyote_neo4j_state_manager import CoyoteNeo4jStateManager
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from coyote.neo4j_integration.coyote_neo4j_state_manager import CoyoteNeo4jStateManager
 
 
 def process_coyote_browser_extension_data(
     session: Session,
     event_data: Dict[str, Any],
-    state_manager: CoyoteStateManager,
+    state_manager: "CoyoteNeo4jStateManager",  # Use string for forward reference
     cursor: sqlite3.Cursor
 ) -> Tuple[Optional[int], Optional[int]]:
     """
@@ -27,7 +32,7 @@ def process_coyote_browser_extension_data(
     Args:
         session (Session): The Neo4j database session.
         event_data (Dict[str, Any]): The data entry to process.
-        state_manager (CoyoteStateManager): The state manager for tracking node IDs.
+        state_manager (CoyoteNeo4jStateManager): The state manager for tracking node IDs.
         cursor (sqlite3.Cursor): The SQLite cursor for querying data.
 
     Returns:
@@ -37,99 +42,144 @@ def process_coyote_browser_extension_data(
     search_terms_id = None
 
     try:
-        event = event_data.get("event")
-        if event == "User starts or modifies a search":
-            # Extract and set timestamp and data source
-            timestamp = event_data.get("timestamp")
-            data_source = event_data.get("dataSource", "Coyote Browser Extension")
-            
-            # Fetch data from SQLite databases using the passed cursor
-            search_event_id = event_data.get("event_id")
-            if not search_event_id:
-                logger.warning("No event_id found in event_data. Skipping.")
-                return purpose_id, search_terms_id
+        logger.debug(f"Starting to process event_data: {event_data}")
 
-            # Fetch Purpose data from SearchEvents
+        event = event_data.get("event_type")  # Updated from "event" to "event_type"
+        if not event:
+            logger.warning("Event type is missing in event_data. Skipping.")
+            return purpose_id, search_terms_id
+
+        logger.debug(f"Processing event: {event}")
+
+        # Extract and set timestamp and data source
+        timestamp = event_data.get("timestamp")
+        data_source = event_data.get("data_source", "Coyote Browser Extension")
+        logger.debug(f"Extracted timestamp: {timestamp}, data_source: {data_source}")
+
+        # Fetch data from SQLite databases using the passed cursor
+        search_event_id = event_data.get("event_id")
+        if not search_event_id:
+            logger.warning("No event_id found in event_data. Skipping.")
+            return purpose_id, search_terms_id
+
+        logger.debug(f"Fetching Purpose and Topics data for event_id: {search_event_id}")
+
+        if event == "User starts or modifies a search":
+            # Fetch Purpose and Search Terms from SearchEvents
             cursor.execute(
-                "SELECT purpose, timestamp FROM SearchEvents WHERE event_id = ?",
+                "SELECT purpose, search_terms, search_terms_relevance_score FROM SearchEvents WHERE event_id = ?",
                 (search_event_id,)
             )
             search_event = cursor.fetchone()
             if search_event:
                 purpose_text = search_event[0] or "No Purpose"
-                purpose_timestamp = search_event[1]
+                search_terms = search_event[1] or "No Search Terms"
+                search_terms_relevance_score = search_event[2]
             else:
                 logger.warning(f"No SearchEvents data found for event_id {search_event_id}. Using defaults.")
                 purpose_text = "No Purpose"
-                purpose_timestamp = timestamp or "Unknown Timestamp"
+                search_terms = "No Search Terms"
+                search_terms_relevance_score = 0.0  # or another default value
+
+            # Fetch timestamp from Events
+            cursor.execute(
+                "SELECT timestamp FROM Events WHERE event_id = ?",
+                (search_event_id,)
+            )
+            event_row = cursor.fetchone()
+            if event_row:
+                purpose_timestamp = event_row[0]
+            else:
+                logger.warning(f"No Events data found for event_id {search_event_id}. Using default timestamp.")
+                purpose_timestamp = "Unknown Timestamp"
+
+            logger.debug(f"Purpose Text: {purpose_text}, Search Terms: {search_terms}, Search Terms Relevance Score: {search_terms_relevance_score}, Timestamp: {timestamp}")
 
             # Fetch Topics related to Purpose
             cursor.execute(
                 """
-                SELECT topic, wikidata_url, label FROM Topics
-                WHERE event_id = ? AND related_to = 'purpose'
+                SELECT topic, wikidata_uri, label FROM Topics
+                WHERE event_id = ? AND topic_context = 'purpose'
                 """,
                 (search_event_id,)
             )
             purpose_topics = cursor.fetchall()
-            purpose_topics_json = [
-                {"topic": row[0], "wikidata_url": row[1], "label": row[2]} for row in purpose_topics
+            logger.debug(f"Fetched Purpose Topics: {purpose_topics}")
+
+            # Build list of dictionaries then JSON-serialize it
+            purpose_topics_list = [
+                {"topic": row[0], "wikidata_uri": row[1], "label": row[2]} for row in purpose_topics
             ]
+            purpose_topics_json = json.dumps(purpose_topics_list)
 
             # Fetch Entities related to Purpose
             cursor.execute(
                 """
-                SELECT entity, wikidata_url, label FROM Entities
-                WHERE event_id = ? AND related_to = 'purpose'
+                SELECT entity, wikidata_uri, label FROM Entities
+                WHERE event_id = ? AND entity_context = 'purpose'
                 """,
                 (search_event_id,)
             )
             purpose_entities = cursor.fetchall()
-            purpose_entities_json = [
-                {"entity": row[0], "wikidata_url": row[1], "label": row[2]} for row in purpose_entities
+            logger.debug(f"Fetched Purpose Entities: {purpose_entities}")
+
+            purpose_entities_list = [
+                {"entity": row[0], "wikidata_uri": row[1], "label": row[2]} for row in purpose_entities
             ]
+            purpose_entities_json = json.dumps(purpose_entities_list)
 
             # Fetch Search Terms data
-            search_terms = event_data.get("searchTerms", "No Search Terms")
+            search_terms = event_data.get("search_terms", "No Search Terms")
+            logger.debug(f"Search Terms: {search_terms}")
 
             # Fetch Topics related to Search Terms
             cursor.execute(
                 """
-                SELECT topic, wikidata_url, label FROM Topics
-                WHERE event_id = ? AND related_to = 'search_terms'
+                SELECT topic, wikidata_uri, label FROM Topics
+                WHERE event_id = ? AND topic_context = 'search_terms'
                 """,
                 (search_event_id,)
             )
             search_terms_topics = cursor.fetchall()
-            search_terms_topics_json = [
-                {"topic": row[0], "wikidata_url": row[1], "label": row[2]} for row in search_terms_topics
+            logger.debug(f"Fetched Search Terms Topics: {search_terms_topics}")
+
+            search_terms_topics_list = [
+                {"topic": row[0], "wikidata_uri": row[1], "label": row[2]} for row in search_terms_topics
             ]
+            search_terms_topics_json = json.dumps(search_terms_topics_list)
 
             # Fetch Entities related to Search Terms
             cursor.execute(
                 """
-                SELECT entity, wikidata_url, label FROM Entities
-                WHERE event_id = ? AND related_to = 'search_terms'
+                SELECT entity, wikidata_uri, label FROM Entities
+                WHERE event_id = ? AND entity_context = 'search_terms'
                 """,
                 (search_event_id,)
             )
             search_terms_entities = cursor.fetchall()
-            search_terms_entities_json = [
-                {"entity": row[0], "wikidata_url": row[1], "label": row[2]} for row in search_terms_entities
+            logger.debug(f"Fetched Search Terms Entities: {search_terms_entities}")
+
+            search_terms_entities_list = [
+                {"entity": row[0], "wikidata_uri": row[1], "label": row[2]} for row in search_terms_entities
             ]
+            search_terms_entities_json = json.dumps(search_terms_entities_list)
 
             # Fetch Relevance related to Search Terms
             cursor.execute(
                 """
-                SELECT relevance FROM Relevance
-                WHERE event_id = ? AND related_to = 'search_terms'
+                SELECT search_terms_relevance_score FROM SearchEvents
+                WHERE event_id = ?
                 """,
                 (search_event_id,)
             )
             search_terms_relevance = cursor.fetchall()
-            search_terms_relevance_json = [row[0] for row in search_terms_relevance]
+            logger.debug(f"Fetched Search Terms Relevance: {search_terms_relevance}")
 
-            logger.info(f"Inserting Purpose and SearchTerms with timestamp: {timestamp}")
+            # Convert relevance scores (list of numbers) to JSON string
+            search_terms_relevance_list = [row[0] for row in search_terms_relevance]
+            search_terms_relevance_json = json.dumps(search_terms_relevance_list)
+
+            logger.info(f"Inserting Purpose and Search Terms with timestamp: {timestamp}")
             result = session.execute_write(
                 _create_purpose_and_search_terms,
                 purpose_text,
@@ -139,23 +189,29 @@ def process_coyote_browser_extension_data(
                 search_terms_topics_json,
                 search_terms_entities_json,
                 search_terms_relevance_json,
-                purpose_timestamp,
+                timestamp,
                 data_source
             )
             if result:
                 purpose_id, search_terms_id = result
+                logger.debug(f"Created Purpose ID: {purpose_id}, Search Terms ID: {search_terms_id}")
 
             # Update state manager with the latest SearchTerms node ID
             state_manager.last_search_terms_node_id = search_terms_id
+            logger.debug(f"Updated state manager with last_search_terms_node_id: {search_terms_id}")
+
 
         elif event == "Webpage loads":
+            logger.debug(f"Processing event: {event}")
+
             # Extract and set timestamp and data source
             timestamp = event_data.get("timestamp")
-            data_source = event_data.get("dataSource", "Coyote Browser Extension")
+            data_source = event_data.get("data_source", "Coyote Browser Extension")
             url = event_data.get("url", "No URL")
-            title = event_data.get("webpageTitle", "No Title")
-            summary = event_data.get("webpageSummary", "No Summary")
-            
+            title = event_data.get("webpage_title", "No Title")
+            summary = event_data.get("webpage_summary", "No Summary")
+            logger.debug(f"Extracted timestamp: {timestamp}, data_source: {data_source}")
+
             # Fetch data from SQLite databases using the passed cursor
             webpage_event_id = event_data.get("event_id")
             if not webpage_event_id:
@@ -165,28 +221,30 @@ def process_coyote_browser_extension_data(
             # Fetch Topics related to Webpage
             cursor.execute(
                 """
-                SELECT topic, wikidata_url, label FROM Topics
-                WHERE event_id = ? AND related_to = 'webpage'
+                SELECT topic, wikidata_uri, label FROM Topics
+                WHERE event_id = ? AND topic_context = 'webpage'
                 """,
                 (webpage_event_id,)
             )
             topics = cursor.fetchall()
-            topics_json = [
-                {"topic": row[0], "wikidata_url": row[1], "label": row[2]} for row in topics
+            topics_list = [
+                {"topic": row[0], "wikidata_uri": row[1], "label": row[2]} for row in topics
             ]
+            topics_json = json.dumps(topics_list)
 
             # Fetch Entities related to Webpage
             cursor.execute(
                 """
-                SELECT entity, wikidata_url, label FROM Entities
-                WHERE event_id = ? AND related_to = 'webpage'
+                SELECT entity, wikidata_uri, label FROM Entities
+                WHERE event_id = ? AND entity_context = 'webpage'
                 """,
                 (webpage_event_id,)
             )
             entities = cursor.fetchall()
-            entities_json = [
-                {"entity": row[0], "wikidata_url": row[1], "label": row[2]} for row in entities
+            entities_list = [
+                {"entity": row[0], "wikidata_uri": row[1], "label": row[2]} for row in entities
             ]
+            entities_json = json.dumps(entities_list)
 
             # Determine if the webpage is a SERP
             is_serp = "- Google Search" in title or url.startswith("https://www.google.com/search?")
@@ -208,11 +266,13 @@ def process_coyote_browser_extension_data(
             logger.info(f"Webpage node created with ID: {webpage_id}")
             # Update state manager with the latest Webpage node ID
             state_manager.last_webpage_node_id = webpage_id
-    
+
     except Exception as e:
-        logger.error(f"Error processing entry: {e}", exc_info=True)
+        logger.error(f"Error in process_coyote_browser_extension_data: {e}", exc_info=True)
+        raise
 
     return purpose_id, search_terms_id
+
 
 def _create_purpose_and_search_terms(
     tx: Transaction,
@@ -232,12 +292,12 @@ def _create_purpose_and_search_terms(
     Args:
         tx (Transaction): The Neo4j transaction.
         purpose_text (str): The text of the purpose.
-        purpose_topics (list): List of purpose topics dictionaries.
-        purpose_entities (list): List of purpose entities dictionaries.
+        purpose_topics (list): JSON-serialized string of purpose topics.
+        purpose_entities (list): JSON-serialized string of purpose entities.
         search_terms (str): The search terms.
-        search_terms_topics (list): List of search terms topics dictionaries.
-        search_terms_entities (list): List of search terms entities dictionaries.
-        search_terms_relevance (list): List of search terms relevance.
+        search_terms_topics (list): JSON-serialized string of search terms topics.
+        search_terms_entities (list): JSON-serialized string of search terms entities.
+        search_terms_relevance (list): JSON-serialized string of search terms relevance.
         timestamp (str): The timestamp.
         data_source (str): The data source.
 
@@ -295,19 +355,7 @@ def _create_and_link_webpage(
 ) -> int:
     """
     Create a Webpage node and link it to the previous node in the Neo4j database.
-
-    Args:
-        tx (Transaction): The Neo4j transaction.
-        last_webpage_node_id (Optional[int]): The ID of the last webpage node.
-        last_search_terms_node_id (Optional[int]): The ID of the last search terms node.
-        url (str): The URL of the webpage.
-        title (str): The title of the webpage.
-        summary (str): The summary of the webpage.
-        topics (list): List of webpage topics dictionaries.
-        entities (list): List of webpage entities dictionaries.
-        is_serp (bool): Whether the webpage is a search engine results page.
-        timestamp (str): The timestamp.
-        data_source (str): The data source.
+    If no previous node exists, create an orphan Webpage node.
 
     Returns:
         int: The ID of the created Webpage node.
@@ -320,16 +368,36 @@ def _create_and_link_webpage(
         target_node_id = last_search_terms_node_id
         rel_type = 'GENERATES_SERP' if is_serp else 'INITIATES'
     else:
-        # Handle the case where there is no previous node
-        # For this example, we'll assume there's a single 'User' node
-        user_node = tx.run("MATCH (u:User) RETURN id(u) AS user_id LIMIT 1").single()
-        if user_node:
-            target_node_id = user_node["user_id"]
-            rel_type = 'VISITS'
-        else:
-            logger.error("No User node found in Neo4j. Cannot link Webpage node.")
-            raise Exception("User node not found in Neo4j.")
+        # If there is literally no previous node, create an 'orphan' Webpage node
+        logger.info("No previous node found; creating an orphan Webpage node.")
+        create_orphan_webpage_query = """
+        CREATE (w:Webpage {
+            url: $url,
+            title: $title,
+            summary: $summary,
+            topics: $topics,
+            entities: $entities,
+            isSERP: $is_serp,
+            timestamp: $timestamp,
+            dataSource: $data_source,
+            isInput: true
+        })
+        RETURN id(w) AS id
+        """
+        result = tx.run(
+            create_orphan_webpage_query,
+            url=url,
+            title=title,
+            summary=summary,
+            topics=topics,
+            entities=entities,
+            is_serp=is_serp,
+            timestamp=timestamp,
+            data_source=data_source
+        ).single()
+        return result["id"]
 
+    # If we do have a target node, link the new Webpage to it
     query = f"""
     MATCH (node) WHERE id(node) = $node_id
     CREATE (w:Webpage {{

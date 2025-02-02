@@ -154,13 +154,43 @@ def get_event_data_db_connection() -> sqlite3.Connection:
         sqlite3.Connection: The SQLite connection object.
     """
     try:
-        with event_data_db_lock:  # Lock to ensure thread safety for the event data database
-            conn = sqlite3.connect(EVENT_DATA_DB_FILE)
+        with event_data_db_lock:  # Ensures thread safety
+            conn = sqlite3.connect(
+                EVENT_DATA_DB_FILE,
+                timeout=10.0  # Wait up to 10 seconds for the lock
+            )
             conn.row_factory = sqlite3.Row
-            logger.debug("Created direct connection to event data database.")
+
+            logger.debug("Created event data DB connection with 10s timeout.")
+
             return conn
     except sqlite3.Error as e:
         logger.error(f"Error connecting to event data database: {e}")
+        raise
+
+def get_event_data_read_only_connection() -> sqlite3.Connection:
+    """
+    Establishes and returns a read-only connection to the event data database.
+    """
+    try:
+        with event_data_db_lock:  # Ensures thread safety
+            conn = sqlite3.connect(
+                EVENT_DATA_DB_FILE,
+                timeout=10.0,    # Wait up to 10 seconds for the lock
+                uri=True          # Enables URI mode to specify read-only
+            )
+            conn.row_factory = sqlite3.Row
+
+            # Open the database in read-only mode
+            conn.execute("PRAGMA journal_mode=WAL;")  # Ensure WAL mode is set
+
+            # Set the database to read-only
+            conn.execute("PRAGMA query_only = ON;")
+
+            logger.debug("Created read-only event data DB connection with WAL mode and 10s timeout.")
+            return conn
+    except sqlite3.Error as e:
+        logger.error(f"Error connecting to event data database (read-only): {e}")
         raise
 
 

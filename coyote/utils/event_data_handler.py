@@ -67,7 +67,7 @@ def is_event_processing(data_conn: sqlite3.Connection) -> bool:
         cursor.execute('''
             SELECT COUNT(*) 
             FROM EventTracking 
-            WHERE status NOT IN ('completed', 'failed')
+            WHERE status NOT IN ('completed', 'failed', 'processed')
         ''')
         processing_count = cursor.fetchone()[0]
         return processing_count > 0
