@@ -74,6 +74,7 @@ def process_coyote_browser_extension_data(
             if search_event:
                 purpose_text = search_event[0] or "No Purpose"
                 search_terms = search_event[1] or "No Search Terms"
+                logger.debug(f"Search Terms: {search_terms}")
                 search_terms_relevance_score = search_event[2]
             else:
                 logger.warning(f"No SearchEvents data found for event_id {search_event_id}. Using defaults.")
@@ -128,10 +129,6 @@ def process_coyote_browser_extension_data(
             ]
             purpose_entities_json = json.dumps(purpose_entities_list)
 
-            # Fetch Search Terms data
-            search_terms = event_data.get("search_terms", "No Search Terms")
-            logger.debug(f"Search Terms: {search_terms}")
-
             # Fetch Topics related to Search Terms
             cursor.execute(
                 """
@@ -180,18 +177,24 @@ def process_coyote_browser_extension_data(
             search_terms_relevance_json = json.dumps(search_terms_relevance_list)
 
             logger.info(f"Inserting Purpose and Search Terms with timestamp: {timestamp}")
+            event_id = search_event_id  # Already validated above
+
             result = session.execute_write(
-                _create_purpose_and_search_terms,
-                purpose_text,
-                purpose_topics_json,
-                purpose_entities_json,
-                search_terms,
-                search_terms_topics_json,
-                search_terms_entities_json,
-                search_terms_relevance_json,
-                timestamp,
-                data_source
+                lambda tx: _create_purpose_and_search_terms(
+                    tx,
+                    event_id,
+                    purpose_text,
+                    purpose_topics_json,
+                    purpose_entities_json,
+                    search_terms,
+                    search_terms_topics_json,
+                    search_terms_entities_json,
+                    search_terms_relevance_json,
+                    purpose_timestamp,
+                    data_source
+                )
             )
+
             if result:
                 purpose_id, search_terms_id = result
                 logger.debug(f"Created Purpose ID: {purpose_id}, Search Terms ID: {search_terms_id}")
@@ -207,9 +210,6 @@ def process_coyote_browser_extension_data(
             # Extract and set timestamp and data source
             timestamp = event_data.get("timestamp")
             data_source = event_data.get("data_source", "Coyote Browser Extension")
-            url = event_data.get("url", "No URL")
-            title = event_data.get("webpage_title", "No Title")
-            summary = event_data.get("webpage_summary", "No Summary")
             logger.debug(f"Extracted timestamp: {timestamp}, data_source: {data_source}")
 
             # Fetch data from SQLite databases using the passed cursor
@@ -217,6 +217,27 @@ def process_coyote_browser_extension_data(
             if not webpage_event_id:
                 logger.warning("No event_id found in event_data. Skipping.")
                 return purpose_id, search_terms_id
+
+            # ── NEW: fetch the URL, title, summary from the WebpageLoads table ─────────
+            cursor.execute(
+                """
+                SELECT
+                    url,
+                    webpage_title   AS title,
+                    webpage_summary AS summary
+                FROM WebpageLoads
+                WHERE event_id = ?
+                """,
+                (webpage_event_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                url, title, summary = (row[0] or "No URL",
+                                    row[1] or "No Title",
+                                    row[2] or "No Summary")
+            else:
+                logger.warning("No WebpageLoads row for %s – using defaults", webpage_event_id)
+                url, title, summary = "No URL", "No Title", "No Summary"
 
             # Fetch Topics related to Webpage
             cursor.execute(
@@ -251,17 +272,20 @@ def process_coyote_browser_extension_data(
 
             logger.info(f"Inserting Webpage with URL: {url} at timestamp: {timestamp}")
             webpage_id = session.execute_write(
-                _create_and_link_webpage,
-                state_manager.last_webpage_node_id,
-                state_manager.last_search_terms_node_id,
-                url,
-                title,
-                summary,
-                topics_json,
-                entities_json,
-                is_serp,
-                timestamp,
-                data_source
+                lambda tx: _create_and_link_webpage(
+                    tx,
+                    webpage_event_id,
+                    state_manager.last_webpage_node_id,
+                    state_manager.last_search_terms_node_id,
+                    url,
+                    title,
+                    summary,
+                    topics_json,
+                    entities_json,
+                    is_serp,
+                    timestamp,
+                    data_source
+                )
             )
             logger.info(f"Webpage node created with ID: {webpage_id}")
             # Update state manager with the latest Webpage node ID
@@ -276,13 +300,14 @@ def process_coyote_browser_extension_data(
 
 def _create_purpose_and_search_terms(
     tx: Transaction,
+    event_id: str,
     purpose_text: str,
-    purpose_topics: list,
-    purpose_entities: list,
+    purpose_topics: str,
+    purpose_entities: str,
     search_terms: str,
-    search_terms_topics: list,
-    search_terms_entities: list,
-    search_terms_relevance: list,
+    search_terms_topics: str,
+    search_terms_entities: str,
+    search_terms_relevance: str,
     timestamp: str,
     data_source: str
 ) -> Tuple[int, int]:
@@ -291,6 +316,7 @@ def _create_purpose_and_search_terms(
 
     Args:
         tx (Transaction): The Neo4j transaction.
+        event_id (str): The ID tied to the user event. 
         purpose_text (str): The text of the purpose.
         purpose_topics (list): JSON-serialized string of purpose topics.
         purpose_entities (list): JSON-serialized string of purpose entities.
@@ -306,6 +332,7 @@ def _create_purpose_and_search_terms(
     """
     query = """
     CREATE (p:Purpose {
+        event_id: $event_id,
         text: $purpose_text,
         topics: $purpose_topics,
         entities: $purpose_entities,
@@ -314,6 +341,7 @@ def _create_purpose_and_search_terms(
         isInput: false
     })
     CREATE (st:SearchTerms {
+        event_id: $event_id,
         text: $search_terms,
         topics: $search_terms_topics,
         entities: $search_terms_entities,
@@ -327,6 +355,7 @@ def _create_purpose_and_search_terms(
     """
     result = tx.run(
         query,
+        event_id=event_id,
         purpose_text=purpose_text,
         purpose_topics=purpose_topics,
         purpose_entities=purpose_entities,
@@ -342,13 +371,14 @@ def _create_purpose_and_search_terms(
 
 def _create_and_link_webpage(
     tx: Transaction,
+    event_id: str,
     last_webpage_node_id: Optional[int],
     last_search_terms_node_id: Optional[int],
     url: str,
     title: str,
     summary: str,
-    topics: list,
-    entities: list,
+    topics: str,
+    entities: str,
     is_serp: bool,
     timestamp: str,
     data_source: str
@@ -372,6 +402,7 @@ def _create_and_link_webpage(
         logger.info("No previous node found; creating an orphan Webpage node.")
         create_orphan_webpage_query = """
         CREATE (w:Webpage {
+            event_id: $event_id,
             url: $url,
             title: $title,
             summary: $summary,
@@ -386,6 +417,7 @@ def _create_and_link_webpage(
         """
         result = tx.run(
             create_orphan_webpage_query,
+            event_id=event_id,
             url=url,
             title=title,
             summary=summary,
@@ -401,6 +433,7 @@ def _create_and_link_webpage(
     query = f"""
     MATCH (node) WHERE id(node) = $node_id
     CREATE (w:Webpage {{
+        event_id: $event_id,
         url: $url,
         title: $title,
         summary: $summary,
@@ -417,6 +450,7 @@ def _create_and_link_webpage(
     result = tx.run(
         query,
         node_id=target_node_id,
+        event_id=event_id,
         url=url,
         title=title,
         summary=summary,

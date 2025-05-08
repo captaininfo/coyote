@@ -12,7 +12,6 @@ import requests
 import logging
 import sqlite3
 import uuid
-import time
 from threading import Thread
 from datetime import datetime
 from pathlib import Path
@@ -20,14 +19,16 @@ from typing import Any, Dict, Optional
 
 # Import necessary functions and modules
 from coyote.coyote_nlp_state_manager import CoyoteNLPStateManager
-from coyote.coyote_event_writer import process_hypothesis_annotations
+from coyote.coyote_event_writer import process_hypothesis_annotations, insert_staging_event
 from coyote.neo4j_integration.coyote_neo4j_state_manager import CoyoteNeo4jStateManager
+from coyote.neo4j_integration.connect_to_ontology import CoyoteOntologyStateManager
+from coyote.utils.database_cleanup_manager import CoyoteDatabaseCleanupManager
+from coyote.utils.event_status import insert_event_status
 from coyote.utils.config_manager import (
     store_setting, 
     load_secret_key, 
     load_credentials,
-    get_event_data_db_connection,
-    get_setting
+    get_event_data_db_connection
 )
 
 from coyote.utils.initialize_databases import (
@@ -51,6 +52,14 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 # Configure logging globally
 logging.basicConfig(filename=str(LOG_FILE), level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(module)s.%(funcName)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+# --- keep Coyote at DEBUG, quiet down noisy third‑party libs -------------
+for noisy in (
+        "numba",                   # catches numba.core.*, numba.parfors, …
+        # "neo4j.pool",              # optional: pool debug traces
+        # "neo4j.io",                # optional: wire‑level dumps
+):
+    logging.getLogger(noisy).setLevel(logging.INFO)   # or WARNING/ERROR
 
 # Initialize Flask app
 app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
@@ -88,7 +97,7 @@ def close_db_connections(exception):
             conn.close()
 
 
-def start_coyote_state_manager():
+def start_coyote_nlp_state_manager():
     """
     Starts the CoyoteNLPStateManager in a background thread.
     """
@@ -110,11 +119,22 @@ def start_coyote_neo4j_state_manager():
     except Exception as e:
         logger.error(f"Error in CoyoteNeo4jStateManager: {e}", exc_info=True)
 
+def start_coyote_ontology_state_manager():
+    """
+    Starts the CoyoteOntologyStateManager in a background thread.
+    """
+    try:
+        ontology_manager = CoyoteOntologyStateManager()
+        logger.info("Starting CoyoteOntologyStateManager...")
+        ontology_manager.poll_and_process_ontology()
+    except Exception as e:
+        logger.error(f"Error in CoyoteOntologyStateManager: {e}", exc_info=True)
+
 
 def get_latest_timestamp() -> Optional[str]:
     """
-    Retrieve the latest timestamp of annotations from the coyote_event_data.db. 
-    Use this function once 'coyote_events_data.db' is implemented.
+    Retrieves the latest timestamp of annotations from the coyote_event_data.db. 
+    Why: so API GET calls to Hypothesis filter by timestamp and retrieve new annotations.
 
     Returns:
        Optional[str]: The latest timestamp in ISO format, or None if not found.
@@ -171,16 +191,19 @@ def process_request_data(data: Dict[str, Any], event_description: str) -> Any:
     # Generate a unique event ID for the event
     event_id = str(uuid.uuid4())
     
+    # ????? Is 'data_source' hardcoded to be "Coyote Browser Extension"?
     # Add common metadata to the data payload
     data['event_id'] = event_id
     data['event_type'] = event_description
     data['data_source'] = "Coyote Browser Extension"
     data['timestamp'] = datetime.now().isoformat()
 
-    # Insert the data into the EventStaging table in the staging database
-    from coyote.coyote_event_writer import insert_staging_event
+    # Insert the data into the EventStaging table in the 'coyote_event_staging' database
     try:
         insert_staging_event(data)
+        logger.debug(f"Staged event {event_id} in coyote_event_staging.db.")
+        # Insert a corresponding status record in the state database
+        insert_event_status(event_id, "pending")
         return jsonify({"status": "success", "message": "Data received and staged."})
     except Exception as e:
         logger.error(f"Error inserting data into staging: {e}", exc_info=True)
@@ -197,6 +220,8 @@ def configure():
         neo4j_username = request.form.get('neo4j_username')
         neo4j_password = request.form.get('neo4j_password')
 
+        # Is the "Validate required inputs" code, below, at odds with the try:if/else below it? 
+        # Inputting Hypothesis credentials should be optional
         # Validate required inputs
         if not all([neo4j_uri, neo4j_username, neo4j_password]):
             flash('Neo4j credentials are required.')
@@ -317,7 +342,7 @@ def fetch_hypothesis_data():
 
     params = {
         'user': f'acct:{username}@hypothes.is',
-        'limit': 200  # Fetch the maximum number of annotations allowed
+        'limit': 200  # Fetch the maximum number of annotations Hypothesis allows
     }
 
     if last_fetch_timestamp:
@@ -350,19 +375,30 @@ def fetch_hypothesis_data():
 def main() -> None:
     """
     Main function to run the Coyote server application.
+    Initializes databases, starts background state managers for NLP, Neo4j, and Ontology,
+    and then launches the Flask server.
     """
     # Initialize databases
     initialize_databases()
 
     # Start the CoyoteNLPStateManager in a background thread
-    state_manager_thread = Thread(target=start_coyote_state_manager, daemon=True)
+    state_manager_thread = Thread(target=start_coyote_nlp_state_manager, daemon=True)
     state_manager_thread.start()
     logger.info("Started CoyoteNLPStateManager thread.")
 
-    # Start the Neo4j manager:
+    # Start the CoyoteNeo4jStateManager in a background thread
     neo4j_thread = Thread(target=start_coyote_neo4j_state_manager, daemon=True)
     neo4j_thread.start()
     logger.info("Started CoyoteNeo4jStateManager thread.")
+
+    # Start the CoyoteOntologyStateManager in a background thread
+    ontology_thread = Thread(target=start_coyote_ontology_state_manager, daemon=True)
+    ontology_thread.start()
+    logger.info("Started CoyoteOntologyStateManager thread.")
+
+    # NEW: start the cleanup janitor
+    cleanup_mgr = CoyoteDatabaseCleanupManager()
+    cleanup_mgr.start()
 
     # Start the Flask app
     logger.info("Starting the Coyote Flask server...")

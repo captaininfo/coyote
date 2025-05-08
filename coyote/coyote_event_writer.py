@@ -12,7 +12,8 @@ import json
 import uuid
 from pathlib import Path
 from typing import Dict, Any, List
-from coyote.utils.config_manager import get_event_data_db_connection, get_staging_db_connection
+from coyote.utils.config_manager import get_staging_db_connection
+from coyote.utils.event_status import insert_event_status
 
 # Define base directories
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -133,7 +134,7 @@ def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
                 "source_url": None,
                 "destination_url": None,
                 "link_text": None,
-                "event_payload": {}
+                "event_payload": annotation 
             }
 
             # Log the data being passed to insert_staging_event
@@ -141,6 +142,7 @@ def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
 
             # Insert into the staging database
             insert_staging_event(annotation_data)
+            insert_event_status(event_id, "pending")
             logger.debug(f"Successfully processed annotation ID: {annotation['id']} with event_id: {event_id}")
         except Exception as e:
             logger.error(f"Error processing annotation ID {annotation.get('id', 'Unknown')} - Exception: {e}", exc_info=True)
@@ -241,7 +243,7 @@ def insert_annotation_event(conn: sqlite3.Connection, annotation_event_data: Dic
                 annotation_text,
                 highlighted_text,
                 user_account,
-                group_id,
+                groups,
                 visibility
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -253,7 +255,7 @@ def insert_annotation_event(conn: sqlite3.Connection, annotation_event_data: Dic
             annotation_event_data.get('annotation_text', ''),
             annotation_event_data.get('highlighted_text', ''),
             annotation_event_data.get('user_account', ''),
-            annotation_event_data.get('group_id', ''),
+            annotation_event_data.get('groups', ''),
             annotation_event_data.get('visibility', '')
         ))
         conn.commit()

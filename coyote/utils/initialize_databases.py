@@ -122,33 +122,32 @@ def initialize_coyote_event_data_db() -> None:
     """
     schema_sql = '''
     CREATE TABLE IF NOT EXISTS Events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT UNIQUE NOT NULL,
-        timestamp TEXT NOT NULL,
+        event_id   TEXT PRIMARY KEY,          -- <── your canonical key
+        timestamp  TEXT NOT NULL,
         event_type TEXT NOT NULL,
         data_source TEXT,
-        processed INTEGER DEFAULT 0
+        processed  INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS SearchEvents (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL,
-        purpose TEXT,
-        search_terms TEXT,
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id          TEXT NOT NULL,
+        purpose           TEXT,
+        search_terms      TEXT,
         search_terms_relevance_score REAL,
-        FOREIGN KEY(event_id) REFERENCES Events(event_id)
+        FOREIGN KEY(event_id) REFERENCES Events(event_id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS WebpageLoads (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL,
-        url TEXT,
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id          TEXT NOT NULL,
+        url               TEXT,
         wayback_machine_url TEXT,
-        webpage_title TEXT,
-        scraped_text TEXT,
-        webpage_summary TEXT,
+        webpage_title     TEXT,
+        scraped_text      TEXT,
+        webpage_summary   TEXT,
         webpage_relevance_score REAL,
-        FOREIGN KEY(event_id) REFERENCES Events(event_id)
+        FOREIGN KEY(event_id) REFERENCES Events(event_id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS HyperlinkClicks (
@@ -157,7 +156,7 @@ def initialize_coyote_event_data_db() -> None:
         source_url TEXT,
         destination_url TEXT,
         link_text TEXT,
-        FOREIGN KEY(event_id) REFERENCES Events(event_id)
+        FOREIGN KEY(event_id) REFERENCES Events(event_id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS Annotations (
@@ -169,9 +168,9 @@ def initialize_coyote_event_data_db() -> None:
         annotation_text TEXT,
         highlighted_text TEXT,
         user_account TEXT,
-        group_id TEXT,
+        groups TEXT,
         visibility TEXT,
-        FOREIGN KEY(event_id) REFERENCES Events(event_id)
+        FOREIGN KEY(event_id) REFERENCES Events(event_id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS Entities (
@@ -182,7 +181,7 @@ def initialize_coyote_event_data_db() -> None:
         wikidata_uri TEXT,
         label TEXT,
         score REAL,
-        FOREIGN KEY(event_id) REFERENCES Events(event_id)
+        FOREIGN KEY(event_id) REFERENCES Events(event_id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS Topics (
@@ -193,7 +192,7 @@ def initialize_coyote_event_data_db() -> None:
         wikidata_uri TEXT,
         label TEXT,
         score REAL,
-        FOREIGN KEY(event_id) REFERENCES Events(event_id)
+        FOREIGN KEY(event_id) REFERENCES Events(event_id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS AnnotationTags (
@@ -201,16 +200,18 @@ def initialize_coyote_event_data_db() -> None:
         event_id TEXT NOT NULL,
         annotation_id TEXT NOT NULL,
         tag TEXT NOT NULL,
-        FOREIGN KEY(event_id) REFERENCES Events(event_id),
-        FOREIGN KEY(annotation_id) REFERENCES Annotations(annotation_id)
+        FOREIGN KEY(event_id) REFERENCES Events(event_id) ON DELETE CASCADE,
+        FOREIGN KEY(annotation_id) REFERENCES Annotations(annotation_id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS EventTracking (
-        event_id TEXT PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL,
         status TEXT NOT NULL,
         last_step TEXT DEFAULT NULL,  -- Tracks the last completed NLP step (e.g., "NER")
         error_message TEXT DEFAULT NULL,  -- Stores error details if status is "failed"
-        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(event_id) REFERENCES Events(event_id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS CorpusDocuments (
@@ -222,10 +223,12 @@ def initialize_coyote_event_data_db() -> None:
     );
 
     CREATE INDEX IF NOT EXISTS idx_events_event_id ON Events(event_id);
+    CREATE INDEX IF NOT EXISTS idx_entities_event_id ON Entities(event_id);
+    CREATE INDEX IF NOT EXISTS idx_topics_event_id ON Topics(event_id);
     '''
     initialize_database(EVENT_DATA_DB_FILE, schema_sql)
     enable_wal_mode(EVENT_DATA_DB_FILE)
-
+    
 
 def initialize_wikidata_cache_db() -> None:
     """

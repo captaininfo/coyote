@@ -2,7 +2,8 @@
 connect_to_ontology.py
 
 Module for connecting user data nodes in Neo4j to the WikiData ontology.
-Includes caching of WikiData queries and recursive traversal to link ontology nodes.
+Uses event_queue in coyote_state.db to poll for events with status "neo4j_done",
+runs the ontology-connection logic, and updates events to "ontology_processed".
 """
 
 import json
@@ -16,26 +17,29 @@ from typing import Any, Dict, List, Optional
 from neo4j import GraphDatabase, Driver, Session
 from SPARQLWrapper import SPARQLWrapper, JSON
 
-from coyote.utils.config_manager import get_setting
+from coyote.utils.config_manager import (
+    get_setting,
+    get_state_read_only_connection,
+    get_state_db_connection,
+    connect_to_neo4j
+)
 
-# Configure logging
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Global configuration
-MAX_RECURSION_DEPTH = 5  # Limit recursion depth
-TOP_LEVEL_URI = "http://www.wikidata.org/entity/Q35120"  # Top-level 'entity' node
-STATE_DB_PATH = Path('data/coyote_state.db')
-CACHE_DB_PATH = Path('data/wikidata_cache.db')
-CACHE_EXPIRATION_DAYS = 7  # Cache expiration time in days
+# Adjust these if needed
+MAX_RECURSION_DEPTH = 5 # Limit recursion depth in WikiData's ontology hierarchy
+TOP_LEVEL_URI = "http://www.wikidata.org/entity/Q35120" # Top-level 'entity' node in WikiData ontology
+CACHE_EXPIRATION_DAYS = 7
+POLL_INTERVAL_SECONDS = 60  # how often poll_and_process_ontology checks for "neo4j_done" events
+EVENTS_BATCH_SIZE = 5      # how many events to handle per cycle
 
+################################################################################
+# Caching logic
+################################################################################
 
-def initialize_cache_db(cache_db_path: Path = CACHE_DB_PATH) -> None:
+def initialize_cache_db(cache_db_path: Path) -> None:
     """
     Initializes the SQLite database used for caching WikiData queries.
-
-    Args:
-        cache_db_path (Path): The path to the cache database file.
     """
     try:
         with sqlite3.connect(cache_db_path) as conn:
@@ -50,19 +54,12 @@ def initialize_cache_db(cache_db_path: Path = CACHE_DB_PATH) -> None:
             conn.commit()
         logger.info("Cache database initialized.")
     except sqlite3.Error as e:
-        logger.error(f"SQLite error in initialize_cache_db: {e}")
+        logger.error(f"SQLite error in initialize_cache_db: {e}", exc_info=True)
 
 
-def get_from_cache(uri: str, cache_db_path: Path = CACHE_DB_PATH) -> Optional[Any]:
+def get_from_cache(uri: str, cache_db_path: Path) -> Optional[Any]:
     """
     Retrieves data from the cache if available and not expired.
-
-    Args:
-        uri (str): The URI to look up in the cache.
-        cache_db_path (Path): The path to the cache database file.
-
-    Returns:
-        Optional[Any]: The cached data if available and not expired, else None.
     """
     try:
         with sqlite3.connect(cache_db_path) as conn:
@@ -77,22 +74,14 @@ def get_from_cache(uri: str, cache_db_path: Path = CACHE_DB_PATH) -> Optional[An
                 else:
                     logger.info(f"Cache expired for URI {uri}")
         return None
-    except sqlite3.Error as e:
-        logger.error(f"SQLite error in get_from_cache: {e}")
-        return None
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error in get_from_cache for URI {uri}: {e}")
+    except (sqlite3.Error, json.JSONDecodeError) as e:
+        logger.error(f"Error reading cache for URI {uri}: {e}", exc_info=True)
         return None
 
 
-def save_to_cache(uri: str, data: Any, cache_db_path: Path = CACHE_DB_PATH) -> None:
+def save_to_cache(uri: str, data: Any, cache_db_path: Path) -> None:
     """
     Saves data to the cache with the current timestamp.
-
-    Args:
-        uri (str): The URI to cache.
-        data (Any): The data to cache.
-        cache_db_path (Path): The path to the cache database file.
     """
     try:
         with sqlite3.connect(cache_db_path) as conn:
@@ -103,147 +92,32 @@ def save_to_cache(uri: str, data: Any, cache_db_path: Path = CACHE_DB_PATH) -> N
                 (uri, json.dumps(data), timestamp)
             )
             conn.commit()
-        logger.info(f"Data cached for URI {uri}")
-    except sqlite3.Error as e:
-        logger.error(f"SQLite error in save_to_cache: {e}")
-    except Exception as e:
-        logger.error(f"Error in save_to_cache for URI {uri}: {e}")
+        logger.debug(f"Cached data for URI {uri}")
+    except (sqlite3.Error, Exception) as e:
+        logger.error(f"Error saving cache for URI {uri}: {e}", exc_info=True)
 
+################################################################################
+# WikiData logic
+################################################################################
 
-def get_batch_of_node_ids(
-    db_path: Path = STATE_DB_PATH,
-    batch_size: int = 10
-) -> List[int]:
-    """
-    Fetches a batch of node IDs from the SQLite database that are pending processing.
-
-    Args:
-        db_path (Path): The path to the state database file.
-        batch_size (int): The number of node IDs to fetch.
-
-    Returns:
-        List[int]: A list of node IDs.
-    """
-    try:
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-            SELECT node_id FROM node_processing_queue
-            WHERE status = 'pending'
-            ORDER BY created_at ASC
-            LIMIT ?
-            """, (batch_size,))
-            rows = cursor.fetchall()
-            node_ids = [row[0] for row in rows]
-
-            if node_ids:
-                cursor.execute("""
-                UPDATE node_processing_queue
-                SET status = 'in_progress'
-                WHERE node_id IN ({})
-                """.format(','.join('?' * len(node_ids))), node_ids)
-                conn.commit()
-                logger.info(f"Fetched and set to 'in_progress' batch of {len(node_ids)} node IDs.")
-            else:
-                logger.info("No pending node IDs found.")
-
-            return node_ids
-
-    except sqlite3.Error as e:
-        logger.error(f"SQLite error in get_batch_of_node_ids: {e}")
-        return []
-
-
-def get_user_data_nodes(session: Session, node_ids: List[int]) -> Dict[int, Dict[str, Any]]:
-    """
-    Fetches user data nodes from Neo4j using a list of node IDs.
-
-    Args:
-        session (Session): The Neo4j session.
-        node_ids (List[int]): The list of node IDs to fetch.
-
-    Returns:
-        Dict[int, Dict[str, Any]]: A dictionary mapping node IDs to their data.
-    """
-    try:
-        query = """
-        MATCH (n) WHERE id(n) IN $node_ids
-        RETURN id(n) AS node_id, n.entities AS entities, n.topics AS topics, n.textTopics AS textTopics,
-               n.annotationTextEntities AS annotationTextEntities, n.highlightedTextEntities AS highlightedTextEntities,
-               n.timestamp AS timestamp
-        """
-        result = session.run(query, node_ids=node_ids)
-
-        nodes_data: Dict[int, Dict[str, Any]] = {}
-
-        for record in result:
-            node_id = record["node_id"]
-            data_fields = ["entities", "topics", "textTopics", "annotationTextEntities", "highlightedTextEntities"]
-            node_data = {field: record.get(field) or '[]' for field in data_fields}  # Default to '[]' if None
-            node_data["timestamp"] = record.get("timestamp", '')
-
-            # Only add nodes with non-empty data
-            if any(node_data[field] != '[]' for field in data_fields):
-                nodes_data[node_id] = node_data
-            else:
-                logger.info(f"No valid data found for node {node_id}. Skipping.")
-
-        logger.info(f"Fetched and processed {len(nodes_data)} relevant nodes from Neo4j.")
-        return nodes_data
-
-    except Exception as e:
-        logger.error(f"Error querying Neo4j in get_user_data_nodes: {e}")
-        return {}
-
-
-def extract_uris_from_node_data(data: Dict[str, Any]) -> List[str]:
-    """
-    Extracts URIs from the node data.
-
-    Args:
-        data (Dict[str, Any]): The node data.
-
-    Returns:
-        List[str]: A list of extracted URIs.
-    """
-    uris: List[str] = []
-    keys = ['entities', 'topics', 'textTopics', 'annotationTextEntities', 'highlightedTextEntities']
-    for key in keys:
-        value = data.get(key, '[]')
-        try:
-            items = json.loads(value)
-            for item in items:
-                if isinstance(item, list) and len(item) == 2 and item[1].startswith("http"):
-                    uris.append(item[1])
-                elif isinstance(item, dict) and 'uri' in item and item['uri']:
-                    uris.extend([uri for uri in item['uri'] if uri.startswith("http")])
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error for key '{key}': {e}")
-    return [uri for uri in uris if uri]
-
-
-def batch_query_wikidata(uris: List[str]) -> Dict[str, Any]:
+def batch_query_wikidata(uris: List[str], cache_db_path: Path) -> Dict[str, Any]:
     """
     Queries WikiData for a batch of URIs and caches the results.
-
-    Args:
-        uris (List[str]): The list of URIs to query.
-
-    Returns:
-        Dict[str, Any]: A mapping from URI to parent data.
     """
     unique_uris = list(set(uris))
     cached_data: Dict[str, Any] = {}
     uncached_uris: List[str] = []
 
+    # Check cache
     for uri in unique_uris:
-        data = get_from_cache(uri)
+        data = get_from_cache(uri, cache_db_path)
         if data:
             logger.info(f"Cache hit for URI {uri}")
             cached_data[uri] = data
         else:
             uncached_uris.append(uri)
 
+    # Query for uncached URIs
     if uncached_uris:
         BATCH_SIZE = 50
         for i in range(0, len(uncached_uris), BATCH_SIZE):
@@ -276,6 +150,7 @@ def batch_query_wikidata(uris: List[str]) -> Dict[str, Any]:
                 SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
             }}
             """
+            from SPARQLWrapper import SPARQLWrapper, JSON
             sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
             sparql.setQuery(query)
             sparql.setReturnFormat(JSON)
@@ -294,66 +169,55 @@ def batch_query_wikidata(uris: List[str]) -> Dict[str, Any]:
                     results_dict.setdefault(item_uri, []).append(parent_data)
                 for uri in batch_uris:
                     data_to_cache = results_dict.get(uri, [])
-                    save_to_cache(uri, data_to_cache)
+                    save_to_cache(uri, data_to_cache, cache_db_path)
                     cached_data[uri] = data_to_cache
-                time.sleep(1)  # Adjust as necessary
+                time.sleep(1)  # Throttle for courtesy
             except Exception as e:
-                logger.error(f"Error querying WikiData: {e}")
+                logger.error(f"Error querying WikiData for URIs {batch_uris}: {e}", exc_info=True)
+
     return cached_data
 
+################################################################################
+# Neo4j logic
+################################################################################
 
-def process_all_uris(
-    session: Session,
-    nodes_data: Dict[int, Dict[str, Any]],
-    update_db_func: Any
-) -> None:
-    """
-    Processes all URIs, querying WikiData, and creates relationships in Neo4j.
+def extract_uris_from_node_data(data: Dict[str, Any]) -> List[str]:
+    uris: List[str] = []
+    keys = [
+        "entities", "topics", "textTopics",
+        "annotationTextEntities", "highlightedTextEntities"
+    ]
+    for key in keys:
+        raw = data.get(key, "[]")
+        try:
+            items = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.debug("Bad JSON in %s", key)
+            continue
 
-    Args:
-        session (Session): The Neo4j session.
-        nodes_data (Dict[int, Dict[str, Any]]): The node data.
-        update_db_func (Any): The function to update node status in the database.
-    """
-    all_uris: List[str] = []
-    node_uri_map: Dict[int, List[str]] = {}
+        for item in items:
+            # pattern 1 – browser‑extension dicts
+            if isinstance(item, dict) and item.get("wikidata_uri"):
+                if item["wikidata_uri"].startswith("http"):
+                    uris.append(item["wikidata_uri"])
 
-    for node_id, data in nodes_data.items():
-        uris = extract_uris_from_node_data(data)
-        if uris:
-            node_uri_map[node_id] = uris
-            all_uris.extend(uris)
-        else:
-            logger.info(f"No URIs found for node {node_id}, marking it as processed.")
-            update_db_func(node_id, 'processed')
+            # pattern 2 – previous two‑element lists, keep it for backward compat
+            elif isinstance(item, list) and len(item) == 2:
+                if str(item[1]).startswith("http"):
+                    uris.append(item[1])
 
-    uri_parent_data_map = batch_query_wikidata(all_uris)
+            # pattern 3 – the original schema using 'uri'‑array
+            elif isinstance(item, dict) and "uri" in item:
+                uris.extend([u for u in item["uri"] if str(u).startswith("http")])
 
-    for node_id, uris in node_uri_map.items():
-        data = nodes_data[node_id]
-        timestamp = data.get('timestamp', '')
-        score = get_score_from_node_data(data)
-        for uri in uris:
-            parent_data_list = uri_parent_data_map.get(uri, [])
-            if parent_data_list:
-                create_or_link_wikidata_ontology_node(
-                    session, node_id, uri, parent_data_list, timestamp, score, 1, [uri]
-                )
-            else:
-                logger.warning(f"No parent data found for URI {uri}")
-        update_db_func(node_id, 'processed')
+    return uris
 
 
 def get_score_from_node_data(data: Dict[str, Any]) -> float:
     """
-    Extracts the score from node data if available.
-
-    Args:
-        data (Dict[str, Any]): The node data.
-
-    Returns:
-        float: The score, defaulting to 0 if not found.
+    Function that parses 'score' from node data.
     """
+    import json # I think I can delete this import
     score = 0.0
     try:
         entities = json.loads(data.get('entities', '[]'))
@@ -361,94 +225,57 @@ def get_score_from_node_data(data: Dict[str, Any]) -> float:
             if isinstance(entity, dict) and 'score' in entity:
                 score = float(entity['score'])
                 break
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error in get_score_from_node_data: {e}")
-    except ValueError as e:
-        logger.error(f"Value error in get_score_from_node_data: {e}")
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"Error parsing score: {e}")
     return score
-
 
 def create_or_link_wikidata_ontology_node(
     session: Session,
-    node_id: Optional[int],
+    node_id: int, # Previous version of this function used 'Optional[int]'
     uri: str,
     parent_data_list: List[Dict[str, str]],
     timestamp: str,
     score: float,
     depth: int,
-    visited_uris: List[str]
+    visited_uris: List[str],
+    cache_db_path: Path
 ) -> None:
     """
-    Creates or links WikiData ontology nodes and relationships in Neo4j.
-
-    Args:
-        session (Session): The Neo4j session.
-        node_id (Optional[int]): The user data node ID.
-        uri (str): The current URI.
-        parent_data_list (List[Dict[str, str]]): The parent data list.
-        timestamp (str): The timestamp.
-        score (float): The TF-IDF score.
-        depth (int): The current recursion depth.
-        visited_uris (List[str]): The list of visited URIs to prevent cycles.
+    Recursively connects WikiData ontology nodes in Neo4j.
     """
-    try:
-        if depth > MAX_RECURSION_DEPTH:
-            logger.info(f"Maximum recursion depth reached for node {node_id}. Stopping recursion.")
-            return
+    if depth > MAX_RECURSION_DEPTH: # Previous version was wrapped in 'try:'
+        logger.debug(f"Max recursion depth reached for node_id={node_id}, uri={uri}")
+        return
 
-        for parent in parent_data_list:
-            relationship = parent.get('relationship', '')
-            parent_uri = parent.get('parent', '')
-            parent_label = parent.get('parentLabel', '')
+    for parent in parent_data_list:
+        relationship = parent.get('relationship', '')
+        parent_uri = parent.get('parent', '')
+        parent_label = parent.get('parentLabel', '')
 
-            if not parent_uri:
-                continue
+        if not parent_uri:
+            continue
+        if parent_uri in visited_uris:
+            logger.debug(f"Cycle detected with {parent_uri}. Skipping.")
+            continue
+        visited_uris.append(parent_uri)
 
-            if parent_uri in visited_uris:
-                logger.warning(f"Cycle detected with URI {parent_uri}. Stopping recursion.")
-                continue
+        # For example, link user node to ontology:
+        user_to_ontology_rel_type = 'HAS_TOPIC'
+        create_or_link_node(session, node_id, uri, parent_uri, parent_label, timestamp, score, user_to_ontology_rel_type)
 
-            visited_uris.append(parent_uri)
-
-            if node_id is not None:
-                user_to_ontology_rel_type = 'HAS_TOPIC'
-                create_or_link_node(
-                    session, node_id, uri, parent_uri, parent_label, timestamp, score, user_to_ontology_rel_type
-                )
-            else:
-                rel_type = {
-                    "topic's main category": 'TOPIC_MAIN_CATEGORY',
-                    "said to be the same as": 'SAME_AS',
-                    "subclass of": 'SUBCLASS_OF',
-                    "instance of": 'INSTANCE_OF',
-                    "part of": 'PART_OF'
-                }.get(relationship, None)
-
-                if rel_type:
-                    create_or_link_node(
-                        session, node_id, uri, parent_uri, parent_label, timestamp, score, rel_type
-                    )
-                    if relationship == "topic's main category":
-                        set_node_property(session, parent_uri, {'is_main_category': True})
-                else:
-                    logger.info(f"Unhandled relationship type: {relationship}")
-                    continue
-
-            if parent_uri != TOP_LEVEL_URI:
-                parent_parent_data = get_from_cache(parent_uri) or batch_query_wikidata([parent_uri]).get(parent_uri, [])
-                create_or_link_wikidata_ontology_node(
-                    session, None, parent_uri, parent_parent_data, timestamp, score, depth + 1, visited_uris
-                )
-            else:
-                logger.info(f"Top-level entity node reached for {parent_uri}. Stopping recursion.")
-
-    except Exception as e:
-        logger.error(f"Error in create_or_link_wikidata_ontology_node for node ID {node_id}: {e}", exc_info=True)
-
+        # Recurse upward unless top-level
+        if parent_uri != TOP_LEVEL_URI:
+            # get from cache or query again
+            from_cache = get_from_cache(parent_uri, cache_db_path)
+            if from_cache is None:
+                from_cache = batch_query_wikidata([parent_uri], cache_db_path).get(parent_uri, [])
+            create_or_link_wikidata_ontology_node(
+                session, node_id, parent_uri, from_cache, timestamp, score, depth + 1, visited_uris, cache_db_path
+            )
 
 def create_or_link_node(
     session: Session,
-    node_id: Optional[int],
+    node_id: int, # Previous version was 'node_id: Optional[int]'
     source_uri: str,
     target_uri: str,
     target_label: str,
@@ -457,125 +284,239 @@ def create_or_link_node(
     relationship_type: str
 ) -> None:
     """
-    Creates or links nodes and relationships in Neo4j.
-
-    Args:
-        session (Session): The Neo4j session.
-        node_id (Optional[int]): The user data node ID.
-        source_uri (str): The source URI.
-        target_uri (str): The target URI.
-        target_label (str): The label for the target node.
-        timestamp (str): The timestamp.
-        score (float): The TF-IDF score.
-        relationship_type (str): The type of the relationship.
+    Creates or links a node in Neo4j with a relationship from the user node to the ontology node.
     """
     try:
-        query = """
-        MERGE (wdo:WikiDataOntology {uri: $targetUri})
-        ON CREATE SET wdo.label = $targetLabel
-        """
-        session.run(query, targetUri=target_uri, targetLabel=target_label)
+        # Merge the wikiDataOntology node
+        session.run(
+            """
+            MERGE (wdo:WikiDataOntology {uri: $targetUri})
+            ON CREATE SET wdo.label = $targetLabel
+            """,
+            targetUri=target_uri,
+            targetLabel=target_label
+        )
 
-        if node_id is not None:
-            query = f"""
+        # Link from user node to wikiDataOntology
+        session.run(
+            f"""
             MATCH (n) WHERE id(n) = $node_id
-            MATCH (wdo:WikiDataOntology {{uri: $targetUri}})
-            MERGE (n)-[rel:{relationship_type} {{timestamp: $timestamp, tfidf_score: $score}}]->(wdo)
-            """
-            session.run(query, node_id=node_id, targetUri=target_uri, timestamp=timestamp, score=score)
-            logger.info(f"Linked user node {node_id} to ontology node {target_uri} with relationship {relationship_type}.")
-        else:
-            query = f"""
-            MATCH (source:WikiDataOntology {{uri: $sourceUri}})
-            MATCH (target:WikiDataOntology {{uri: $targetUri}})
-            MERGE (source)-[rel:{relationship_type}]->(target)
-            """
-            session.run(query, sourceUri=source_uri, targetUri=target_uri)
-            logger.info(f"Linked ontology node {source_uri} to {target_uri} with relationship {relationship_type}.")
+            MERGE (wdo:WikiDataOntology {{uri: $targetUri}})
+            MERGE (n)-[rel:{relationship_type} {{
+                timestamp: $timestamp, 
+                tfidf_score: $score
+            }}]->(wdo)
+            """,
+            node_id=node_id,
+            targetUri=target_uri,
+            timestamp=timestamp,
+            score=score
+        )
+        logger.debug(f"Linked user node {node_id} to ontology node {target_uri} with {relationship_type}")
     except Exception as e:
-        logger.error(f"Error in create_or_link_node: {e}", exc_info=True)
+        logger.error(f"Error create_or_link_node: {e}", exc_info=True)
 
+################################################################################
+# The new manager class
+################################################################################
 
-def set_node_property(session: Session, uri: str, properties: Dict[str, Any]) -> None:
-    """
-    Sets properties on a node in Neo4j.
-
-    Args:
-        session (Session): The Neo4j session.
-        uri (str): The URI of the node.
-        properties (Dict[str, Any]): The properties to set.
-    """
-    try:
-        query = """
-        MATCH (wdo:WikiDataOntology {uri: $uri})
-        SET wdo += $properties
+class CoyoteOntologyStateManager:
+    def __init__(self) -> None:
         """
-        session.run(query, uri=uri, properties=properties)
-        logger.info(f"Set properties {properties} on node {uri}.")
-    except Exception as e:
-        logger.error(f"Error setting properties on node {uri}: {e}", exc_info=True)
+        Initialize references to the Neo4j driver and 
+        any local flags or concurrency states.
+        """
+        self._currently_processing = False
+        self._neo4j_driver: Optional[Driver] = None
 
+        # We'll also set up the local path for wikidata_cache
+        self._cache_db_path: Path = Path('data/wikidata_cache.db')
 
-def update_node_status_in_db(node_id: int, status: str, db_path: Path = STATE_DB_PATH) -> None:
-    """
-    Updates the status of a node in the SQLite database.
+        try:
+            uri = get_setting('neo4j_uri')
+            username = get_setting('neo4j_username')
+            password = get_setting('neo4j_password', decrypt=True)
 
-    Args:
-        node_id (int): The node ID.
-        status (str): The new status.
-        db_path (Path): The path to the state database file.
-    """
-    try:
-        query = "UPDATE node_processing_queue SET status = ? WHERE node_id = ?"
-        with sqlite3.connect(db_path) as conn:
+            if not all([uri, username, password]):
+                logger.error("Neo4j credentials not found in the database. Ontology manager won't run properly.")
+            else:
+                self._neo4j_driver = GraphDatabase.driver(uri, auth=(username, password))
+                logger.info("CoyoteOntologyStateManager: Connected to Neo4j.")
+        except Exception as e:
+            logger.error(f"CoyoteOntologyStateManager: Error connecting to Neo4j: {e}", exc_info=True)
+
+        # Initialize wikiDataCache
+        initialize_cache_db(self._cache_db_path)
+
+    def _fetch_neo4j_done_events(self, limit: int) -> List[str]:
+        """
+        Query event_queue in coyote_state.db for events with status='neo4j_done'.
+        Return their event_ids, and set them to 'ontology_in_progress'.
+        """
+        try:
+            conn = get_state_db_connection()
             cursor = conn.cursor()
-            cursor.execute(query, (status, node_id))
-            conn.commit()
-            logger.info(f"Node ID {node_id} marked as {status}.")
-    except sqlite3.Error as e:
-        logger.error(f"SQLite error while updating node status: {e}")
+            cursor.execute("""
+            SELECT event_id FROM event_queue
+            WHERE status='neo4j_done'
+            LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
 
+            event_ids = [row[0] for row in rows]
+            if event_ids:
+                # Set them to 'ontology_in_progress'
+                placeholders = ','.join('?' * len(event_ids))
+                cursor.execute(f"""
+                    UPDATE event_queue
+                    SET status='ontology_in_progress'
+                    WHERE event_id IN ({placeholders})
+                """, event_ids)
+                conn.commit()
+                logger.info(f"Fetched and set to 'ontology_in_progress' {len(event_ids)} event(s).")
+            else:
+                logger.info("No events with status='neo4j_done' found.")
+
+            conn.close()
+            return event_ids
+        except Exception as e:
+            logger.error(f"_fetch_neo4j_done_events error: {e}", exc_info=True)
+            return []
+
+    def poll_and_process_ontology(self) -> None:
+        """
+        Main loop that periodically polls the event_queue for 'neo4j_done',
+        processes them by linking to WikiData ontology, and updates to 'ontology_processed'.
+        """
+        logger.info("CoyoteOntologyStateManager: Starting ontology polling loop.")
+        try:
+            while True:
+                if self._currently_processing:
+                    logger.debug("CoyoteOntologyStateManager: Already processing; skipping this poll.")
+                    time.sleep(POLL_INTERVAL_SECONDS)
+                    continue
+
+                # Make sure we have a Neo4j driver
+                if not self._neo4j_driver:
+                    logger.warning("No Neo4j driver available. Attempting reconnection.")
+                    try:
+                        self._neo4j_driver = connect_to_neo4j()
+                    except Exception as e:
+                        logger.error(f"Ontology manager: Neo4j reconnection failed: {e}", exc_info=True)
+                        time.sleep(POLL_INTERVAL_SECONDS)
+                        continue
+
+                event_ids = self._fetch_neo4j_done_events(EVENTS_BATCH_SIZE)
+                if not event_ids:
+                    logger.debug("No 'neo4j_done' events to process. Sleeping.")
+                    time.sleep(POLL_INTERVAL_SECONDS)
+                    continue
+
+                self._currently_processing = True
+                try:
+                    # For each event_id, find the relevant node(s) in Neo4j, link them to WikiData
+                    with self._neo4j_driver.session() as session:
+                        for event_id in event_ids:
+                            self._process_single_event(session, event_id)
+                finally:
+                    self._currently_processing = False
+
+                time.sleep(POLL_INTERVAL_SECONDS)
+
+        except Exception as e:
+            logger.exception(f"Unexpected error in poll_and_process_ontology: {e}")
+
+    def _process_single_event(self, session: Session, event_id: str) -> None:
+        """
+        For a single event_id, find the relevant Neo4j nodes (usually by matching node event_id),
+        do the WikiData linking, then set the event to 'ontology_processed'.
+        """
+        logger.info(f"Ontology manager: Processing event_id {event_id}")
+
+        try:
+            # Example: We can find user data nodes by matching node.event_id
+            # If you stored the event_id property in Neo4j, do something like:
+            query = """
+            MATCH (n) WHERE n.event_id = $event_id
+            RETURN id(n) AS node_id, n.entities AS entities, n.topics AS topics, 
+                   n.textTopics AS textTopics, n.annotationTextEntities AS annotationTextEntities, 
+                   n.highlightedTextEntities AS highlightedTextEntities,
+                   n.timestamp AS timestamp
+            """
+            result = session.run(query, event_id=event_id)
+
+            nodes_data = {}
+            for record in result:
+                node_id = record["node_id"]
+                data_fields = ["entities","topics","textTopics","annotationTextEntities","highlightedTextEntities"]
+                node_data = {f: record.get(f) or '[]' for f in data_fields}
+                node_data["timestamp"] = record.get("timestamp", "")
+                nodes_data[node_id] = node_data
+
+            if not nodes_data:
+                logger.info(f"No relevant nodes found in Neo4j for event_id {event_id}. Marking as ontology_processed.")
+                self._update_event_queue_status(event_id, "ontology_processed")
+                return
+
+            # Process all URIs
+            for node_id, data in nodes_data.items():
+                uris = extract_uris_from_node_data(data)
+                if not uris:
+                    logger.info(f"No URIs found for node {node_id}")
+                    continue
+
+                timestamp = data.get('timestamp', '')
+                score = get_score_from_node_data(data)
+                for uri in uris:
+                    # Query or retrieve from cache
+                    from_cache = get_from_cache(uri, self._cache_db_path)
+                    if from_cache is None:
+                        # do batch query for just [uri]
+                        from_cache = batch_query_wikidata([uri], self._cache_db_path).get(uri, [])
+                    create_or_link_wikidata_ontology_node(
+                        session, node_id, uri, from_cache, timestamp, score, 1, visited_uris=[uri], cache_db_path=self._cache_db_path
+                    )
+
+            # Once finished linking all nodes, set the event to "ontology_processed"
+            self._update_event_queue_status(event_id, "ontology_processed")
+            logger.info(f"Finished processing ontology for event_id={event_id}, set to 'ontology_processed'.")
+
+        except Exception as e:
+            logger.error(f"Error processing ontology for event_id={event_id}: {e}", exc_info=True)
+            # Optionally set to some error status
+            self._update_event_queue_status(event_id, "ontology_failed")
+
+    def _update_event_queue_status(self, event_id: str, new_status: str) -> None:
+        """
+        Update the event_queue in coyote_state.db for the given event_id.
+        """
+        try:
+            conn = get_state_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE event_queue SET status = ?, processed_at = CURRENT_TIMESTAMP WHERE event_id = ?",
+                (new_status, event_id)
+            )
+            conn.commit()
+            conn.close()
+            logger.debug(f"event_queue status for event_id={event_id} updated to '{new_status}'.")
+        except Exception as e:
+            logger.error(f"Error updating event_queue status for event_id={event_id} to {new_status}: {e}", exc_info=True)
+
+################################################################################
+# If you want to run this as a standalone script
+################################################################################
 
 def main() -> None:
     """
-    Main function to initialize the cache and process nodes.
+    Example main function if you want to run 'connect_to_ontology.py' as a separate script.
     """
-    # Configure logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger.info("Starting ontology connection process (standalone).")
 
-    # Log that connect_to_ontology is started
-    logger.info("Starting ontology connection process.")
+    # spawn the manager
+    manager = CoyoteOntologyStateManager()
+    manager.poll_and_process_ontology()
 
-    initialize_cache_db()
-
-    uri = get_setting('neo4j_uri')
-    username = get_setting('neo4j_username')
-    password = get_setting('neo4j_password', decrypt=True)
-
-    if not all([uri, username, password]):
-        logger.error("Neo4j credentials not found. Please configure the application.")
-        return
-
-    driver: Driver = GraphDatabase.driver(uri, auth=(username, password))
-
-    try:
-        with driver.session() as session:
-            while True:
-                node_ids = get_batch_of_node_ids(db_path=STATE_DB_PATH)
-                if node_ids:
-                    logger.info(f"Node IDs fetched: {node_ids}")
-                    nodes_data = get_user_data_nodes(session, node_ids)
-                    if nodes_data:
-                        process_all_uris(session, nodes_data, update_node_status_in_db)
-                    else:
-                        logger.info("No user data nodes to process.")
-                else:
-                    logger.info("No node IDs fetched from the queue. Processing complete.")
-                    break
-    except Exception as e:
-        logger.error(f"An error occurred in the main loop: {e}", exc_info=True)
-    finally:
-        driver.close()
-        logger.info("Neo4j driver closed.")
-
-
+if __name__ == '__main__':
+    main()

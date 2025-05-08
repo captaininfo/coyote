@@ -67,7 +67,7 @@ def is_event_processing(data_conn: sqlite3.Connection) -> bool:
         cursor.execute('''
             SELECT COUNT(*) 
             FROM EventTracking 
-            WHERE status NOT IN ('completed', 'failed', 'processed')
+            WHERE status NOT IN ('completed', 'failed', 'processed', 'ready_for_nlp')
         ''')
         processing_count = cursor.fetchone()[0]
         return processing_count > 0
@@ -88,12 +88,14 @@ def insert_event_tracking(data_conn: sqlite3.Connection, event_id: str) -> bool:
         bool: True if the event was successfully inserted, False otherwise.
     """
     try:
+        logger.debug(f"[insert_event_tracking] BEFORE write: in_transaction={data_conn.in_transaction}")
         cursor = data_conn.cursor()
         cursor.execute('''
             INSERT INTO EventTracking (event_id, status, last_updated)
             VALUES (?, 'new', CURRENT_TIMESTAMP)
         ''', (event_id,))
         data_conn.commit()
+        logger.debug(f"[insert_event_tracking] AFTER commit: in_transaction={data_conn.in_transaction}")
         logger.info(f"Inserted event_id {event_id} into EventTracking with status 'new'.")
         return True
     except sqlite3.Error as e:
@@ -114,17 +116,20 @@ def insert_event(data_conn: sqlite3.Connection, event_id: str, event: dict) -> b
         bool: True if the event was successfully inserted, False otherwise.
     """
     try:
+        logger.debug(f"[insert_event] BEFORE write: in_transaction={data_conn.in_transaction}")
         cursor = data_conn.cursor()
         cursor.execute('''
             INSERT INTO Events (event_id, timestamp, event_type, data_source)
             VALUES (?, ?, ?, ?)
         ''', (
-            event_id,  # Use the event_id argument directly
-            event.get('timestamp', ''),  # Provide a default value if missing
+            event_id,
+            event.get('timestamp', ''),
             event.get('event_type', ''),
-            event.get('data_source', 'Coyote')  # Default to 'Coyote' if not provided
+            event.get('data_source', 'Coyote')
         ))
         data_conn.commit()
+        logger.debug(f"[insert_event] AFTER commit: in_transaction={data_conn.in_transaction}")
+
         logger.info(f"Inserted event_id {event_id} into Events table.")
         return True
     except sqlite3.Error as e:
@@ -142,10 +147,12 @@ def insert_event_specific_data(conn: sqlite3.Connection, event_data: Dict[str, A
         event_data (Dict[str, Any]): A dictionary containing the event data.
     """
     try:
-        with conn:  # Using the context manager to handle transactions
+        with conn:  # Using a context manager automatically begins a transaction
+            # Another quick check, to see that we are definitely in a transaction
+            logger.debug(f"[insert_event_specific_data] INSIDE context: in_transaction={conn.in_transaction}")
+
             event_type = event_data.get('event_type', '')
 
-            # Handle different event types and route data to specific tables
             if event_type == 'User starts or modifies a search':
                 insert_search_event(conn, event_data)
             elif event_type == 'User clicks hyperlink':
@@ -154,8 +161,7 @@ def insert_event_specific_data(conn: sqlite3.Connection, event_data: Dict[str, A
                 insert_webpage_loads_event(conn, event_data)
             elif event_type == 'User annotated webpage':
                 insert_annotation_event(conn, event_data)
-                
-                # Write each tag to the AnnotationTags table
+
                 if 'tags' in event_data and isinstance(event_data['tags'], list):
                     for tag in event_data['tags']:
                         annotation_tag_data = {
@@ -167,12 +173,15 @@ def insert_event_specific_data(conn: sqlite3.Connection, event_data: Dict[str, A
             else:
                 logger.warning(f"Unknown event type: {event_type}. Skipping event-specific data insertion.")
 
+        logger.debug(f"[insert_event_specific_data] AFTER context manager: in_transaction={conn.in_transaction}")
+
     except sqlite3.Error as e:
         logger.error(f"SQLite error while inserting event-specific data: {e}", exc_info=True)
         raise
 
 
 def mark_event_ready_for_nlp(conn: sqlite3.Connection, event_id: str) -> None:
+    logger.debug(f"[mark_event_ready_for_nlp] BEFORE any writes: in_transaction={conn.in_transaction}")
     try:
         cursor = conn.cursor()
         cursor.execute('''
@@ -182,6 +191,7 @@ def mark_event_ready_for_nlp(conn: sqlite3.Connection, event_id: str) -> None:
         ''', (event_id,))
         conn.commit()
         logger.info(f"Marked event_id {event_id} as 'ready_for_nlp'.")
+        logger.debug(f"[mark_event_ready_for_nlp] AFTER context manager: in_transaction={conn.in_transaction}")
     except sqlite3.Error as e:
         logger.error(f"Error updating event_id {event_id} to 'ready_for_nlp': {e}", exc_info=True)
         raise

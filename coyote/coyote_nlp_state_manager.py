@@ -7,10 +7,18 @@ State manager for managing the sequence of NLP analysis processes and orchestrat
 import logging
 from time import sleep
 from typing import List, Optional
+import sqlite3
 from nltk.corpus import stopwords
-from coyote.utils.config_manager import get_event_data_db_connection, get_event_data_read_only_connection
+
+from coyote.utils.config_manager import (
+    get_event_data_db_connection,
+    get_event_data_read_only_connection,
+    get_state_read_only_connection,
+    get_state_db_connection, 
+    get_staging_read_connection,
+    event_data_db_lock
+)
 from coyote.utils.event_data_handler import (
-    fetch_next_event,
     insert_event,
     insert_event_tracking,
     insert_event_specific_data,
@@ -58,53 +66,110 @@ class CoyoteNLPStateManager:
         self.read_only_conn = get_event_data_read_only_connection()  # For reads
         self.read_only_cursor = self.read_only_conn.cursor()
 
+
+    def fetch_pending_event_ids(self) -> List[str]:
+        """
+        Fetch pending event IDs from the centralized event_queue in coyote_state.db
+        using a read-only connection.
+        """
+        try:
+            conn = get_state_read_only_connection()  # Use the dedicated read-only connection
+            cursor = conn.cursor()
+            cursor.execute("SELECT event_id FROM event_queue WHERE status = 'pending'")
+            rows = cursor.fetchall()
+            conn.close()
+            pending_ids = [row[0] for row in rows] if rows else []
+            logger.debug(f"Fetched pending event IDs from event_queue: {pending_ids}")
+            return pending_ids
+        except Exception as e:
+            logger.error("Error fetching pending event IDs", exc_info=True)
+            return []
+
+    def fetch_event_from_staging(self, event_id: str) -> Optional[sqlite3.Row]:
+        """
+        Fetch event data for the given event_id from the staging database.
+        Uses the dedicated read-only connection from config_manager.py.
+        """
+        try:
+            conn = get_staging_read_connection()  # Use the dedicated staging read-only connection
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM EventStaging WHERE event_id = ?", (event_id,))
+            row = cursor.fetchone()
+            conn.close()
+            return row
+        except Exception as e:
+            logger.error(f"Error fetching event {event_id} from staging", exc_info=True)
+            return None
+
+
+    def update_event_queue_status(self, event_id: str, status: str) -> None:
+        """
+        Update the status of the event in the centralized event_queue (coyote_state.db).
+        Uses a write connection.
+        """
+        try:
+            conn = get_state_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE event_queue SET status = ?, processed_at = CURRENT_TIMESTAMP WHERE event_id = ?",
+                (status, event_id)
+            )
+            conn.commit()
+            conn.close()
+            logger.debug(f"Updated event_queue status for event_id {event_id} to '{status}'.")
+        except Exception as e:
+            logger.error(f"Error updating event_queue status for event_id {event_id}", exc_info=True)
+
+
     def poll_and_process_events(self) -> None:
         """
         Periodically poll for new events and process them.
-        Also checks for events that are 'ready_for_nlp' and dispatches them to appropriate NLP functions.
+        Uses the centralized event_queue in coyote_state.db to determine which events are pending.
+        Also processes events that are 'ready_for_nlp' from coyote_event_data.db.
         """
         while True:
             try:
-                # Ensure no event is currently processing for data insertion phase
-                with config_manager.event_data_db_lock:
+                # Step 0: Ensure no event is currently processing for data insertion
+                with event_data_db_lock:
                     if is_event_processing(self.data_conn):
                         logger.info("Another event is still processing. Waiting...")
                         sleep(15)
                         continue
 
-                # Step 1: Fetch and process a new event from the coyote_event_staging.db
-                event = fetch_next_event()
-                if event:
-                    event_id = event['event_id']
-                    event_dict = dict(event)
-                    logger.info(f"Processing event_id: {event_id} from staging.")
-                    logger.debug(f"Payload of event_dict: {event_dict}.")
-
-                    # Insert the event into the Events and EventTracking tables
-                    with config_manager.event_data_db_lock:
-                        if insert_event(self.data_conn, event_id, event_dict):
-                            logger.info(f"Successfully inserted event_id {event_id} into Events table.")
-
-                            # Track the event lifecycle in the EventTracking table
-                            if insert_event_tracking(self.data_conn, event_id):
-                                logger.info(f"Successfully inserted event_id {event_id} into EventTracking table.")
-
-                                # Insert event-type-specific data
-                                insert_event_specific_data(self.data_conn, event_dict)
-                                logger.info(f"Successfully inserted event-specific data for event_id {event_id}.")
-
-                                # Mark event as ready_for_nlp
-                                mark_event_ready_for_nlp(self.data_conn, event_id)
-                                logger.info(f"Marked event_id {event_id} as 'ready_for_nlp'.")
-                            else:
-                                logger.error(f"Failed to track event_id {event_id} in EventTracking.")
+                # Step 1: Poll 'event_queue' table in 'coyote_state.db' for events with status "pending"
+                pending_event_ids = self.fetch_pending_event_ids()
+                if pending_event_ids:
+                    logger.info(f"Found {len(pending_event_ids)} pending events in event_queue.")
+                    for event_id in pending_event_ids:
+                        # Step 1a: Fetch event data from the staging DB via helper function
+                        event = self.fetch_event_from_staging(event_id)
+                        if event:
+                            logger.info(f"Processing event_id {event_id} from staging (via event_queue).")
+                            event_dict = dict(event)
+                            logger.debug(f"Payload of event_dict: {event_dict}.")
+                            # Step 1b: Copy the event data into coyote_event_data.db
+                            with event_data_db_lock:
+                                if insert_event(self.data_conn, event_id, event_dict):
+                                    logger.info(f"Inserted event_id {event_id} into Events table.")
+                                    if insert_event_tracking(self.data_conn, event_id):
+                                        logger.info(f"Inserted event_id {event_id} into EventTracking table.")
+                                        insert_event_specific_data(self.data_conn, event_dict)
+                                        logger.info(f"Inserted event-specific data for event_id {event_id}.")
+                                        mark_event_ready_for_nlp(self.data_conn, event_id)
+                                        logger.info(f"Marked event_id {event_id} as 'ready_for_nlp' in event_data.db.")
+                                    else:
+                                        logger.error(f"Failed to track event_id {event_id} in EventTracking.")
+                                else:
+                                    logger.error(f"Failed to insert event_id {event_id} into Events table.")
+                            # Step 1c: Update the centralized status in coyote_state.db to "ready_for_nlp"
+                            self.update_event_queue_status(event_id, "ready_for_nlp")
                         else:
-                            logger.error(f"Failed to insert event_id {event_id} into Events table. Skipping processing.")
+                            logger.warning(f"No event found in staging for event_id {event_id}.")
                 else:
-                    logger.info("No new events to process.")
+                    logger.info("No pending events found in event_queue.")
 
-                # Step 2: Check for events ready for NLP
-                with config_manager.event_data_db_lock:
+                # Step 2: Process events in coyote_event_data.db that are 'ready_for_nlp'
+                with event_data_db_lock:
                     ready_events = self.fetch_ready_for_nlp_events()
                     for ready_event_id in ready_events:
                         event_type = self.get_event_type(ready_event_id)
@@ -116,9 +181,9 @@ class CoyoteNLPStateManager:
                             self.process_hyperlink_event(ready_event_id)
                         elif event_type == 'User annotated webpage':
                             self.process_annotation_event(ready_event_id)
-                        # Add additional elif blocks for other event types as you implement them
                         else:
                             logger.warning(f"No NLP handler implemented for event_type: {event_type}")
+                # Step 3: (Within each NLP processing method, update centralized status to "nlp_processed" upon completion)
 
                 sleep(15)  # Poll interval
             except Exception as e:
@@ -206,6 +271,8 @@ class CoyoteNLPStateManager:
             8. Write mapped topics back to database
             9. Map entities to WikiData using map_ner_to_wikidata()
             10. Write mapped entities back to database
+            11. Commit transaction and update internal status in EventTracking
+            12. Update centralized event_queue status to "nlp_processed"
         """
         logger.info(f"Starting processing for search event_id: {event_id}")
         
@@ -240,12 +307,10 @@ class CoyoteNLPStateManager:
             logger.debug(f"Extracted search terms entities: {search_terms_entities}")
             
             # Step 5: Insert extracted topics into Topics table
-            # (topic_context, topic, score are known; label, wikidata_uri are None for now)
             topics_records = []
             for context, topics_data in [('purpose', purpose_topics_data), ('search_terms', search_terms_topics_data)]:
                 for topic, score in topics_data.get("topics_with_weights", []):
                     topics_records.append((event_id, context, topic, None, None, score))
-
             if topics_records:
                 self.data_cursor.executemany(
                     "INSERT INTO Topics (event_id, topic_context, topic, wikidata_uri, label, score) VALUES (?, ?, ?, ?, ?, ?)",
@@ -254,15 +319,12 @@ class CoyoteNLPStateManager:
                 logger.info(f"Inserted {len(topics_records)} topics into Topics table.")
             else:
                 logger.warning("No topics extracted to insert into Topics table.")
-
+            
             # Step 6: Insert extracted entities into Entities table
-            # We have (entity, label) from extract_entities(). We'll store the original NER label now.
             entities_records = []
             for context, entities_list in [('purpose', purpose_entities), ('search_terms', search_terms_entities)]:
                 for (entity, ner_label) in entities_list:
-                    # Insert entity with original NER label, wikidata_uri=None for now
                     entities_records.append((event_id, context, entity, None, ner_label, None))
-
             if entities_records:
                 self.data_cursor.executemany(
                     "INSERT INTO Entities (event_id, entity_context, entity, wikidata_uri, label, score) VALUES (?, ?, ?, ?, ?, ?)",
@@ -271,11 +333,10 @@ class CoyoteNLPStateManager:
                 logger.info(f"Inserted {len(entities_records)} entities into Entities table.")
             else:
                 logger.warning("No entities extracted to insert into Entities table.")
-
             
             # Step 7: Map topics to WikiData
-            topics = [record[2] for record in topics_records]  # Extract topics from records
-            mapped_topics = map_topics_to_wikidata(topics)  # Use the correct mapping function
+            topics = [record[2] for record in topics_records]
+            mapped_topics = map_topics_to_wikidata(topics)
             logger.debug(f"Mapped Topics to WikiData: {mapped_topics}")
             
             # Step 8: Write mapped topics back to database
@@ -291,8 +352,8 @@ class CoyoteNLPStateManager:
                 logger.warning("No mapped topics to update in Topics table.")
             
             # Step 9: Map entities to WikiData
-            entities = [record[2] for record in entities_records]  # Extract entities from records
-            mapped_entities = map_ner_to_wikidata(entities)  # Use the correct mapping function
+            entities = [record[2] for record in entities_records]
+            mapped_entities = map_ner_to_wikidata(entities)
             logger.debug(f"Mapped Entities to WikiData: {mapped_entities}")
             
             # Step 10: Write mapped entities back to database
@@ -307,13 +368,17 @@ class CoyoteNLPStateManager:
             else:
                 logger.warning("No mapped entities to update in Entities table.")
             
-            # Commit transaction
+            # Step 11: Commit transaction and update internal EventTracking status
             self.data_cursor.execute(
                 "UPDATE EventTracking SET status='completed', last_updated=CURRENT_TIMESTAMP WHERE event_id=?",
                 (event_id,)
             )
             self.data_conn.commit()
-            logger.info(f"Marked event_id {event_id} as 'completed'.")
+            logger.info(f"Marked event_id {event_id} as 'completed' in event_data.db.")
+            
+            # Step 12: Update centralized event_queue status to "nlp_processed"
+            self.update_event_queue_status(event_id, "nlp_processed")
+            logger.info(f"Updated centralized event_queue status for event_id {event_id} to 'nlp_processed'.")
         
         except Exception as e:
             logger.exception(f"An error occurred while processing event_id {event_id}: {e}")
@@ -322,7 +387,6 @@ class CoyoteNLPStateManager:
                 (str(e), event_id)
             )
             self.data_conn.commit()
-
 
 
     def process_webpage_loads_event(self, event_id: str) -> None:
@@ -379,6 +443,23 @@ class CoyoteNLPStateManager:
                 webpage_summary = ''
                 detailed_topics = []
                 extracted_entities = []
+                # If URL is exempt, skip Steps 4-20, but still mark the event as completed.
+                # Step 21: Commit transaction and update internal EventTracking status to completed
+                self.data_cursor.execute(
+                    "UPDATE EventTracking SET status='completed', last_updated=CURRENT_TIMESTAMP WHERE event_id=?",
+                    (event_id,)
+                )
+                self.data_conn.commit()  # commit the transaction
+
+                logger.info(f"Marked event_id {event_id} as 'completed' (exempt) in event_data.db.")
+
+                # Step 22: Update centralized event_queue status to "nlp_processed" 
+                # (or consider a separate status like "nlp_exempt")
+                self.update_event_queue_status(event_id, "nlp_processed")
+                logger.info(f"Updated centralized event_queue status for exempt event_id {event_id} to 'nlp_processed'.")
+
+                # **Early return to avoid Steps 4-20.**
+                return
             else:
                 # Step 4: Scrape webpage main text
                 scraped_text = scrape_webpage(webpage_url)
@@ -525,13 +606,17 @@ class CoyoteNLPStateManager:
                     )
                 logger.info(f"Updated Entities table with TF-IDF scores for event_id {event_id}.")
 
-            # Commit transaction
-            self.data_cursor.execute(
-                "UPDATE EventTracking SET status='completed', last_updated=CURRENT_TIMESTAMP WHERE event_id=?",
-                (event_id,)
-            )
-            self.data_conn.commit()
-            logger.info(f"Marked event_id {event_id} as 'completed'.")
+                # Step 21: Commit transaction and update internal EventTracking status
+                self.data_cursor.execute(
+                    "UPDATE EventTracking SET status='completed', last_updated=CURRENT_TIMESTAMP WHERE event_id=?",
+                    (event_id,)
+                )
+                self.data_conn.commit()
+                logger.info(f"Marked event_id {event_id} as 'completed' in event_data.db.")
+                
+                # Step 22: Update centralized event_queue status to "nlp_processed"
+                self.update_event_queue_status(event_id, "nlp_processed")
+                logger.info(f"Updated centralized event_queue status for event_id {event_id} to 'nlp_processed'.")
         
         except Exception as e:
             logger.exception(f"An error occurred while processing event_id {event_id}: {e}")
@@ -655,13 +740,17 @@ class CoyoteNLPStateManager:
             else:
                 logger.warning(f"No mapped hyperlink entities to update in Entities table for event_id {event_id}.")
 
-            # Commit transaction
+            # Step 11: Commit transaction and update internal EventTracking status
             self.data_cursor.execute(
                 "UPDATE EventTracking SET status='completed', last_updated=CURRENT_TIMESTAMP WHERE event_id=?",
                 (event_id,)
             )
             self.data_conn.commit()
-            logger.info(f"Marked event_id {event_id} as 'completed'.")
+            logger.info(f"Marked event_id {event_id} as 'completed' in event_data.db.")
+            
+            # Step 12: Update centralized event_queue status to "nlp_processed"
+            self.update_event_queue_status(event_id, "nlp_processed")
+            logger.info(f"Updated centralized event_queue status for event_id {event_id} to 'nlp_processed'.")
         
         except Exception as e:
             logger.exception(f"An error occurred while processing event_id {event_id}: {e}")
@@ -833,13 +922,17 @@ class CoyoteNLPStateManager:
             else:
                 logger.warning(f"No mapped annotation entities to update in Entities table for event_id {event_id}.")
 
-            # Commit transaction
+            # Step 11: Commit transaction and update internal EventTracking status
             self.data_cursor.execute(
                 "UPDATE EventTracking SET status='completed', last_updated=CURRENT_TIMESTAMP WHERE event_id=?",
                 (event_id,)
             )
             self.data_conn.commit()
-            logger.info(f"Marked event_id {event_id} as 'completed'.")
+            logger.info(f"Marked event_id {event_id} as 'completed' in event_data.db.")
+            
+            # Step 12: Update centralized event_queue status to "nlp_processed"
+            self.update_event_queue_status(event_id, "nlp_processed")
+            logger.info(f"Updated centralized event_queue status for event_id {event_id} to 'nlp_processed'.")
         
         except Exception as e:
             logger.exception(f"An error occurred while processing event_id {event_id}: {e}")

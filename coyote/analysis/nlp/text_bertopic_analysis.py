@@ -5,7 +5,7 @@ Module for extracting topics from text using BERTopic and TF-IDF analysis,
 and mapping them to WikiData entities.
 """
 
-import logging
+import logging, json, re
 from typing import List, Dict, Any, Optional, Tuple
 
 import spacy
@@ -16,6 +16,21 @@ from SPARQLWrapper import SPARQLWrapper, JSON
 from coyote.analysis.nlp.bertopic_analysis import analyze_topics
 
 logger = logging.getLogger(__name__)
+
+
+def _escape_sparql_literal(raw: str) -> str:
+    """
+    Make *raw* safe for insertion between double quotes in a SPARQL query.
+
+    • use json.dumps() to get proper back-slash escaping of quotes, control chars …
+    • strip the surrounding pair of quotes added by json.dumps()
+    • drop line-breaks and excessive whitespace (SPARQL literals cannot span lines)
+    • truncate to some sane length to avoid DoS-size queries
+    """
+    safe = json.dumps(raw)[1:-1]          #  → \" and other escapes
+    safe = re.sub(r"\s+", " ", safe)      # collapse \n, \t … into spaces
+    return safe[:250]                     # hard cap – adjust as you like
+
 
 # Load spaCy model
 try:
@@ -41,7 +56,9 @@ except LookupError:
 
 def query_wikidata(term: str) -> List[Tuple[str, str]]:
     """
-    Query WikiData for a given term.
+    Query WikiData for *term* and return [(label, uri), …].
+    The term is escaped so that quotes, back-slashes or line-breaks
+    cannot break the SPARQL syntax.
 
     Args:
         term (str): The term to query.
@@ -51,20 +68,23 @@ def query_wikidata(term: str) -> List[Tuple[str, str]]:
     """
     try:
         sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
-        query = f"""
-        SELECT ?item ?itemLabel WHERE {{
-            ?item ?label "{term}"@en.
-            FILTER (STRSTARTS(STR(?item), "http://www.wikidata.org/entity/Q"))
-            SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
-        }}
-        LIMIT 1
-        """
-        sparql.setQuery(query)
+
+        safe_term = _escape_sparql_literal(term)
+
+        sparql.setQuery(f"""
+            SELECT ?item ?itemLabel WHERE {{
+                ?item ?label "{safe_term}"@en .
+                FILTER (STRSTARTS(STR(?item), "http://www.wikidata.org/entity/Q"))
+                SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
+            }}
+            LIMIT 1
+        """)
         sparql.setReturnFormat(JSON)
+
         results = sparql.query().convert()
         return [
-            (result['itemLabel']['value'], result['item']['value'])
-            for result in results['results']['bindings']
+            (b['itemLabel']['value'], b['item']['value'])
+            for b in results['results']['bindings']
         ]
     except Exception as e:
         logger.error(f"Error querying WikiData for term '{term}': {e}")

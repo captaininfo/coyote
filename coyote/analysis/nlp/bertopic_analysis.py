@@ -21,6 +21,9 @@ except Exception as e:
 def analyze_topics(text: str) -> Tuple[Optional[Dict[str, Any]], Optional[List[Tuple[str, float]]]]:
     """
     Analyze topics in the given text using BERTopic.
+    On small inputs (<4 sentences) or on any BERTopic/UMAP error
+    the function returns ``(None, [])`` so the caller can fall back
+    to RAKE without crashing the pipeline.
 
     Args:
         text (str): The input text to analyze.
@@ -32,41 +35,36 @@ def analyze_topics(text: str) -> Tuple[Optional[Dict[str, Any]], Optional[List[T
     """
     if nlp is None:
         logger.error("spaCy model is not initialized.")
-        return None, None
+        return None, []
 
+
+    # 1) Sentence splitting -------------------------------------------------
+    doc = nlp(text)
+    sentences = [s.text.strip() for s in doc.sents if s.text.strip()]
+    logger.debug("BERTopic - extracted %d sentences.", len(sentences))
+
+    # Fallback for very short inputs
+    if len(sentences) < 4:                      # ← tweak threshold here
+        logger.info("Only %d sentence(s) – skipping BERTopic, will use RAKE.",
+                    len(sentences))
+        return None, []
+
+    # 2) BERTopic -----------------------------------------------------------
     try:
-        # Process the text
-        doc = nlp(text)
-
-        # Extract sentences
-        sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
-        logger.debug(f"Extracted {len(sentences)} sentences.")
-
-        # Verify sentences list is not empty
-        if not sentences:
-            logger.error("No sentences extracted from the input text.")
-            raise ValueError("No sentences extracted from the input text.")
-
-        # Use BERTopic to model the topics
         topic_model = BERTopic(min_topic_size=2, n_gram_range=(1, 3))
-        topics, probs = topic_model.fit_transform(sentences)
-        logger.debug(f"BERTopic Results: Topics: {topics}, Probabilities: {probs}")
+        topics, _ = topic_model.fit_transform(sentences)
 
-        # Get topic information
         topic_info = topic_model.get_topic_info()
-        logger.debug(f"Topic Info: {topic_info}")
 
-        # Get detailed topics as a flat list
-        detailed_topics = []
-        for topic_num in topic_info['Topic']:
-            if topic_num != -1:
-                topic_details = topic_model.get_topic(topic_num)
-                detailed_topics.extend(topic_details)  # Append all (topic_str, topic_score) tuples
-                logger.debug(f"Topic {topic_num} details: {topic_details}")
+        detailed: List[Tuple[str, float]] = []
+        for t_id in topic_info["Topic"]:
+            if t_id != -1:                      # exclude outliers
+                detailed.extend(topic_model.get_topic(t_id))
 
-        return topic_info, detailed_topics
+        return topic_info, detailed
 
+    # 3) Any crash inside BERTopic → fallback --------------------------------
     except Exception as e:
-        logger.exception(f"Error during topic analysis: {e}")
-        return None, None
+        logger.exception("BERTopic failed – falling back to RAKE: %s", e)
+        return None, []
 

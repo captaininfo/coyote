@@ -142,13 +142,33 @@ def get_state_db_connection() -> sqlite3.Connection:
         logger.error(f"Error connecting to state database: {e}")
         raise
 
+def get_state_read_only_connection() -> sqlite3.Connection:
+    """
+    Retrieves a read-only connection to the coyote_state.db database
+    without acquiring the state_db_lock.
+    """
+    try:
+        conn = sqlite3.connect(
+            STATE_DB_FILE,
+            timeout=10.0,
+            uri=True  # This allows 'file:...?...mode=ro' style
+        )
+        conn.row_factory = sqlite3.Row
+
+        # Optionally confirm WAL mode
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA query_only = ON;")
+
+        logger.debug("Created read-only coyote_state DB connection without lock.")
+        return conn
+    except sqlite3.Error as e:
+        logger.error(f"Error connecting to coyote_state.db (read-only): {e}", exc_info=True)
+        raise
+
 
 def get_event_data_db_connection() -> sqlite3.Connection:
     """
     Establishes and returns a direct connection to the event data database.
-
-    This connection does not use Flask's `g` because it may be used outside of the HTTP request
-    lifecycle, such as in the state manager or other background tasks.
 
     Returns:
         sqlite3.Connection: The SQLite connection object.
@@ -159,9 +179,10 @@ def get_event_data_db_connection() -> sqlite3.Connection:
                 EVENT_DATA_DB_FILE,
                 timeout=10.0  # Wait up to 10 seconds for the lock
             )
+            conn.execute("PRAGMA foreign_keys = ON")   # ← mandatory for data cleanup to cascade
             conn.row_factory = sqlite3.Row
 
-            logger.debug("Created event data DB connection with 10s timeout.")
+            logger.debug("Created event data DB connection with FKs ON & 10s timeout.")
 
             return conn
     except sqlite3.Error as e:
@@ -170,27 +191,27 @@ def get_event_data_db_connection() -> sqlite3.Connection:
 
 def get_event_data_read_only_connection() -> sqlite3.Connection:
     """
-    Establishes and returns a read-only connection to the event data database.
+    Establishes and returns a read-only connection to the event_data DB
+    without using the event_data_db_lock.
     """
     try:
-        with event_data_db_lock:  # Ensures thread safety
-            conn = sqlite3.connect(
-                EVENT_DATA_DB_FILE,
-                timeout=10.0,    # Wait up to 10 seconds for the lock
-                uri=True          # Enables URI mode to specify read-only
-            )
-            conn.row_factory = sqlite3.Row
+        # No 'with event_data_db_lock'
+        conn = sqlite3.connect(
+            EVENT_DATA_DB_FILE,
+            timeout=10.0,
+            uri=True  # Allows "file:...?...mode=ro" style
+        )
+        conn.row_factory = sqlite3.Row
 
-            # Open the database in read-only mode
-            conn.execute("PRAGMA journal_mode=WAL;")  # Ensure WAL mode is set
+        # Ensure WAL mode is used if the underlying database is set to WAL
+        conn.execute("PRAGMA journal_mode=WAL;")
+        # Force read-only mode
+        conn.execute("PRAGMA query_only = ON;")
 
-            # Set the database to read-only
-            conn.execute("PRAGMA query_only = ON;")
-
-            logger.debug("Created read-only event data DB connection with WAL mode and 10s timeout.")
-            return conn
+        logger.debug("Created read-only event_data DB connection (no lock).")
+        return conn
     except sqlite3.Error as e:
-        logger.error(f"Error connecting to event data database (read-only): {e}")
+        logger.error(f"Error connecting to event_data DB (read-only): {e}", exc_info=True)
         raise
 
 
