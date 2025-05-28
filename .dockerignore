@@ -1,10 +1,31 @@
+
+# ---- python build artefacts ----
 __pycache__
+*.py[cod]
+*.so
+*.egg-info
 *.pyc
-*.pyo
 *.pyd
+
+# ---- local virtualenvs ----
+coyote_v2-env
+.venv
+venv
+
+# ---- vcs ----
+.git
+.gitignore
+.github
+
+# ---- editor / IDE ----
+.vscode
+.idea
+
+# ---- runtime data ----
+data            # this folder is mounted as a *volume* in docker-compose
+logs
 *.db
 *.sqlite3
 *.log
-venv/
-.env
-.git
+
+

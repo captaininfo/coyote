@@ -36,7 +36,6 @@ from coyote.analysis.nlp.text_bertopic_analysis import (
 )
 from coyote.analysis.nlp.bertopic_analysis import analyze_topics
 from coyote.analysis.relevance_calculator import calculate_relevance
-from coyote.utils import config_manager
 
 # Get logger
 logger = logging.getLogger(__name__)

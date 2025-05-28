@@ -1,7 +1,7 @@
 # Dockerfile
 
-# Use Python 3.10.12 slim as the base image
-FROM python:3.10.12-slim
+# Use Python 3.10.17 slim as the base image
+FROM python:3.10.17-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
