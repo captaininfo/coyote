@@ -244,8 +244,11 @@ Each of these technologies is subject to its own licenses and terms of use. Plea
 Additionally, I want to say thank you to the Open Recognition community for their support and feedback!
 
 
-## Support
-If you encounter any issues or have questions, please open an issue on GitHub or contact the maintainers directly.
+## Found a Bug?
+1. Run:  docker compose logs > logs.txt
+2. Click:  https://github.com/CoyoteOrg/coyote/issues/new?template=bug.yml
+3. Fill the boxes, attach logs.txt.  Done!
+
 
 ## Anticipated Frequently Asked Questions (AFAQ)
 
