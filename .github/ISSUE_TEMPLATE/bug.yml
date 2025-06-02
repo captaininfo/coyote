@@ -18,7 +18,7 @@ body:
       required: true
 
   - type: textarea
-    id: Description
+    id: description
     attributes:
       label: Description **(required)**
       description: Describe the bug.
@@ -27,7 +27,7 @@ body:
       required: true
 
   - type: textarea
-    id: steps
+    id: steps_to_reproduce
     attributes:
       label: Steps to reproduce 
       description: Bullet list of steps.
@@ -35,8 +35,6 @@ body:
         1. Open terminal  
         2. Run `docker compose up -d`  
         3. …
-    validations:
-      required: false
 
   - type: dropdown
     id: os
@@ -51,27 +49,30 @@ body:
     attributes:
       label: Browser
       options: [Firefox, Chrome, Safari, Edge, Other]
-    validations:
-      required: false
 
   - type: input
     id: docker_version
     attributes:
-      label: Docker / Compose version
+      label: Docker version
       description: "In CLI, run 'docker --version' and 'docker compose version'"
-      placeholder: "In CLI, run 'docker --version' and 'docker compose version'"
+      placeholder: "Docker 25.0.3"
+
+  - type: input
+    id: docker_compose_version
+    attributes:
+      label: Docker Compose version
+      description: "In CLI, run 'docker --version' and 'docker compose version'"
+      placeholder: "Compose v2.27.0"
 
   - type: textarea
     id: logs
     attributes:
       label: Paste or attach `coyote_server.log`
-      description: Drag-and-drop if large. Find the 'coyote_server.log' file in your Coyote directory: coyote/data/logs/coyote_server.log
-    validations:
-      required: false
+      description: Drag-and-drop if large. File path: coyote/data/logs/coyote_server.log
 
   - type: checkboxes
-    id: willing
+    id: willing_to_fix
     attributes:
-      label: I would like to fix this bug
+      label: Willing to work on a fix?
       options:
         - label: I am willing to submit a PR
