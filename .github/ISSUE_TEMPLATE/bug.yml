@@ -70,7 +70,7 @@ body:
     id: logs
     attributes:
       label: Paste or attach `coyote_server.log`
-      description: Drag-and-drop if large. File path: `coyote/data/logs/coyote_server.log`
+      description: "Drag-and-drop if large. File path: `coyote/data/logs/coyote_server.log`"
 
   - type: checkboxes
     id: willing_to_fix
