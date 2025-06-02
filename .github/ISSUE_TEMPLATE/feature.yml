@@ -1,0 +1,51 @@
+name: "Feature Idea"
+description: "Idea to improve Coyote and/or user experience"
+labels: [feature]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Thanks for helping make Coyote better!
+        Please fill in what you can — required fields are marked **(required)**.
+
+  - type: input
+    id: title
+    attributes:
+      label: Title **(required)**
+      description: "One short sentence that describes the idea."
+      placeholder: "Create a centralized UI for Coyote."
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description **(required)**
+      description: "What is the issue the proposed new feature solves? Describe the proposed feature with as much specific detail as possible."
+      placeholder: "Create a centralized UI for Coyote."
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-info
+    attributes:
+      label: Additional Info
+      description: "Have sketches, mock-ups, or other info to share? Please share it here."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Want to help?
+      options:
+        - label: I would like to help design/code this feature.
+
+  - type: input
+    id: skills
+    attributes:
+      label: How do you want to help?
+      description: "If you checked the box, how would you like to help?"
+      placeholder: "I can mock-up a UI, or I can contribute Python code"
+    validations:
+      required: false

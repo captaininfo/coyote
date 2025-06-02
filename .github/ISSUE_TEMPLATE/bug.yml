@@ -11,14 +11,14 @@ body:
   - type: input
     id: title
     attributes:
-      label: title **(required)**
+      label: Title **(required)**
       description: One short sentence that describes the bug.
       placeholder: "Configure page returns 404"
     validations:
       required: true
 
   - type: textarea
-    id: description
+    id: Description
     attributes:
       label: Description **(required)**
       description: Describe the bug.
@@ -49,7 +49,7 @@ body:
   - type: dropdown
     id: browser
     attributes:
-      label: Operating system
+      label: Browser
       options: [Firefox, Chrome, Safari, Edge, Other]
     validations:
       required: false
@@ -58,6 +58,7 @@ body:
     id: docker_version
     attributes:
       label: Docker / Compose version
+      description: "In CLI, run 'docker --version' and 'docker compose version'"
       placeholder: "In CLI, run 'docker --version' and 'docker compose version'"
 
   - type: textarea
@@ -71,6 +72,6 @@ body:
   - type: checkboxes
     id: willing
     attributes:
-      label: I’d like to fix this bug
+      label: I would like to fix this bug
       options:
-        - label: I’m willing to submit a PR
+        - label: I am willing to submit a PR
