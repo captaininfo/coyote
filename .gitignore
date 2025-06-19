@@ -13,6 +13,7 @@ llama_3-1/
 coyote_v2-env/
 venv/
 env/
+.venv311/
 
 # Personal records
 chatgpt_conversations/
