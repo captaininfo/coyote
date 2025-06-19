@@ -19,6 +19,8 @@ chatgpt_conversations/
 
 # Database files
 *.db
+*.db-shm
+*.db-wal
 
 # Runtime data and user data
 analysis_result.json

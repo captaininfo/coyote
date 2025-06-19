@@ -11,11 +11,15 @@ from typing import List, Dict, Any, Optional, Tuple
 import spacy
 from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
-from SPARQLWrapper import SPARQLWrapper, JSON
+from SPARQLWrapper import SPARQLWrapper, JSON, SPARQLExceptions
+import time, random
 
 from coyote.analysis.nlp.bertopic_analysis import analyze_topics
 
 logger = logging.getLogger(__name__)
+
+MAX_RETRIES = 3
+BACKOFF     = (1.0, 3.0)   # seconds
 
 
 def _escape_sparql_literal(raw: str) -> str:
@@ -68,6 +72,11 @@ def query_wikidata(term: str) -> List[Tuple[str, str]]:
     """
     try:
         sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
+        # Wikidata blocks generic clients, so identify yourself
+        sparql.agent = (
+            "Coyote/0.3 (https://github.com/captaininfo/coyote; "
+            "mailto:lifewidelearningllc@gmail.com)"
+        )
 
         safe_term = _escape_sparql_literal(term)
 
@@ -82,6 +91,28 @@ def query_wikidata(term: str) -> List[Tuple[str, str]]:
         sparql.setReturnFormat(JSON)
 
         results = sparql.query().convert()
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                results = sparql.query().convert()
+                break                                 # success
+            except SPARQLExceptions.EndPointInternalError as e:
+                # 5xx errors from the service
+                logger.warning(
+                    "WikiData 5xx on attempt %d/%d for '%s': %s",
+                    attempt, MAX_RETRIES, term, e,
+                )
+            except Exception as e:
+                if "403" not in str(e) and "429" not in str(e):
+                    raise                               # real bug
+                logger.warning(
+                    "WikiData %s on attempt %d/%d for '%s'",
+                    "403/429", attempt, MAX_RETRIES, term,
+                )
+            # back-off and retry
+            time.sleep(random.uniform(*BACKOFF) * attempt)
+        else:
+            raise Exception("WikiData query failed after retries")
+        
         return [
             (b['itemLabel']['value'], b['item']['value'])
             for b in results['results']['bindings']

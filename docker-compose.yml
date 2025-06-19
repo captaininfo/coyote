@@ -1,4 +1,4 @@
-version: '3.8'
+# version: '3.8'
 
 services:
   coyote:
@@ -28,6 +28,9 @@ services:
       - neo4j_data:/data
     environment:
       - NEO4J_AUTH=none  # Initial password; can be changed via Coyote
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,db.schema.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*,db.schema.*
     restart: unless-stopped
 
 volumes:

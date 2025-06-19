@@ -107,7 +107,7 @@ The following link connects to the official Docker website: https://docs.docker.
     Linux may require: ‘sudo docker compose up -d’
 
 ##### **Optional: Run Without Docker:**
-If you cloned the repository and prefer to run Coyote without Docker, ensure you have the correct version of Python installed (currently Python 3.10). Install the required packages and start the application:
+If you cloned the repository and prefer to run Coyote without Docker, ensure you have the correct version of Python installed (currently Python 3.11). Install the required packages and start the application:
 
     `cd coyote
     pip install -r requirements.txt
@@ -229,7 +229,7 @@ The following are features planned for future development. Community contributio
 ## Acknowledgments
 
 Coyote leverages several open-source technologies:
-– **Python 3.10:** The primary programming language used for the Coyote application.
+– **Python 3.11:** The primary programming language used for the Coyote application.
 – **Flask:** A lightweight WSGI web application framework for serving the Coyote app and API.
 – **Docker:** Used to containerize the application and its dependencies for easy deployment.
 – **Neo4j:** A graph database platform for storing and querying the learning data.
