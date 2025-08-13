@@ -8,6 +8,7 @@ CoyoteV2-Upload_2024-10-06/
 
 # External applications and large files
 llama_3-1/
+ollama/
 
 # Virtual environment
 coyote_v2-env/

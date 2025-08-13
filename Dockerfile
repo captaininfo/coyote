@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y \
 
 # Copy the requirements file and install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && python -m spacy download en_core_web_sm
 
 # Copy the rest of the application code
 COPY . .
