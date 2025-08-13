@@ -1,0 +1,49 @@
+{
+    "manifest_version": 2,
+    "name": "Coyote V2",
+    "version": "2.0.0",
+    "description": "A browser extension to enhance user search experience by tracking search purposes and interactions.",
+    "icons": {
+        "16": "icons/coyote-50.png",
+        "48": "icons/coyote-75.png",
+        "128": "icons/coyote-100.png"
+    },
+    "permissions": [
+        "tabs",
+        "activeTab",
+        "storage",
+        "webNavigation",
+        "contextMenus",
+        "notifications",
+        "*://*/*"  
+    ],
+    "background": {
+        "scripts": ["js/background.js"],
+        "persistent": false
+    },
+    "content_scripts": [
+        {
+            "matches": ["<all_urls>"],
+            "js": ["js/content.js"]
+        }
+    ],
+    "browser_action": {
+        "default_icon": {
+            "16": "icons/icon16.png",
+            "48": "icons/icon48.png"
+        },
+        "default_title": "Coyote V2"
+    },
+    "web_accessible_resources": [
+        "html/new_tab.html",
+        "html/connect_hypothesis.html",
+        "css/new_tab.css",
+        "js/new_tab.js",
+        "js/connect_hypothesis.js",
+        "images/*"
+    ],
+    "options_ui": {
+        "page": "html/options.html",
+        "chrome_style": true
+    }
+}

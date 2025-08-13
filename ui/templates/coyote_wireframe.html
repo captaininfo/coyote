@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coyote - Personal Learning Analytics</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: #f8f9fa;
+            color: #2c3e50;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 250px;
+            background: #34495e;
+            color: white;
+            padding: 20px 0;
+            overflow-y: auto;
+        }
+
+        .logo {
+            padding: 0 20px 30px;
+            border-bottom: 1px solid #4a6741;
+            margin-bottom: 20px;
+        }
+
+        .logo h1 {
+            font-size: 24px;
+            color: #4A90E2;
+        }
+
+        .logo p {
+            font-size: 12px;
+            color: #bdc3c7;
+            margin-top: 5px;
+        }
+
+        .nav-section {
+            margin-bottom: 30px;
+        }
+
+        .nav-item {
+            display: block;
+            padding: 12px 20px;
+            color: #ecf0f1;
+            text-decoration: none;
+            transition: background 0.2s;
+            cursor: pointer;
+            border: none;
+            background: none;
+            width: 100%;
+            text-align: left;
+            font-size: 14px;
+        }
+
+        .nav-item:hover {
+            background: #4a6741;
+        }
+
+        .nav-item.active {
+            background: #4A90E2;
+            border-right: 3px solid #3498db;
+        }
+
+        .nav-item .icon {
+            margin-right: 10px;
+            width: 16px;
+            display: inline-block;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 30px;
+            overflow-y: auto;
+        }
+
+        .page-header {
+            margin-bottom: 30px;
+        }
+
+        .page-title {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .page-subtitle {
+            color: #7f8c8d;
+            font-size: 16px;
+        }
+
+        /* New User Guidance */
+        .new-user-notice {
+            background: #e3f2fd;
+            border: 1px solid #2196f3;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 30px;
+            color: #1565c0;
+        }
+
+        .new-user-notice a {
+            color: #1565c0;
+            font-weight: 600;
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .action-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            cursor: pointer;
+            transition: transform 0.2s, shadow 0.2s;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .action-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .action-card .icon {
+            font-size: 24px;
+            margin-bottom: 10px;
+            color: #4A90E2;
+        }
+
+        .action-card h3 {
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+
+        .action-card p {
+            font-size: 14px;
+            color: #7f8c8d;
+        }
+
+        /* Carousel Visualization */
+        .viz-carousel {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .carousel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #ecf0f1;
+            padding-bottom: 10px;
+        }
+
+        .carousel-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .carousel-nav {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .carousel-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #bdc3c7;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .carousel-dot.active {
+            background: #4A90E2;
+        }
+
+        .carousel-arrow {
+            background: none;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+            width: 30px;
+            height: 30px;
+            cursor: pointer;
+            color: #7f8c8d;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .carousel-arrow:hover {
+            background: #f8f9fa;
+        }
+
+        .viz-content {
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border: 2px dashed #bdc3c7;
+            color: #7f8c8d;
+            font-style: italic;
+            text-align: center;
+        }
+
+        .viz-slide {
+            display: none;
+        }
+
+        .viz-slide.active {
+            display: block;
+        }
+
+        /* Browse section styles */
+        .browse-tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ecf0f1;
+        }
+
+        .tab-button {
+            padding: 10px 20px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            color: #7f8c8d;
+            border-bottom: 2px solid transparent;
+        }
+
+        .tab-button.active {
+            color: #4A90E2;
+            border-bottom-color: #4A90E2;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .viz-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .viz-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .viz-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #ecf0f1;
+            padding-bottom: 10px;
+        }
+
+        .viz-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        /* Chat interface */
+        .chat-container {
+            background: white;
+            border-radius: 8px;
+            height: 400px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .chat-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #ecf0f1;
+            font-weight: 600;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #f8f9fa;
+        }
+
+        .chat-input-area {
+            padding: 15px 20px;
+            border-top: 1px solid #ecf0f1;
+        }
+
+        .chat-input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        /* Configuration styles */
+        .config-section {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .config-header {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .btn-primary {
+            background: #4A90E2;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #357abd;
+        }
+
+        .btn-success {
+            background: #27ae60;
+            color: white;
+        }
+
+        .integration-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border: 1px solid #ecf0f1;
+            border-radius: 6px;
+            margin-bottom: 10px;
+        }
+
+        .integration-info h4 {
+            margin-bottom: 5px;
+        }
+
+        .integration-info p {
+            font-size: 14px;
+            color: #7f8c8d;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 25px;
+            background: #ccc;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .toggle-switch.on {
+            background: #4A90E2;
+        }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            width: 21px;
+            height: 21px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: left 0.2s;
+        }
+
+        .toggle-switch.on::after {
+            left: 27px;
+        }
+
+        /* Status indicators */
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .status-item {
+            background: white;
+            border-radius: 6px;
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .status-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #4A90E2;
+        }
+
+        .status-label {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+
+        .status-online {
+            color: #27ae60;
+        }
+
+        .status-offline {
+            color: #e74c3c;
+        }
+
+        /* Hidden content areas */
+        .content-area {
+            display: none;
+        }
+
+        .content-area.active {
+            display: block;
+        }
+    </style>
+    <script src="{{ url_for('static', filename='coyote_ui.js') }}" defer></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="logo">
+                <h1>🐾 Coyote</h1>
+                <p>Personal Learning Analytics</p>
+            </div>
+            
+            <div class="nav-section">
+                <button class="nav-item active" data-section="overview">
+                    <span class="icon">🏠</span>Overview
+                </button>
+                
+                <button class="nav-item" data-section="setup">
+                    <span class="icon">🚀</span>Setup Guide
+                </button>
+                
+                <button class="nav-item" data-section="browse">
+                    <span class="icon">🔍</span>Browse Data
+                </button>
+                
+                <button class="nav-item" data-section="chat">
+                    <span class="icon">🤖</span>Chat Assistant
+                </button>
+                
+                <button class="nav-item" data-section="configure">
+                    <span class="icon">⚙️</span>Configure
+                </button>
+                
+                <button class="nav-item" data-section="integrations">
+                    <span class="icon">🔗</span>Integrations
+                </button>
+                
+                <button class="nav-item" data-section="status">
+                    <span class="icon">📊</span>System Status
+                </button>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Overview Section -->
+            <div class="content-area active" id="overview">
+                <div class="page-header">
+                    <h1 class="page-title">Learning Overview</h1>
+                    <p class="page-subtitle">Your personal learning insights and quick actions</p>
+                </div>
+
+                <!-- New User Guidance -->
+                <div class="new-user-notice">
+                    <strong>New to Coyote?</strong> If this is your first time using Coyote, you need to configure it for it to work. Please read the <a href="#" onclick="switchSection('setup')">Setup Guide</a> to get started.
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="quick-actions">
+                    <a href="#" class="action-card" onclick="openCoyoteSearch()">
+                        <div class="icon">🔍</div>
+                        <h3>Open Coyote Search</h3>
+                        <p>Begin a purposeful research session</p>
+                    </a>
+                    
+                    <a href="#" class="action-card" onclick="switchSection('chat')">
+                        <div class="icon">💬</div>
+                        <h3>Ask About My Data</h3>
+                        <p>Query your learning patterns</p>
+                    </a>
+                    
+                    <a href="#" class="action-card" onclick="switchSection('browse')">
+                        <div class="icon">📊</div>
+                        <h3>Explore Visually</h3>
+                        <p>Browse your knowledge graph</p>
+                    </a>
+                    
+                    <a href="#" class="action-card">
+                        <div class="icon">📝</div>
+                        <h3>Recent Annotations</h3>
+                        <p>See your latest insights</p>
+                    </a>
+                </div>
+
+                <!-- Visualization Carousel -->
+                <div class="viz-carousel">
+                    <div class="carousel-header">
+                        <h3 class="carousel-title">Learning Insights</h3>
+                        <div class="carousel-nav">
+                            <button class="carousel-arrow" onclick="previousSlide()">‹</button>
+                            <div class="carousel-dot active" onclick="currentSlide(1)"></div>
+                            <div class="carousel-dot" onclick="currentSlide(2)"></div>
+                            <div class="carousel-dot" onclick="currentSlide(3)"></div>
+                            <button class="carousel-arrow" onclick="nextSlide()">›</button>
+                        </div>
+                    </div>
+                    
+                    <div class="viz-slide active">
+                        <div class="viz-content">
+                            <div>
+                                <strong>New Topics This Week</strong><br>
+                                [Bar chart showing newly discovered topics with engagement time]<br>
+                                <small>Implementation: Chart.js bar chart</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="viz-slide">
+                        <div class="viz-content">
+                            <div>
+                                <strong>Sensemaking Rate</strong><br>
+                                [Line chart showing search → annotation conversion rate over last 30 days]<br>
+                                <small>Implementation: Chart.js line chart with trend indicators</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="viz-slide">
+                        <div class="viz-content">
+                            <div>
+                                <strong>Learning Rhythms</strong><br>
+                                [Radial timeline showing daily learning patterns this week]<br>
+                                <small>Implementation: D3.js radial area chart</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Setup Guide Section -->
+            <div class="content-area" id="setup">
+                <div class="page-header">
+                    <h1 class="page-title">Setup Guide</h1>
+                    <p class="page-subtitle">Get Coyote configured and ready to track your learning</p>
+                </div>
+
+                <div class="config-section">
+                    <div class="config-header">🚀 Quick Start</div>
+                    <p style="margin-bottom: 15px;">Follow these steps to get Coyote up and running:</p>
+                    
+                    <ol style="margin-left: 20px; line-height: 1.6;">
+                        <li><strong>Configure Neo4j Database</strong> - Set up your personal knowledge graph</li>
+                        <li><strong>Install Browser Extension</strong> - Enable web browsing data capture</li>
+                        <li><strong>Optional: Connect Integrations</strong> - Link external platforms like Hypothes.is</li>
+                        <li><strong>Start Learning</strong> - Begin browsing and let Coyote track your journey</li>
+                    </ol>
+                    
+                    <div style="margin-top: 20px;">
+                        <button class="btn btn-primary" onclick="switchSection('configure')">Start Configuration</button>
+                    </div>
+                </div>
+
+                <div class="config-section">
+                    <div class="config-header">📋 Detailed Setup Instructions</div>
+                    <p>Comprehensive step-by-step setup documentation would be displayed here, including screenshots and troubleshooting tips.</p>
+                </div>
+            </div>
+
+            <!-- Browse Data Section -->
+            <div class="content-area" id="browse">
+                <div class="page-header">
+                    <h1 class="page-title">Browse Your Data</h1>
+                    <p class="page-subtitle">Explore and query your personal knowledge graph</p>
+                </div>
+
+                <div class="browse-tabs">
+                    <button class="tab-button active" data-tab="explore">Visual Dashboard</button>
+                    <button class="tab-button" data-tab="query">Custom Query</button>
+                </div>
+
+                <div class="tab-content active" id="explore-tab">
+                    <div class="viz-grid">
+                        <div class="viz-card">
+                            <div class="viz-header">
+                                <h3 class="viz-title">Knowledge Constellation</h3>
+                            </div>
+                            <div class="viz-content">
+                                [Interactive network showing topic relationships]
+                            </div>
+                        </div>
+                        
+                        <div class="viz-card">
+                            <div class="viz-header">
+                                <h3 class="viz-title">Learning Paths</h3>
+                            </div>
+                            <div class="viz-content">
+                                [Sankey diagram: searches → pages → topics]
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="query-tab">
+                    <div class="chat-container">
+                        <div class="chat-header">
+                            <span>Query Interface</span>
+                        </div>
+                        <div class="chat-messages">
+                            <p><em>Ask questions about your data in natural language...</em></p>
+                        </div>
+                        <div class="chat-input-area">
+                            <input type="text" class="chat-input" placeholder="e.g., Show me what I learned about AI this month">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Assistant Section -->
+            <div class="content-area" id="chat">
+                <div class="page-header">
+                    <h1 class="page-title">Chat Assistant</h1>
+                    <p class="page-subtitle">Ask questions about your learning patterns and data</p>
+                </div>
+
+                <div class="chat-container" style="height: 600px;">
+                    <div class="chat-header">
+                        <span>🤖 Coyote Assistant - Powered by Streamlit</span>
+                    </div>
+                    <div class="chat-messages">
+                        <div style="padding: 20px; text-align: center; color: #7f8c8d;">
+                            <p><em>Streamlit chat interface would be embedded here</em></p>
+                            <p><small>This will iframe your existing bot.py Streamlit app</small></p>
+                        </div>
+                    </div>
+                    <div class="chat-input-area">
+                        <input type="text" class="chat-input" placeholder="Ask me anything about your learning data...">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configure Section -->
+            <div class="content-area" id="configure">
+                <div class="page-header">
+                    <h1 class="page-title">Configure Coyote</h1>
+                    <p class="page-subtitle">Set up your databases and authentication</p>
+                </div>
+
+                <div class="config-section">
+                    <div class="config-header">🗄️ Neo4j Database</div>
+                    <div class="form-group">
+                        <label class="form-label">Neo4j URI</label>
+                        <input type="text" class="form-input" value="bolt://localhost:7687">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Username</label>
+                        <input type="text" class="form-input" placeholder="neo4j">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Password</label>
+                        <input type="password" class="form-input" placeholder="Your secure password">
+                    </div>
+                    <button class="btn btn-primary">Test Connection</button>
+                </div>
+
+                <div class="config-section">
+                    <div class="config-header">🌐 Browser Extension</div>
+                    <p style="margin-bottom: 15px; color: #7f8c8d;">Install the Coyote browser extension to capture your web browsing data.</p>
+                    <button class="btn btn-primary">Download Extension</button>
+                    <button class="btn btn-success" style="margin-left: 10px;">Setup Guide</button>
+                </div>
+            </div>
+
+            <!-- Integrations Section -->
+            <div class="content-area" id="integrations">
+                <div class="page-header">
+                    <h1 class="page-title">Integrations</h1>
+                    <p class="page-subtitle">Connect external platforms to enhance your learning data</p>
+                </div>
+
+                <div class="config-section">
+                    <div class="integration-item">
+                        <div class="integration-info">
+                            <h4>📝 Hypothes.is</h4>
+                            <p>Import your web annotations and highlights</p>
+                        </div>
+                        <div class="toggle-switch" onclick="toggleIntegration(this, 'hypothesis')"></div>
+                    </div>
+
+                    <div class="integration-item">
+                        <div class="integration-info">
+                            <h4>📺 YouTube (Coming Soon)</h4>
+                            <p>Analyze transcripts from watched videos</p>
+                        </div>
+                        <div class="toggle-switch"></div>
+                    </div>
+
+                    <div class="integration-item">
+                        <div class="integration-info">
+                            <h4>📚 Obsidian (Coming Soon)</h4>
+                            <p>Sync your personal knowledge vault</p>
+                        </div>
+                        <div class="toggle-switch"></div>
+                    </div>
+                </div>
+
+                <!-- Hypothesis Configuration (Hidden by default) -->
+                <div class="config-section" id="hypothesis-config" style="display: none;">
+                    <div class="config-header">📝 Hypothes.is Configuration</div>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
+                        <p><strong>Step 1:</strong> <a href="https://hypothes.is/login" target="_blank">Log in to Hypothes.is</a></p>
+                        <p><strong>Step 2:</strong> <a href="https://hypothes.is/account/developer" target="_blank">Get your API token</a></p>
+                        <p><strong>Step 3:</strong> Enter your credentials below</p>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Hypothes.is Username</label>
+                        <input type="text" class="form-input" placeholder="Your Hypothes.is username">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">API Token</label>
+                        <input type="password" class="form-input" placeholder="Paste your API token here">
+                    </div>
+                    <button class="btn btn-primary">Test Connection</button>
+                    <button class="btn btn-success" style="margin-left: 10px;">Fetch Data</button>
+                </div>
+            </div>
+
+            <!-- System Status Section -->
+            <div class="content-area" id="status">
+                <div class="page-header">
+                    <h1 class="page-title">System Status</h1>
+                    <p class="page-subtitle">Monitor your Coyote system health and performance</p>
+                </div>
+
+                <div class="status-grid">
+                    <div class="status-item">
+                        <div class="status-value status-offline" data-component="neo4j_database">●</div>
+                        <div class="status-label">Neo4j Database</div>
+                    </div>
+                    
+                    <div class="status-item">
+                        <div class="status-value status-offline" data-component="coyote_core">●</div>
+                        <div class="status-label">Coyote Core</div>
+                    </div>
+                    
+                    <div class="status-item">
+                        <div class="status-value status-offline" data-component="coyote_agent_bot">●</div>
+                        <div class="status-label">Coyote Agent/Bot</div>
+                    </div>
+                    
+                    <div class="status-item">
+                        <div class="status-value status-offline" data-component="ollama_llm">●</div>
+                        <div class="status-label">Ollama/LLM</div>
+                    </div>
+                    
+                    <div class="status-item">
+                        <div class="status-value status-offline" data-component="browser_extension">●</div>
+                        <div class="status-label">Browser Extension</div>
+                    </div>
+                </div>
+
+                <div id="system-warnings" style="display: none;"></div>
+
+                <div class="config-section" style="margin-top: 30px;">
+                    <div class="config-header">🐳 Docker Management</div>
+                    <p style="margin-bottom: 15px;">Manage your Coyote containers</p>
+                    <button id="btnStartAllServices" class="btn btn-success">Start All Services</button>
+                    <button id="btnStopAllServices" class="btn" style="margin-left: 10px; background: #e74c3c; color: white;">Stop All Services</button>
+                    <button id="btnRestartServices" class="btn" style="margin-left: 10px; background: #f39c12; color: white;">Restart Services</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        let currentSlideIndex = 0;
+        const slides = document.querySelectorAll('.viz-slide');
+        const dots = document.querySelectorAll('.carousel-dot');
+
+        function showSlide(index) {
+            slides.forEach(slide => slide.classList.remove('active'));
+            dots.forEach(dot => dot.classList.remove('active'));
+            
+            slides[index].classList.add('active');
+            dots[index].classList.add('active');
+            currentSlideIndex = index;
+        }
+
+        function nextSlide() {
+            const nextIndex = (currentSlideIndex + 1) % slides.length;
+            showSlide(nextIndex);
+        }
+
+        function previousSlide() {
+            const prevIndex = (currentSlideIndex - 1 + slides.length) % slides.length;
+            showSlide(prevIndex);
+        }
+
+        function currentSlide(index) {
+            showSlide(index - 1);
+        }
+
+        // Navigation functionality
+        function switchSection(sectionName) {
+            // Hide all content areas
+            document.querySelectorAll('.content-area').forEach(area => {
+                area.classList.remove('active');
+            });
+            
+            // Remove active class from all nav items
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // Show selected content area
+            document.getElementById(sectionName).classList.add('active');
+            
+            // Add active class to selected nav item
+            document.querySelector(`[data-section="${sectionName}"]`).classList.add('active');
+        }
+
+        // Navigation click handlers
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const section = item.getAttribute('data-section');
+                switchSection(section);
+            });
+        });
+
+        // Tab functionality for Browse section
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                const tabName = button.getAttribute('data-tab');
+                
+                // Remove active from all tabs and buttons
+                document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                
+                // Add active to clicked button and corresponding content
+                button.classList.add('active');
+                document.getElementById(tabName + '-tab').classList.add('active');
+            });
+        });
+
+        // Open Coyote Search functionality
+        function openCoyoteSearch() {
+            // Open your existing new_tab.html in a new tab
+            window.open('/new_tab.html', '_blank');
+        }
+
+        // Integration toggle functionality
+        function toggleIntegration(element, integration) {
+            element.classList.toggle('on');
+            
+            if (integration === 'hypothesis') {
+                const config = document.getElementById('hypothesis-config');
+                if (element.classList.contains('on')) {
+                    config.style.display = 'block';
+                } else {
+                    config.style.display = 'none';
+                }
+            }
+        }
+
+        // Chat input handlers
+        document.querySelectorAll('.chat-input').forEach(input => {
+            input.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    const message = e.target.value;
+                    if (message.trim()) {
+                        // Here you would send the message to your chat backend
+                        console.log('Sending message:', message);
+                        e.target.value = '';
+                    }
+                }
+            });
+        });
+
+        // Auto-rotate carousel (optional)
+        setInterval(() => {
+            nextSlide();
+        }, 10000); // Rotate every 10 seconds
+    </script>
+</body>
+</html>

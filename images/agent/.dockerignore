@@ -1,0 +1,7 @@
+**/__pycache__/
+**/*.pyc
+.vscode/
+front-end/
+data/
+embedding_model/        # handled as a volume
+.env

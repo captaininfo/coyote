@@ -1,0 +1,22 @@
+
+# Core
+streamlit>=1.35
+python-dotenv>=1.0
+
+# LangChain ecosystem used by imports
+langchain>=0.2
+langchain-core>=0.2
+langchain-community>=0.2
+langchain-neo4j>=0.1.3
+
+# chains.py imports at module level
+langchain-openai>=0.1
+langchain-ollama>=0.1
+langchain-aws>=0.1
+langchain-huggingface>=0.1
+langchain-google-genai>=0.1
+
+# Neo4j driver (used by coyote_schema.py)
+neo4j>=5.20
+
+
