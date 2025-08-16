@@ -75,7 +75,7 @@ services:
     depends_on:
       database:
         condition: service_healthy
-    restart: unless-stopped
+    restart: on-failure:3
     networks: [coyote_net]
 
   bot:

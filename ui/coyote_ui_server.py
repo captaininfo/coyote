@@ -1,276 +1,511 @@
 #!/usr/bin/env python3
 """
-coyote_ui_server.py - Lightweight server for Coyote UI
-This runs OUTSIDE Docker and serves the UI + manages Docker containers
+coyote_ui_server.py - Fixed version with proper project name handling
 """
 
-from flask import Flask, render_template, jsonify, send_from_directory, request as flask_request
+from flask import Flask, render_template, jsonify, request as flask_request
 import subprocess
 import json
 import os
+import secrets
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
 
+# Configure paths
+current_dir = Path(__file__).parent
+template_dir = current_dir / 'templates'
+static_dir = current_dir / 'static'
 
-# Configure template and static directories
-current_dir = os.path.dirname(os.path.abspath(__file__))
-template_dir = os.path.join(current_dir, 'templates')  # Look for templates/ in same directory
-static_dir = os.path.join(current_dir, 'static')      # Look for static/ in same directory
+# Set up logging directory
+LOG_DIR = current_dir.parent / 'data' / 'logs'
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / f'coyote_ui_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
+
+# Configure logging with both file and console output
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+logger.info(f"Logging to file: {LOG_FILE}")
 
 app = Flask(__name__, 
-           template_folder=template_dir,
-           static_folder=static_dir)
+           template_folder=str(template_dir),
+           static_folder=str(static_dir))
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
-
+# Extension heartbeat tracking
 extension_heartbeats = {}
-HEARTBEAT_TIMEOUT = 15
-DOCKER_BIN = os.environ.get("DOCKER_BIN", "docker")
+HEARTBEAT_TIMEOUT = 15  # seconds
 
-# --- Compose location ---
-# Default to the repo layout: ui/ (this file) -> ../compose
+# Docker configuration
+DOCKER_BIN = os.environ.get("DOCKER_BIN", "docker")
+PROJECT_NAME = "coyote"  # Fixed project name
+
+# Compose location (ui/ -> ../compose)
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_COMPOSE_DIR = BASE_DIR / "compose"
-# Allow override via env var, but fall back to ../compose
 COMPOSE_DIR = Path(os.environ.get("COYOTE_COMPOSE_DIR", str(DEFAULT_COMPOSE_DIR))).resolve()
-COMPOSE_FILE = (COMPOSE_DIR / "compose.yaml").resolve()
+COMPOSE_FILE = COMPOSE_DIR / "compose.yaml"
+ENV_FILE = COMPOSE_DIR / ".env"
 
+def get_compose_env():
+    """Get consistent environment for all compose commands"""
+    env = os.environ.copy()
+    # Always set project name
+    env['COMPOSE_PROJECT_NAME'] = PROJECT_NAME
+    # Ensure compose file is specified
+    env['COMPOSE_FILE'] = str(COMPOSE_FILE)
+    return env
 
-@app.route('/')
-def index():
-    """Serve the main UI"""
-    return render_template('coyote_wireframe.html')
-
-@app.route('/check_docker_status')
-def check_docker_status():
-    """Check if Docker containers are running"""
+def run_compose_command(args, timeout=120):
+    """Run a docker compose command with consistent settings"""
+    cmd = [DOCKER_BIN, 'compose', '-p', PROJECT_NAME, '-f', str(COMPOSE_FILE)] + args
+    
+    logger.debug(f"Running command: {' '.join(cmd)}")
+    logger.debug(f"Working directory: {COMPOSE_DIR}")
+    
     try:
-        logger.info("Checking Docker status...")
-        # Check if docker is available
-        docker_check = subprocess.run(
-            ['docker', '--version'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-
-        logger.info(f"Docker version check return code: {docker_check.returncode}")
-        logger.info(f"Docker version output: {docker_check.stdout}")
-        
-        if docker_check.returncode != 0:
-            return jsonify({
-                'docker_available': False,
-                'error': 'Docker is not installed or not running'
-            })
-        
-        # Check specific containers
-        containers_status = {}
-        
-        # Check Coyote container
-        coyote_check = subprocess.run(
-            ['docker', 'ps', '--filter', 'name=coyote_app', '--format', '{{.Status}}'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        containers_status['coyote_core'] = bool(coyote_check.stdout.strip())
-        
-        # Check Neo4j container
-        neo4j_check = subprocess.run(
-            ['docker', 'ps', '--filter', 'name=database', '--format', '{{.Status}}'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        containers_status['neo4j'] = bool(neo4j_check.stdout.strip())
-        
-        # Check if Coyote server is responding (if container is running)
-        coyote_responding = False
-        if containers_status['coyote_core']:
-            try:
-                import requests
-                response = requests.get('http://localhost:5000/health', timeout=2)
-                coyote_responding = response.status_code == 200
-            except:
-                pass
-        
-        return jsonify({
-            'docker_available': True,
-            'containers': containers_status,
-            'coyote_responding': coyote_responding
-        })
-        
-    except subprocess.TimeoutExpired:
-        return jsonify({
-            'docker_available': False,
-            'error': 'Docker command timed out'
-        })
-    except Exception as e:
-        logger.error(f"Error checking Docker status: {e}")
-        return jsonify({
-            'docker_available': False,
-            'error': str(e)
-        })
-
-@app.route('/start_docker_containers', methods=['POST'])
-def start_docker_containers():
-    """
-    Start Docker containers via Compose profiles.
-
-    Body (optional JSON):
-      { "profiles": ["core"] }                    # Core only (Neo4j + Coyote Core)
-      { "profiles": ["core","llm","agent"] }      # Everything
-    If omitted, defaults to Everything for MVP.
-    """
-    try:
-        # Validate compose location early for clearer errors
-        if not COMPOSE_DIR.exists():
-            raise FileNotFoundError(f"Compose directory not found: {COMPOSE_DIR}")
-        if not COMPOSE_FILE.exists():
-            raise FileNotFoundError(f"Compose file not found: {COMPOSE_FILE}")
-
-        # Parse request body (optional)
-        payload = flask_request.get_json(silent=True) or {}
-        requested = payload.get("profiles") or ["core", "llm", "agent"]
-
-        # Normalize + safety filter
-        allowed = ("core", "llm", "agent")
-        # keep order, drop dupes, ignore unknowns
-        profiles = []
-        for p in requested:
-            if isinstance(p, str) and p in allowed and p not in profiles:
-                profiles.append(p)
-
-        # If client passed junk and we filtered everything out, default to Everything
-        if not profiles:
-            profiles = ["core", "llm", "agent"]
-
-        # Build command
-        cmd = [DOCKER_BIN, 'compose', '-f', str(COMPOSE_FILE)]
-        for p in profiles:
-            cmd += ['--profile', p]
-        cmd += ['up', '-d', '--pull=missing']
-
-        # Longer timeout when pulling big images (llm/agent)
-        needs_big_images = any(p in ("llm", "agent") for p in profiles)
-        timeout_s = 420 if needs_big_images else 180
-
         result = subprocess.run(
             cmd,
             cwd=str(COMPOSE_DIR),
             capture_output=True,
             text=True,
-            timeout=timeout_s
-        )
-
-        if result.returncode == 0:
-            return jsonify({
-                'status': 'success',
-                'message': f'Starting profiles: {profiles}',
-                'profiles': profiles,
-                'output': result.stdout
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': 'Failed to start containers',
-                'profiles': profiles,
-                'error': result.stderr
-            }), 500
-
-    except Exception as e:
-        logger.error(f"Error starting Docker containers: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
-@app.route('/stop_docker_containers', methods=['POST'])
-def stop_docker_containers():
-    """Stop Docker containers"""
-    try:
-        if not COMPOSE_DIR.exists():
-            raise FileNotFoundError(f"Compose directory not found: {COMPOSE_DIR}")
-        if not COMPOSE_FILE.exists():
-            raise FileNotFoundError(f"Compose file not found: {COMPOSE_FILE}")
-        
-        result = subprocess.run(
-            [DOCKER_BIN, 'compose', '-f', str(COMPOSE_FILE), 'down'],
-            cwd=str(COMPOSE_DIR),
-            capture_output=True,
-            text=True,
-            timeout=120
+            timeout=timeout,
+            env=get_compose_env()
         )
         
-        if result.returncode == 0:
-            return jsonify({
-                'status': 'success',
-                'message': 'Docker containers stopped',
-                'output': result.stdout
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': 'Failed to stop containers',
-                'error': result.stderr
-            }), 500
+        logger.debug(f"Command exit code: {result.returncode}")
+        if result.stdout:
+            logger.debug(f"stdout: {result.stdout}")
+        if result.stderr:
+            logger.debug(f"stderr: {result.stderr}")
             
+        return result
+    except subprocess.TimeoutExpired as e:
+        logger.error(f"Command timed out after {timeout} seconds")
+        raise
     except Exception as e:
-        logger.error(f"Error stopping Docker containers: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        logger.error(f"Command failed: {e}", exc_info=True)
+        raise
+
+def ensure_env_file():
+    """Create .env file with defaults if it doesn't exist"""
+    if not ENV_FILE.exists():
+        logger.info(f"Creating default .env at {ENV_FILE}")
+        
+        # Generate secure Neo4j password
+        neo4j_password = secrets.token_urlsafe(16)
+        
+        default_env = f"""# Auto-generated by Coyote UI on {datetime.now().isoformat()}
+# Ports (host)
+COYOTE_PORT=5000
+NEO4J_HTTP_PORT=7474
+NEO4J_BOLT_PORT=7687
+OLLAMA_PORT=11434
+BOT_PORT=8501
+
+# Credentials
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD={neo4j_password}
+
+# Paths (relative to compose/)
+COYOTE_DATA_DIR=./volumes/neo4j
+COYOTE_MODELS_DIR=./volumes/ollama
+COYOTE_USER_DATA=./volumes/coyote
+EMBEDDING_MODEL_DIR=./volumes/embedding_model
+
+# Service configuration
+NEO4J_URI=bolt://database:7687
+OLLAMA_BASE_URL=http://llm:11434
+LLM=phi3:mini
+EMBEDDING_MODEL=sentence_transformer
+"""
+        ENV_FILE.write_text(default_env)
+        logger.info(f"Created .env with Neo4j password: {neo4j_password[:8]}...")
+
+@app.before_request
+def before_first_request():
+    """Ensure environment is set up before handling requests"""
+    ensure_env_file()
+
+@app.route('/')
+def index():
+    """Serve the main UI"""
+    logger.debug("Serving main UI page")
+    return render_template('coyote_wireframe.html')
 
 @app.route('/extension_heartbeat', methods=['POST'])
 def extension_heartbeat():
-    """Accept heartbeats from the browser extension."""
+    """Accept heartbeats from the browser extension"""
     try:
-        data = json.loads(flask_request.data) if flask_request.data else {}
-    except Exception:
-        data = {}
-    # Use provided ID or a generic key
-    ext_id = data.get('extensionId') or data.get('browserName') or 'unknown'
-    extension_heartbeats[ext_id] = {
-        'ts': datetime.utcnow(),
-        'data': data,
-    }
-    return jsonify({'status': 'ok'})
+        data = flask_request.get_json(silent=True) or {}
+        ext_id = data.get('extensionId') or data.get('browserName') or 'unknown'
+        
+        extension_heartbeats[ext_id] = {
+            'timestamp': datetime.utcnow(),
+            'data': data
+        }
+        
+        logger.debug(f"Extension heartbeat received from: {ext_id}")
+        return jsonify({'status': 'ok'})
+        
+    except Exception as e:
+        logger.error(f"Error processing extension heartbeat: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
-@app.route('/extension_status')
+@app.route('/extension_status', methods=['GET'])
 def extension_status():
-    """Return aggregated extension status based on last heartbeat."""
+    """Return extension status based on recent heartbeats"""
     now = datetime.utcnow()
-    active = False
-    details = []
-    for ext_id, payload in list(extension_heartbeats.items()):
-        age = (now - payload['ts']).total_seconds()
+    active_extensions = []
+    
+    for ext_id, info in extension_heartbeats.items():
+        age = (now - info['timestamp']).total_seconds()
         if age <= HEARTBEAT_TIMEOUT:
-            active = True
-            details.append({'id': ext_id, 'age_sec': age})
-    return jsonify({'active': active, 'details': details})
+            active_extensions.append({
+                'id': ext_id,
+                'age_seconds': age,
+                'active': True
+            })
+    
+    return jsonify({
+        'active': len(active_extensions) > 0,
+        'extensions': active_extensions
+    })
 
-@app.route('/compose_ps')
-def compose_ps():
-    """Return docker compose ps as JSON for the UI."""
+@app.route('/api/start-core', methods=['POST'])
+def start_core():
+    """Start core services (Neo4j + Coyote Core)"""
+    logger.info("Starting core services...")
     try:
-        if not COMPOSE_DIR.exists() or not COMPOSE_FILE.exists():
-            return jsonify({'status':'error','error':'compose not found'}), 404
-        result = subprocess.run(
-            [DOCKER_BIN, 'compose', '-f', str(COMPOSE_FILE), 'ps', '--format', 'json'],
-            cwd=str(COMPOSE_DIR),
+        if not COMPOSE_FILE.exists():
+            error_msg = f'Compose file not found: {COMPOSE_FILE}'
+            logger.error(error_msg)
+            return jsonify({'status': 'error', 'message': error_msg}), 404
+        
+        result = run_compose_command(
+            ['--profile', 'core', 'up', '-d', '--pull=missing'],
+            timeout=180
+        )
+        
+        if result.returncode == 0:
+            logger.info("Core services started successfully")
+            message = 'Core services starting'
+        else:
+            logger.error(f"Failed to start core services. Return code: {result.returncode}")
+            message = 'Failed to start core services'
+        
+        return jsonify({
+            'status': 'success' if result.returncode == 0 else 'error',
+            'message': message,
+            'stdout': result.stdout,
+            'stderr': result.stderr,
+            'returncode': result.returncode
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting core: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/start-all', methods=['POST'])
+def start_all():
+    """Start all services (Core + LLM + Agent)"""
+    logger.info("Starting all services...")
+    try:
+        if not COMPOSE_FILE.exists():
+            error_msg = f'Compose file not found: {COMPOSE_FILE}'
+            logger.error(error_msg)
+            return jsonify({'status': 'error', 'message': error_msg}), 404
+        
+        result = run_compose_command(
+            ['--profile', 'core', '--profile', 'llm', '--profile', 'agent', 
+             'up', '-d', '--pull=missing'],
+            timeout=420
+        )
+        
+        if result.returncode == 0:
+            logger.info("All services started successfully")
+            message = 'All services starting'
+        else:
+            logger.error(f"Failed to start all services. Return code: {result.returncode}")
+            message = f'Failed to start: {result.stderr[:200] if result.stderr else "Unknown error"}'
+        
+        return jsonify({
+            'status': 'success' if result.returncode == 0 else 'error',
+            'message': message,
+            'stdout': result.stdout,
+            'stderr': result.stderr,
+            'returncode': result.returncode
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting all: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/stop', methods=['POST'])
+def stop_services():
+    """Stop all Docker services with verification"""
+    logger.info("Stopping all services...")
+    try:
+        if not COMPOSE_FILE.exists():
+            error_msg = f'Compose file not found: {COMPOSE_FILE}'
+            logger.error(error_msg)
+            return jsonify({'status': 'error', 'message': error_msg}), 404
+        
+        # First try graceful stop with compose down
+        result = run_compose_command(['down', '--remove-orphans'], timeout=120)
+        
+        # CRITICAL: Verify containers actually stopped
+        # Docker Compose sometimes returns success even when containers are still running
+        import time
+        time.sleep(2)  # Give containers a moment to stop
+        
+        # Check if any containers are still running
+        check_result = run_compose_command(['ps', '-q'], timeout=5)
+        containers_still_running = bool(check_result.stdout and check_result.stdout.strip())
+        
+        if containers_still_running:
+            logger.warning("Compose down reported success but containers still running! Using force cleanup...")
+            
+            # Get container names for force cleanup
+            list_cmd = [DOCKER_BIN, 'ps', '-a', '--filter', f'label=com.docker.compose.project={PROJECT_NAME}', '--format', '{{.Names}}']
+            list_result = subprocess.run(list_cmd, capture_output=True, text=True, timeout=5)
+            
+            if list_result.returncode == 0 and list_result.stdout:
+                containers = list_result.stdout.strip().split('\n')
+                logger.info(f"Force stopping containers: {containers}")
+                
+                for container in containers:
+                    if container:
+                        # Force stop with short timeout
+                        stop_cmd = [DOCKER_BIN, 'stop', '-t', '5', container]
+                        stop_result = subprocess.run(stop_cmd, capture_output=True, text=True, timeout=10)
+                        
+                        if stop_result.returncode != 0:
+                            # If stop fails, kill it
+                            kill_cmd = [DOCKER_BIN, 'kill', container]
+                            subprocess.run(kill_cmd, capture_output=True, text=True, timeout=5)
+                        
+                        # Force remove
+                        rm_cmd = [DOCKER_BIN, 'rm', '-f', container]
+                        subprocess.run(rm_cmd, capture_output=True, text=True, timeout=5)
+                        
+                        logger.info(f"Force stopped container: {container}")
+                
+                message = 'Services stopped (force cleanup was required)'
+                status = 'success'
+            else:
+                message = 'Containers may still be running - use Force Cleanup button'
+                status = 'partial'
+        else:
+            # Containers stopped normally
+            logger.info("Services stopped successfully")
+            message = 'Services stopped successfully'
+            status = 'success'
+        
+        return jsonify({
+            'status': status,
+            'message': message,
+            'stdout': result.stdout,
+            'stderr': result.stderr
+        })
+        
+    except Exception as e:
+        logger.error(f"Error stopping services: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/force-cleanup', methods=['POST'])
+def force_cleanup():
+    """Force cleanup of all Coyote containers"""
+    logger.info("Force cleanup of all Coyote containers...")
+    try:
+        # Get all containers with the project name
+        list_cmd = [DOCKER_BIN, 'ps', '-a', '--filter', f'label=com.docker.compose.project={PROJECT_NAME}', '--format', '{{.Names}}']
+        list_result = subprocess.run(list_cmd, capture_output=True, text=True)
+        
+        if list_result.returncode == 0 and list_result.stdout:
+            containers = list_result.stdout.strip().split('\n')
+            logger.info(f"Found containers to clean up: {containers}")
+            
+            for container in containers:
+                if container:
+                    # Force stop
+                    stop_cmd = [DOCKER_BIN, 'stop', '-t', '5', container]
+                    subprocess.run(stop_cmd, capture_output=True, text=True)
+                    
+                    # Force remove
+                    rm_cmd = [DOCKER_BIN, 'rm', '-f', container]
+                    subprocess.run(rm_cmd, capture_output=True, text=True)
+                    
+                    logger.info(f"Cleaned up container: {container}")
+            
+            return jsonify({
+                'status': 'success',
+                'message': f'Cleaned up {len(containers)} containers',
+                'containers': containers
+            })
+        else:
+            return jsonify({
+                'status': 'success',
+                'message': 'No containers to clean up'
+            })
+            
+    except Exception as e:
+        logger.error(f"Error in force cleanup: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/status', methods=['GET'])
+def get_status():
+    """Get status of all containers"""
+    try:
+        # Check if Docker is available
+        docker_check = subprocess.run(
+            [DOCKER_BIN, '--version'],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=5
         )
-        if result.returncode != 0:
-            return jsonify({'status': 'error','error': result.stderr}), 500
-        # Compose prints a JSON array; return it directly
-        return app.response_class(result.stdout, mimetype='application/json')
+        
+        if docker_check.returncode != 0:
+            logger.warning("Docker not available")
+            return jsonify({
+                'status': 'error',
+                'message': 'Docker not available',
+                'services': []
+            })
+        
+        if not COMPOSE_FILE.exists():
+            logger.warning(f"Compose file not found: {COMPOSE_FILE}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Compose file not found',
+                'services': []
+            })
+        
+        # Get container status
+        result = run_compose_command(['ps', '--format', 'json'], timeout=10)
+        
+        if result.returncode == 0 and result.stdout:
+            try:
+                # Parse the JSON output
+                if result.stdout.strip().startswith('['):
+                    services = json.loads(result.stdout)
+                else:
+                    # Line-by-line JSON
+                    services = []
+                    for line in result.stdout.strip().split('\n'):
+                        if line:
+                            try:
+                                services.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                logger.warning(f"Could not parse line: {line}")
+                
+                logger.debug(f"Found {len(services)} services")
+                return jsonify({
+                    'status': 'success',
+                    'services': services,
+                    'project': PROJECT_NAME
+                })
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error: {e}")
+                return jsonify({
+                    'status': 'success',
+                    'services': [],
+                    'raw': result.stdout
+                })
+        else:
+            return jsonify({
+                'status': 'success',
+                'services': [],
+                'message': 'No services running'
+            })
+            
     except Exception as e:
-        return jsonify({'status': 'error','message': str(e)}), 500
+        logger.error(f"Error getting status: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'services': []
+        })
 
+@app.route('/api/health-check/<service_name>', methods=['GET'])
+def health_check(service_name):
+    """Check if a specific service is healthy"""
+    try:
+        result = run_compose_command(['ps', '--format', 'json', service_name], timeout=5)
+        
+        if result.returncode == 0 and result.stdout:
+            service_info = json.loads(result.stdout.strip())
+            if isinstance(service_info, list) and len(service_info) > 0:
+                service_info = service_info[0]
+            
+            health = service_info.get('Health', 'unknown')
+            status = service_info.get('Status', 'unknown')
+            
+            return jsonify({
+                'service': service_name,
+                'health': health,
+                'status': status,
+                'running': 'Up' in status
+            })
+        else:
+            return jsonify({
+                'service': service_name,
+                'health': 'not found',
+                'status': 'not running',
+                'running': False
+            })
+            
+    except Exception as e:
+        logger.error(f"Error checking health for {service_name}: {e}")
+        return jsonify({
+            'service': service_name,
+            'health': 'error',
+            'status': str(e),
+            'running': False
+        })
+
+@app.route('/api/logs/<service_name>', methods=['GET'])
+def get_service_logs(service_name):
+    """Get logs for a specific service"""
+    try:
+        result = run_compose_command(['logs', '--tail=100', service_name], timeout=10)
+        
+        return jsonify({
+            'status': 'success',
+            'logs': result.stdout,
+            'stderr': result.stderr
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting logs for {service_name}: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 if __name__ == '__main__':
-    print("Starting Coyote UI Server on http://localhost:8080")
+    print(f"Starting Coyote UI Server on http://localhost:8080")
+    print(f"Compose directory: {COMPOSE_DIR}")
+    print(f"Compose file: {COMPOSE_FILE}")
+    print(f"Project name: {PROJECT_NAME}")
+    print(f"Log file: {LOG_FILE}")
+    
+    # Ensure compose directory and file exist
+    if not COMPOSE_DIR.exists():
+        print(f"WARNING: Compose directory not found: {COMPOSE_DIR}")
+        logger.warning(f"Compose directory not found: {COMPOSE_DIR}")
+    if not COMPOSE_FILE.exists():
+        print(f"WARNING: Compose file not found: {COMPOSE_FILE}")
+        logger.warning(f"Compose file not found: {COMPOSE_FILE}")
+    
+    # Clean up any orphaned containers on startup
+    logger.info("Checking for orphaned containers...")
+    try:
+        run_compose_command(['ps', '--format', 'json'], timeout=5)
+    except:
+        pass
+    
     app.run(host='0.0.0.0', port=8080, debug=True)

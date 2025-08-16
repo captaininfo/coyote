@@ -464,13 +464,52 @@
             margin-top: 5px;
         }
 
+        /* Accessible status indicators */
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+
+        .status-icon {
+            font-size: 18px;
+            line-height: 1;
+        }
+
         .status-online {
-            color: #27ae60;
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
         }
 
         .status-offline {
-            color: #e74c3c;
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
         }
+
+        .status-unknown {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+
+        /* For screen readers */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0,0,0,0);
+            white-space: nowrap;
+            border: 0;
+        }
+
 
         /* Hidden content areas */
         .content-area {
@@ -539,7 +578,7 @@
 
                 <!-- Quick Actions -->
                 <div class="quick-actions">
-                    <a href="#" class="action-card" onclick="openCoyoteSearch()">
+                    <a href="#" class="action-card" onclick="return openCoyoteSearch()">
                         <div class="icon">🔍</div>
                         <h3>Open Coyote Search</h3>
                         <p>Begin a purposeful research session</p>
@@ -806,27 +845,42 @@
 
                 <div class="status-grid">
                     <div class="status-item">
-                        <div class="status-value status-offline" data-component="neo4j_database">●</div>
+                        <div data-component="neo4j_database" class="status-indicator status-offline">
+                            <span class="status-icon" aria-hidden="true">✗</span>
+                            <span class="status-text">Offline</span>
+                        </div>
                         <div class="status-label">Neo4j Database</div>
                     </div>
                     
                     <div class="status-item">
-                        <div class="status-value status-offline" data-component="coyote_core">●</div>
+                        <div data-component="coyote_core" class="status-indicator status-offline">
+                            <span class="status-icon" aria-hidden="true">✗</span>
+                            <span class="status-text">Offline</span>
+                        </div>
                         <div class="status-label">Coyote Core</div>
                     </div>
                     
                     <div class="status-item">
-                        <div class="status-value status-offline" data-component="coyote_agent_bot">●</div>
+                        <div data-component="coyote_agent_bot" class="status-indicator status-offline">
+                            <span class="status-icon" aria-hidden="true">✗</span>
+                            <span class="status-text">Offline</span>
+                        </div>
                         <div class="status-label">Coyote Agent/Bot</div>
                     </div>
                     
                     <div class="status-item">
-                        <div class="status-value status-offline" data-component="ollama_llm">●</div>
+                        <div data-component="ollama_llm" class="status-indicator status-offline">
+                            <span class="status-icon" aria-hidden="true">✗</span>
+                            <span class="status-text">Offline</span>
+                        </div>
                         <div class="status-label">Ollama/LLM</div>
                     </div>
                     
                     <div class="status-item">
-                        <div class="status-value status-offline" data-component="browser_extension">●</div>
+                        <div data-component="browser_extension" class="status-indicator status-offline">
+                            <span class="status-icon" aria-hidden="true">✗</span>
+                            <span class="status-text">Offline</span>
+                        </div>
                         <div class="status-label">Browser Extension</div>
                     </div>
                 </div>
@@ -835,10 +889,34 @@
 
                 <div class="config-section" style="margin-top: 30px;">
                     <div class="config-header">🐳 Docker Management</div>
-                    <p style="margin-bottom: 15px;">Manage your Coyote containers</p>
-                    <button id="btnStartAllServices" class="btn btn-success">Start All Services</button>
-                    <button id="btnStopAllServices" class="btn" style="margin-left: 10px; background: #e74c3c; color: white;">Stop All Services</button>
-                    <button id="btnRestartServices" class="btn" style="margin-left: 10px; background: #f39c12; color: white;">Restart Services</button>
+                    <p style="margin-bottom: 15px;">Manage your Coyote containers by profile</p>
+                    
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 15px;">
+                        <button id="btnStartCore" class="btn btn-primary" title="Start Neo4j and Coyote Core only">
+                            Start Core Services
+                        </button>
+                        <button id="btnStartLLM" class="btn btn-primary" title="Start Ollama LLM service">
+                            Start LLM Service
+                        </button>
+                        <button id="btnStartAllServices" class="btn btn-success" title="Start all services including agent">
+                            Start All Services
+                        </button>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                        <button id="btnStopAllServices" class="btn" style="background: #e74c3c; color: white;">
+                            Stop All Services
+                        </button>
+                        <button id="btnRestartServices" class="btn" style="background: #f39c12; color: white;">
+                            Restart Services
+                        </button>
+                        <button id="btnForceCleanup" class="btn" style="background: #c0392b; color: white;" 
+                                title="Force stop and remove all Coyote containers">
+                            Force Cleanup (Emergency)
+                        </button>
+                    </div>
+                    
+                    <div id="status-summary" style="margin-top: 15px; font-style: italic;"></div>
                 </div>
             </div>
         </main>
@@ -914,11 +992,12 @@
             });
         });
 
+        /*
         // Open Coyote Search functionality
         function openCoyoteSearch() {
             // Open your existing new_tab.html in a new tab
             window.open('/new_tab.html', '_blank');
-        }
+        }*/
 
         // Integration toggle functionality
         function toggleIntegration(element, integration) {
