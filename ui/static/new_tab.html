@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Coyote New Tab</title>
-    <link rel="stylesheet" type="text/css" href="../css/new_tab.css">
+    <!-- Served by Flask static -->
+    <link rel="stylesheet" href="/static/new_tab.css">
+    <meta name="coyote-new-tab" content="1">
 </head>
 <body>
     <div class="container">
@@ -40,6 +42,16 @@
         <!--<img alt="Friendly coyote" src="../images/coyote_container_image2.png" height="200">-->
     </div>
 
-    <script src="../js/new_tab.js"></script>
+     <script>
+   // Handshake with the extension content script
+   window.addEventListener('message', (e) => {
+     if (e.data && e.data.type === 'COYOTE_CONTENT_SCRIPT_READY') {
+       // Extension attached; example track event
+       window.postMessage({ type: 'COYOTE_TRACK', payload: { event: 'new_tab_open' } }, '*');
+     }
+   });
+   // Announce the page is ready so content.js can attach
+   window.postMessage({ type: 'COYOTE_PAGE_READY' }, '*');
+ </script>
 </body>
 </html>

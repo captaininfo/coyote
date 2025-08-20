@@ -65,6 +65,27 @@ function captureHyperlinkClicks() {
     }, false);
 }
 
+// Attach to Coyote UI's New Tab when served from Flask
+(function attachToCoyoteNewTab() {
+  const isLocalUI = (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+  const isNewTabHtml = location.pathname.endsWith('/static/new_tab.html') ||
+                       document.querySelector('meta[name="coyote-new-tab"]');
+  if (!isLocalUI || !isNewTabHtml) return;
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window) return;
+    const msg = e.data || {};
+    if (msg.type === 'COYOTE_PAGE_READY') {
+      // Confirm we’re listening
+      try { window.postMessage({ type: 'COYOTE_CONTENT_SCRIPT_READY' }, '*'); } catch {}
+    }
+    if (msg.type === 'COYOTE_TRACK') {
+      // Forward tracking to background.js (adapt to your schema)
+      try { browser.runtime.sendMessage({ type: 'coyote-track', payload: msg.payload }); } catch {}
+    }
+  }, false);
+})();
+
 /**
  * Initializes the content script.
  */

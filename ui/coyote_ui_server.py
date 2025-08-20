@@ -11,6 +11,9 @@ import secrets
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
+import base64
+import urllib.request
+import urllib.error
 
 # Configure paths
 current_dir = Path(__file__).parent
@@ -245,6 +248,32 @@ def start_all():
         
     except Exception as e:
         logger.error(f"Error starting all: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/start-llm', methods=['POST'])
+def start_llm():
+    """Start just the LLM profile (Ollama + pull-model)"""
+    logger.info("Starting LLM services...")
+    try:
+        if not COMPOSE_FILE.exists():
+            error_msg = f'Compose file not found: {COMPOSE_FILE}'
+            logger.error(error_msg)
+            return jsonify({'status': 'error', 'message': error_msg}), 404
+
+        result = run_compose_command(
+            ['--profile', 'llm', 'up', '-d', '--pull=missing'],
+            timeout=240
+        )
+
+        return jsonify({
+            'status': 'success' if result.returncode == 0 else 'error',
+            'message': 'LLM services starting' if result.returncode == 0 else 'Failed to start LLM services',
+            'stdout': result.stdout,
+            'stderr': result.stderr,
+            'returncode': result.returncode
+        })
+    except Exception as e:
+        logger.error(f"Error starting LLM: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/stop', methods=['POST'])
@@ -485,6 +514,196 @@ def get_service_logs(service_name):
     except Exception as e:
         logger.error(f"Error getting logs for {service_name}: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/neo4j-browser-url', methods=['GET'])
+def neo4j_browser_url():
+    env = _parse_env_file()
+    port = env.get('NEO4J_HTTP_PORT', '7474')
+    return jsonify({"url": f"http://localhost:{port}"})
+
+
+@app.route('/api/graph/recent', methods=['GET'])
+def graph_recent():
+    seed = int(flask_request.args.get('seedLimit', 60))
+    node_limit = int(flask_request.args.get('nodeLimit', 120))
+    rel_limit  = int(flask_request.args.get('relLimit', 240))
+    cypher = """
+CALL {
+  MATCH (n)
+  WHERE (n:Webpage OR n:Annotation OR n:Purpose OR n:SearchTerms)
+    AND n.timestamp IS NOT NULL
+  RETURN n
+  ORDER BY datetime(n.timestamp) DESC
+  LIMIT $seedLimit
+}
+WITH collect(n) AS seeds
+UNWIND seeds AS s
+OPTIONAL MATCH (s)-[r]-(m)
+WITH collect(DISTINCT s) + collect(DISTINCT m) AS allNodes, collect(DISTINCT r) AS rels
+WITH allNodes[..$nodeLimit] AS nodes, rels[..$relLimit] AS rs
+RETURN
+  [x IN nodes | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes,
+  [x IN rs    | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels
+"""
+    try:
+        row = _run_cypher_http(cypher, {"seedLimit": seed, "nodeLimit": node_limit, "relLimit": rel_limit})
+        counts = _to_cytoscape_counts(row)
+        return jsonify({"status":"success", **row, "counts": counts})
+    except Exception as e:
+        logger.error(f"/api/graph/recent error: {e}")
+        return jsonify({"status":"error","message":str(e)}), 500
+
+
+@app.route('/api/graph/run', methods=['POST'])
+def graph_run():
+    payload = flask_request.get_json(silent=True) or {}
+    cypher = (payload.get('cypher') or "").strip()
+    nl     = (payload.get('nl') or "").strip()
+    params = payload.get('params') or {}
+    if nl and not cypher:
+        gen = _nl_to_cypher(nl)
+        if not gen:
+            return jsonify({"status":"unavailable","message":"LLM not available to translate NL→Cypher"}), 200
+        cypher = gen
+    if not cypher:
+        return jsonify({"status":"error","message":"No query provided"}), 400
+    try:
+        _sanitize_readonly(cypher)
+        row = _run_cypher_http(cypher, params)
+        counts = _to_cytoscape_counts(row if isinstance(row, dict) else {"nodes":[],"rels":[]})
+        return jsonify({"status":"success", **row, "counts": counts})
+    except ValueError as ve:
+        return jsonify({"status":"error","message":str(ve)}), 400
+    except Exception as e:
+        logger.error(f"/api/graph/run error: {e}")
+        return jsonify({"status":"error","message":str(e)}), 500
+
+
+def _parse_env_file():
+    env = {}
+    try:
+        for line in ENV_FILE.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line: continue
+            k, v = line.split('=', 1)
+            env[k.strip()] = v.strip()
+    except Exception:
+        pass
+    return env
+
+def _neo4j_http_info():
+    env = _parse_env_file()
+    http_port = env.get('NEO4J_HTTP_PORT', '7474')
+    user = env.get('NEO4J_USERNAME', 'neo4j')
+    pwd  = env.get('NEO4J_PASSWORD', 'password')
+    base = f"http://localhost:{http_port}"
+    auth = base64.b64encode(f"{user}:{pwd}".encode('utf-8')).decode('ascii')
+    return base, auth
+
+def _run_cypher_http(statement:str, parameters:dict=None, timeout=6.0):
+    base, auth = _neo4j_http_info()
+    url  = f"{base}/db/neo4j/tx/commit"
+    body = json.dumps({
+        "statements": [{"statement": statement, "parameters": parameters or {}}]
+    }).encode('utf-8')
+    req = urllib.request.Request(url, data=body, method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Basic {auth}"
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if data.get('errors'):
+                raise RuntimeError(data['errors'][0].get('message','Cypher error'))
+            results = data.get('results', [])
+            if not results:
+                return {"nodes": [], "rels": []}
+            res = results[0]
+            cols = res.get('columns', [])
+            rows = res.get('data', [])
+            if not rows:
+                return {"nodes": [], "rels": []}
+            row = rows[0].get('row', [])
+            # Common case: RETURN nodes, rels
+            if isinstance(row, list) and len(cols) >= 2 and cols[0].lower() == 'nodes' and cols[1].lower() == 'rels':
+                return {"nodes": row[0] or [], "rels": row[1] or []}
+            # If user returns a single map like {nodes:..., rels:...}
+            if isinstance(row, list) and row and isinstance(row[0], dict):
+                m = row[0]
+                return {"nodes": m.get('nodes', []), "rels": m.get('rels', [])}
+            if isinstance(row, dict):
+                return {"nodes": row.get('nodes', []), "rels": row.get('rels', [])}
+            return {"nodes": [], "rels": []}
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Neo4j HTTP unavailable: {e}")
+    except Exception as e:
+        raise
+
+def _sanitize_readonly(cypher:str):
+    # very simple write-guard (MVP). Reject write keywords.
+    banned = ['create ', 'merge ', 'delete ', 'remove ', 'set ', 'call dbms.', 'call db.index.', 'load csv', 'apoc.load']
+    low = ' '.join(cypher.lower().split())
+    if any(k in low for k in banned):
+        raise ValueError("Write/DDL operations are not allowed from the UI.")
+    return cypher
+
+def _to_cytoscape_counts(payload):
+    nodes = payload.get('nodes') if isinstance(payload, dict) else []
+    rels  = payload.get('rels')  if isinstance(payload, dict) else []
+    return {'nodes': len(nodes or []), 'rels': len(rels or [])}
+
+def _nl_to_cypher(nl_question:str):
+    """NL→Cypher via local Ollama if available; else return None."""
+    # Probe LLM service quickly
+    env = _parse_env_file()
+    port = env.get('OLLAMA_PORT','11434')
+    model = env.get('LLM','phi3:mini')
+    url = f"http://localhost:{port}/api/generate"
+    # minimal schema to steer the model (matches your bot.py schema)
+    schema = """
+Node Labels and Properties:
+(:Webpage {event_id, url, title, summary, timestamp, isSERP, dataSource, entities, topics})
+(:Annotation {annotation_id, annotation_text, highlighted_text, timestamp, url, webpage_title, entities, topics})
+(:Purpose {event_id, text, timestamp, dataSource, topics, entities})
+(:SearchTerms {event_id, text, relevance, timestamp, dataSource, topics, entities})
+(:WikiDataOntology {uri, label})
+
+Relationships:
+(:Webpage)-[:HAS_TOPIC]->(:WikiDataOntology)
+(:Annotation)-[:HAS_TOPIC]->(:WikiDataOntology)
+(:Purpose)-[:HAS_TOPIC]->(:WikiDataOntology)
+(:Purpose)-[:INITIATES_SEARCH]->(:SearchTerms)
+(:Webpage)-[:HAS_ANNOTATION]->(:Annotation)
+(:Webpage)-[:LINKS_TO]->(:Webpage)
+"""
+    prompt = f"""You translate questions into ONE read-only Cypher query over the schema below.
+Rules: use ONLY listed labels/props/rels; prefer recent data with datetime() filters when user says 'recent/last N days'; RETURN nodes/relationships shape like:
+RETURN [x IN nodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes,
+       [x IN rels  | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels
+Output STRICT JSON: {{"cypher":"..."}}
+SCHEMA:
+{schema}
+QUESTION: {nl_question}
+"""
+    payload = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode("utf-8")
+    try:
+        req = urllib.request.Request(url, data=payload, method="POST", headers={"Content-Type":"application/json"})
+        with urllib.request.urlopen(req, timeout=6.0) as resp:
+            out = json.loads(resp.read().decode('utf-8'))
+        # Ollama returns {"response":"..."} where ... should be our JSON block
+        text = out.get('response','').strip()
+        # try to extract a JSON object
+        start = text.find('{'); end = text.rfind('}')
+        if start >= 0 and end > start:
+            blob = json.loads(text[start:end+1])
+            cypher = blob.get('cypher','').strip()
+            return cypher if cypher else None
+        return None
+    except Exception:
+        return None
+
 
 if __name__ == '__main__':
     print(f"Starting Coyote UI Server on http://localhost:8080")

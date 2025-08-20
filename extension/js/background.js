@@ -338,6 +338,14 @@ function stopHeartbeat() {
     clearLocalStatus();
 }
 
+browser.runtime.onMessage.addListener((msg, sender) => {
+  if (msg && msg.type === 'coyote-track') {
+    // TODO: forward to Coyote Core API or buffer locally
+    // Example:
+    // fetch('http://localhost:5000/track', { method:'POST', body: JSON.stringify(msg.payload) })
+  }
+});
+
 // Start on load
 startHeartbeat();
 

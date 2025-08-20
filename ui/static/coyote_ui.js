@@ -570,3 +570,301 @@ function showErrorDetails(errorText) {
         }, 30000);
     }
 }
+
+// ============== Explore Visually (Cytoscape) ==============
+(() => {
+  let cy = null;
+  let inited = false;
+  const DEFAULTS = { seedLimit: 60, nodeLimit: 120, relLimit: 240 };
+
+  const CANNED = [
+    // id, label, description, cypher
+    {
+      id: "recent_activity",
+      label: "Recent activity (default)",
+      desc: "Newest Webpages/Annotations/Purposes/SearchTerms + 1-hop",
+      cypher: `
+CALL {
+  MATCH (n)
+  WHERE (n:Webpage OR n:Annotation OR n:Purpose OR n:SearchTerms)
+    AND n.timestamp IS NOT NULL
+  RETURN n
+  ORDER BY datetime(n.timestamp) DESC
+  LIMIT $seedLimit
+}
+WITH collect(n) AS seeds
+UNWIND seeds AS s
+OPTIONAL MATCH (s)-[r]-(m)
+WITH collect(DISTINCT s) AS sN, collect(DISTINCT m) AS mN, collect(DISTINCT r) AS rs
+WITH sN + mN AS nodes, rs AS rels
+RETURN
+  [x IN nodes | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes,
+  [x IN rels  | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels
+`    },
+    {
+      id: "latest_webpages_30d",
+      label: "Latest webpages (30 days)",
+      desc: "Recent Webpage nodes and their topics/annotations",
+      cypher: `
+CALL {
+  MATCH (w:Webpage)
+  WHERE w.timestamp IS NOT NULL AND datetime(w.timestamp) >= datetime() - duration({days:30})
+  RETURN w ORDER BY datetime(w.timestamp) DESC LIMIT $seedLimit
+}
+WITH collect(w) AS ws
+UNWIND ws AS w
+OPTIONAL MATCH (w)-[r]-(m)
+RETURN
+  [x IN collect(DISTINCT w) + collect(DISTINCT m) | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes,
+  [x IN collect(DISTINCT r) | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels
+`    },
+    {
+      id: "topic_cloud",
+      label: "Top topics (30 days)",
+      desc: "Frequently used WikiDataOntology topics and connected pages",
+      cypher: `
+CALL {
+  MATCH (w:Webpage)-[:HAS_TOPIC]->(t:WikiDataOntology)
+  WHERE w.timestamp IS NOT NULL AND datetime(w.timestamp) >= datetime() - duration({days:30})
+  RETURN t, count(*) AS c ORDER BY c DESC LIMIT $seedLimit
+}
+WITH collect(t) AS ts
+UNWIND ts AS t
+OPTIONAL MATCH (t)<-[r:HAS_TOPIC]-(n)
+RETURN
+  [x IN collect(DISTINCT t) + collect(DISTINCT n) | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes,
+  [x IN collect(DISTINCT r) | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels
+`    },
+    {
+      id: "annotations_recent",
+      label: "Recent annotations → pages",
+      desc: "Latest Annotation nodes and their source Webpages",
+      cypher: `
+CALL {
+  MATCH (a:Annotation)
+  WHERE a.timestamp IS NOT NULL
+  RETURN a ORDER BY datetime(a.timestamp) DESC LIMIT $seedLimit
+}
+WITH collect(a) AS as
+UNWIND as AS a
+OPTIONAL MATCH (w:Webpage)-[r:HAS_ANNOTATION]->(a)
+RETURN
+  [x IN collect(DISTINCT a) + collect(DISTINCT w) | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes,
+  [x IN collect(DISTINCT r) | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels
+`    },
+    {
+      id: "purposes_to_search",
+      label: "Purposes → Search terms (30 days)",
+      desc: "Recent Purpose nodes and initiated SearchTerms",
+      cypher: `
+MATCH (p:Purpose)-[r:INITIATES_SEARCH]->(s:SearchTerms)
+WHERE p.timestamp IS NOT NULL AND datetime(p.timestamp) >= datetime() - duration({days:30})
+RETURN
+  [x IN collect(DISTINCT p) + collect(DISTINCT s) | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes,
+  [x IN collect(DISTINCT r) | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels
+`    }
+  ];
+
+  function buildCannedMenu() {
+    const sel = document.getElementById('cg-canned');
+    if (!sel) return;
+    CANNED.forEach(q => {
+      const opt = document.createElement('option');
+      opt.value = q.id;
+      opt.textContent = `📎 ${q.label}`;
+      opt.title = q.desc;
+      sel.appendChild(opt);
+    });
+  }
+
+  function setStatus(msg, kind='info') {
+    const el = document.getElementById('cg-status');
+    if (!el) return;
+    const colors = { info:'#7f8c8d', success:'#155724', warn:'#856404', error:'#721c24' };
+    el.style.color = colors[kind] || colors.info;
+    el.textContent = msg;
+  }
+
+  function ensureCy() {
+    if (cy) return;
+    const el = document.getElementById('graphCanvas');
+    if (!el) return;
+    cy = cytoscape({
+      container: el,
+      style: [
+        { selector: 'node',
+          style: {
+            'content': 'data(label)',
+            'font-size': 10,
+            'background-color': '#4A90E2',
+            'color': '#1b1f23',
+            'text-outline-color': '#ffffff',
+            'text-outline-width': 2,
+            'text-valign': 'center',
+            'text-halign': 'center',
+            'width': 'mapData(size, 10, 60, 20, 50)',
+            'height': 'mapData(size, 10, 60, 20, 50)'
+        }},
+        { selector: 'edge',
+          style: {
+            'width': 1.5,
+            'line-color': '#bdc3c7',
+            'target-arrow-shape': 'triangle',
+            'target-arrow-color': '#bdc3c7',
+            'curve-style': 'bezier'
+        }},
+        { selector: '.Webpage', style: {'background-color':'#4A90E2'} },
+        { selector: '.Annotation', style: {'background-color':'#27ae60'} },
+        { selector: '.Purpose', style: {'background-color':'#f39c12'} },
+        { selector: '.SearchTerms', style: {'background-color':'#9b59b6'} },
+        { selector: '.WikiDataOntology', style: {'background-color':'#e74c3c'} }
+      ],
+      layout: { name: 'cose', animate: false }
+    });
+
+    // Basic UX
+    cy.on('tap', 'node', (e) => {
+      const d = e.target.data();
+      setStatus(`${d.labels?.[0] || 'Node'} — ${d.title || d.text || d.url || d.label || d.id}`);
+    });
+    window.addEventListener('resize', () => cy.resize());
+  }
+
+  function toElements(payload) {
+    // payload.elements can be array or {nodes, edges}
+    if (!payload) return [];
+    if (Array.isArray(payload)) return payload;
+    const outs = [];
+    (payload.nodes || []).forEach(n => {
+      const id = `n${n.id}`;
+      // pick best label text
+      const p = n.props || {};
+      const display = p.title || p.annotation_text || p.text || p.url || p.label || `#${n.id}`;
+      outs.push({
+        group: 'nodes',
+        data: {
+          id,
+          label: display,
+          labels: n.labels || [],
+          size: Math.min(60, Math.max(10, (display?.length || 10))),
+          title: p.title, text: p.text, url: p.url
+        },
+        classes: (n.labels || []).join(' ')
+      });
+    });
+    (payload.rels || payload.edges || []).forEach(r => {
+      outs.push({
+        group: 'edges',
+        data: {
+          id: `e${r.id}`,
+          source: `n${r.s}`,
+          target: `n${r.t}`,
+          label: r.type
+        }
+      });
+    });
+    return outs;
+  }
+
+  async function fetchJSON(url, opts) {
+    const resp = await fetch(url, opts);
+    return await resp.json();
+  }
+
+  async function loadRecent() {
+    ensureCy();
+    setStatus('Loading recent activity…');
+    try {
+      const data = await fetchJSON(`/api/graph/recent?seedLimit=${DEFAULTS.seedLimit}&nodeLimit=${DEFAULTS.nodeLimit}&relLimit=${DEFAULTS.relLimit}`);
+      if (data.status !== 'success') throw new Error(data.message || 'Unknown error');
+      cy.elements().remove();
+      cy.add(toElements(data));
+      cy.layout({ name: 'cose', animate:false }).run();
+      setStatus(`Loaded ${data.counts?.nodes || cy.nodes().length} nodes / ${data.counts?.rels || cy.edges().length} relationships.`, 'success');
+    } catch (e) {
+      console.error(e);
+      setStatus(`Failed to load recent activity: ${e.message}`, 'error');
+    }
+  }
+
+  function cannedById(id) { return CANNED.find(q => q.id === id); }
+
+  async function runCanned() {
+    const sel = document.getElementById('cg-canned');
+    const chosen = cannedById(sel?.value);
+    if (!chosen) return setStatus('Pick a quick query first.');
+    await runCypher(chosen.cypher);
+  }
+
+  async function runCypher(cypher) {
+    ensureCy();
+    setStatus('Running query…');
+    try {
+      const data = await fetchJSON('/api/graph/run', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ cypher, params: { seedLimit: DEFAULTS.seedLimit } })
+      });
+      if (data.status !== 'success') throw new Error(data.message || data.error || 'Query failed');
+      cy.elements().remove();
+      cy.add(toElements(data));
+      cy.layout({ name: 'cose', animate:false }).run();
+      setStatus(`Query OK — ${data.counts?.nodes || cy.nodes().length} nodes / ${data.counts?.rels || cy.edges().length} edges.`, 'success');
+    } catch (e) {
+      console.error(e);
+      setStatus(`Query error: ${e.message}`, 'error');
+    }
+  }
+
+  async function askNL() {
+    const txt = document.getElementById('cg-nl')?.value.trim();
+    if (!txt) return setStatus('Type a natural language question first.');
+    setStatus('Translating with LLM → Cypher and running…');
+    try {
+      const data = await fetchJSON('/api/graph/run', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ nl: txt })
+      });
+      if (data.status === 'unavailable') {
+        return setStatus('LLM not running. Start the LLM service on the System Status page, or use Quick Cypher.', 'warn');
+      }
+      if (data.status !== 'success') throw new Error(data.message || data.error || 'NL→Cypher failed');
+      cy.elements().remove();
+      cy.add(toElements(data));
+      cy.layout({ name: 'cose', animate:false }).run();
+      setStatus(`Answer loaded — ${data.counts?.nodes || cy.nodes().length} nodes / ${data.counts?.rels || cy.edges().length} edges.`, 'success');
+    } catch (e) {
+      console.error(e);
+      setStatus(`NL query error: ${e.message}`, 'error');
+    }
+  }
+
+  async function initToolbar() {
+    // Wire controls
+    const runBtn = document.getElementById('cg-run-canned');
+    const askBtn = document.getElementById('cg-ask');
+    const resetBtn = document.getElementById('cg-reset');
+    runBtn && runBtn.addEventListener('click', runCanned);
+    askBtn && askBtn.addEventListener('click', askNL);
+    resetBtn && resetBtn.addEventListener('click', loadRecent);
+
+    // Neo4j Browser link
+    try {
+      const info = await fetchJSON('/api/neo4j-browser-url');
+      const a = document.getElementById('cg-browser');
+      if (a && info.url) a.href = info.url;
+    } catch {}
+  }
+
+  async function boot() {
+    if (inited) return;
+    inited = true;
+    buildCannedMenu();
+    await initToolbar();
+    await loadRecent();
+  }
+
+  // Expose an init hook that the HTML will call when switching sections
+  window.coyoteLoadExplore = boot;
+})();
