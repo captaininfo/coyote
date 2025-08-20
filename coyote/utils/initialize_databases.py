@@ -10,23 +10,26 @@ Provides functions to initialize the databases used by the Coyote application:
 - wikidata_cache.db
 """
 
+import os
 import logging
 import sqlite3
 from pathlib import Path
+from coyote.utils.config_container import (
+    DATA_DIR,
+    STATE_DB_FILE,
+    EVENT_STAGING_DB_FILE,
+    EVENT_DATA_DB_FILE,
+    WIKIDATA_CACHE_DB_FILE
+)
 
 # Get the logger for this module
 logger = logging.getLogger(__name__)
 
-# Define the base directory and data directory
-BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
-DATA_DIR: Path = BASE_DIR / 'data'
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-# Paths to database files
-STATE_DB_FILE: Path = DATA_DIR / 'coyote_state.db'
-EVENT_STAGING_DB_FILE: Path = DATA_DIR / 'coyote_event_staging.db'
-EVENT_DATA_DB_FILE: Path = DATA_DIR / 'coyote_event_data.db'
-WIKIDATA_CACHE_DB_FILE: Path = DATA_DIR / 'wikidata_cache.db'
+logger.info(f"Database files will be created in: {DATA_DIR}")
+logger.info(f"  State DB: {STATE_DB_FILE}")
+logger.info(f"  Event Staging DB: {EVENT_STAGING_DB_FILE}")
+logger.info(f"  Event Data DB: {EVENT_DATA_DB_FILE}")
+logger.info(f"  Wikidata Cache DB: {WIKIDATA_CACHE_DB_FILE}")
 
 
 def initialize_database(db_file: Path, schema_sql: str) -> None:

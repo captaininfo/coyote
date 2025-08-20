@@ -5,13 +5,18 @@ __pycache__
 *.so
 *.egg-info
 *.pyc
+*.pyo
 *.pyd
+.build/
+.dist/
 
 # ---- local virtualenvs ----
 coyote_v2-env
 .venv
 venv
 .venv311
+.venv*/
+.env
 
 # ---- vcs ----
 .git
@@ -24,8 +29,11 @@ venv
 
 # ---- runtime data ----
 data            # this folder is mounted as a *volume* in docker-compose
+data/
+volumes/
 logs
 *.db
+*.sqlite
 *.sqlite3
 *.log
 

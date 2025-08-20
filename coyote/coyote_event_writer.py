@@ -12,17 +12,9 @@ import json
 import uuid
 from pathlib import Path
 from typing import Dict, Any, List
+from coyote.utils.config_container import DATA_DIR, LOGS_DIR
 from coyote.utils.config_manager import get_staging_db_connection
 from coyote.utils.event_status import insert_event_status
-
-# Define base directories
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / 'data'
-LOGS_DIR = DATA_DIR / 'logs'
-
-# Ensure the data and logs directories exist
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Get the logger for this module
 logger = logging.getLogger(__name__)
@@ -275,14 +267,15 @@ def insert_entity(conn: sqlite3.Connection, entity_data: Dict[str, Any]) -> None
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO Entities (event_id, entity_context, entity, uri, score)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO Entities (event_id, entity_context, entity, wikidata_uri, label, score)
+            VALUES (?, ?, ?, ?, ?, ?)
         ''', (
             entity_data['event_id'],
             entity_data.get('entity_context', ''),
             entity_data.get('entity', ''),
-            entity_data.get('uri', ''),
-            entity_data.get('score', 0.0)
+            entity_data.get('wikidata_uri', ''),
+            entity_data.get('label', ''),
+            entity_data.get('score', 0.0),
         ))
         conn.commit()
         logger.debug(f"Inserted entity '{entity_data.get('entity', '')}' for event {entity_data['event_id']} into Entities table.")
@@ -301,14 +294,15 @@ def insert_topic(conn: sqlite3.Connection, topic_data: Dict[str, Any]) -> None:
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO Topics (event_id, topic_context, topic, uri, score)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO Topics (event_id, topic_context, topic, wikidata_uri, label, score)
+            VALUES (?, ?, ?, ?, ?, ?)
         ''', (
             topic_data['event_id'],
             topic_data.get('topic_context', ''),
             topic_data.get('topic', ''),
-            topic_data.get('uri', ''),
-            topic_data.get('score', 0.0)
+            topic_data.get('wikidata_uri', ''),
+            topic_data.get('label', ''),
+            topic_data.get('score', 0.0),
         ))
         conn.commit()
         logger.debug(f"Inserted topic '{topic_data.get('topic', '')}' for event {topic_data['event_id']} into Topics table.")

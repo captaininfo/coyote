@@ -18,24 +18,26 @@ from typing import Any, Dict, Optional
 from cryptography.fernet import Fernet
 from neo4j import GraphDatabase
 from neo4j import Driver
+from coyote.utils.config_container import (
+    DATA_DIR,
+    KEY_FILE as _KEY_FILE,
+    SECRET_KEY_FILE as _SECRET_KEY_FILE,
+    STATE_DB_FILE,
+    EVENT_DATA_DB_FILE,
+    WIKIDATA_CACHE_DB_FILE,
+    STAGING_DB_FILE
+)
+
+# Normalize any string constants that we call .exists() / .open() on
+# (config_container may export str; we need Path-like behavior here)
+KEY_FILE = Path(_KEY_FILE)
+SECRET_KEY_FILE = Path(_SECRET_KEY_FILE)
+# Ensure parent dirs exist (no-op if already present)
+KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+SECRET_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 # Get the logger for this module
 logger = logging.getLogger(__name__)
-
-# Define the base directory and data directory
-BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent  # Correct to point to the project root
-DATA_DIR: Path = BASE_DIR / 'data'
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-# Paths to key files
-KEY_FILE: Path = DATA_DIR / 'coyote_encryption_key.key'
-SECRET_KEY_FILE: Path = DATA_DIR / 'coyote_secret_key.key'
-
-# Paths to database files
-STATE_DB_FILE: Path = DATA_DIR / 'coyote_state.db'
-EVENT_DATA_DB_FILE: Path = DATA_DIR / 'coyote_event_data.db'
-WIKIDATA_CACHE_DB_FILE: Path = DATA_DIR / 'wikidata_cache.db'
-STAGING_DB_FILE: Path = DATA_DIR / 'coyote_event_staging.db'
 
 # Locks for individual databases
 state_db_lock = threading.Lock()          # Lock for coyote_state.db
@@ -97,15 +99,6 @@ def get_staging_db_connection() -> sqlite3.Connection:
             logger.error(f"Error connecting to event staging database: {e}")
             raise
     return g.staging_db
-
-# Ensure connection cleanup at the end of the request
-app = Flask(__name__)  # Ensure your Flask app is properly initialized.
-
-@app.teardown_appcontext
-def close_staging_db_connection(exception):
-    db = g.pop('staging_db', None)
-    if db is not None:
-        db.close()
 
 
 def get_staging_read_connection() -> sqlite3.Connection:

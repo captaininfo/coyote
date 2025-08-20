@@ -12,6 +12,7 @@ import requests
 import logging
 import sqlite3
 import uuid
+import os
 from threading import Thread
 from datetime import datetime
 from pathlib import Path
@@ -30,28 +31,43 @@ from coyote.utils.config_manager import (
     load_credentials,
     get_event_data_db_connection
 )
-
 from coyote.utils.initialize_databases import (
     initialize_coyote_event_staging_db,
     initialize_coyote_state_db,
     initialize_coyote_event_data_db,
     initialize_wikidata_cache_db
 )
+from coyote.utils.config_container import (
+    DATA_DIR, 
+    LOGS_DIR, 
+    LOG_FILE,
+    STATE_DB_FILE,
+    EVENT_DATA_DB_FILE,
+    STAGING_DB_FILE,
+    WIKIDATA_CACHE_DB_FILE
+)
 
-# Define base directories
+# Define base directories (simplified now)
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / 'data'
 TEMPLATE_DIR = BASE_DIR / 'templates'
-LOGS_DIR = DATA_DIR / 'logs'
-LOG_FILE = LOGS_DIR / 'coyote_server.log'
-
-# Ensure directories exist
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Configure logging globally
-logging.basicConfig(filename=str(LOG_FILE), level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(module)s.%(funcName)s: %(message)s")
+logging.basicConfig(
+    filename=str(LOG_FILE), 
+    level=logging.DEBUG, 
+    format="%(asctime)s - %(name)s - %(levelname)s - %(module)s.%(funcName)s: %(message)s"
+)
 logger = logging.getLogger(__name__)
+
+# Log the configuration
+logger.info("="*60)
+logger.info("Coyote Server Starting")
+logger.info(f"Container Mode: {bool(os.environ.get('COYOTE_DATA_DIR'))}")
+logger.info(f"Base Directory: {BASE_DIR}")
+logger.info(f"Data Directory: {DATA_DIR}")
+logger.info(f"Template Directory: {TEMPLATE_DIR}")
+logger.info(f"Log File: {LOG_FILE}")
+logger.info("="*60)
 
 # --- keep Coyote at DEBUG, quiet down noisy third‑party libs -------------
 for noisy in (
@@ -90,7 +106,7 @@ def close_db_connections(exception):
     """
     Close all database connections at the end of the request.
     """
-    db_conns = ['state_db_conn', 'event_data_db_conn', 'wikidata_cache_db_conn']
+    db_conns = ['state_db_conn', 'event_data_db_conn', 'wikidata_cache_db_conn', 'staging_db']
     for conn_name in db_conns:
         conn = g.pop(conn_name, None)
         if conn is not None:
@@ -370,6 +386,11 @@ def fetch_hypothesis_data():
         logger.exception(f"An error occurred: {err}")
         flash('An error occurred while fetching data from Hypothes.is.')
         return redirect(url_for('configure'))
+    
+# health endpoint for Compose healthcheck
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify(status='ok'), 200
 
 
 def main() -> None:
