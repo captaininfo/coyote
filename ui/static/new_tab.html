@@ -1,57 +1,43 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Coyote New Tab</title>
-    <!-- Served by Flask static -->
-    <link rel="stylesheet" href="/static/new_tab.css">
-    <meta name="coyote-new-tab" content="1">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="coyote-new-tab" content="1"/>
+  <title>Coyote New Tab</title>
+  <link rel="stylesheet" href="/static/css/new_tab.css"/>
 </head>
 <body>
-    <div class="container">
+  <div class="container">
+    <header>
+      <h1>Welcome to Coyote</h1>
+      <p>Define your purpose, add keywords, and explore.</p>
+    </header>
 
-        <header>
-            <h1>Welcome to Coyote</h1>
-            <p>Define your purpose, add keywords, and explore.</p>
-        </header>
-        <p>&nbsp;</p>
-        <section class="search-setup">
-            <div class="purpose-of-search">
-                <label for="purposeInput">Purpose of search:</label>
-                <p>Helps Coyote connect searches to your goals.</p>
-                <input type="text" id="purposeInput" placeholder="e.g., Plan trip to Glacier National Park">
-                <p>&nbsp;</p>
-                <div class="recent-purposes">
-                    <!--<h2>Recent</h2>-->
-                    <label for="recent-purposes">Recent</label>
-                    <p>Your recent purposes will appear here for quick reuse.</p>
-                    <ul id="recentPurposesList">
-                        <!-- Recent purposes will be populated here by the script -->
-                    </ul>
-                </div>
-            </div>
-            <p>&nbsp;</p>
-            <div class="search-terms">
-                <label for="searchTermsInput">Search Terms:</label>
-                <input type="text" id="searchTermsInput" placeholder="Enter keywords or a full question...">
-            </div>
-            
-            <button id="searchButton" disabled>Search</button>
-        </section>
-        <!--<img alt="Friendly coyote" src="../images/coyote_container_image2.png" height="200">-->
-    </div>
+    <section class="search-setup">
+      <form id="searchForm" novalidate>
+        <div class="purpose-of-search">
+          <label for="purposeInput">Purpose of search:</label>
+          <p>Helps Coyote connect searches to your goals.</p>
+          <input type="text" id="purposeInput" placeholder="e.g., Plan trip to Glacier National Park"/>
 
-     <script>
-   // Handshake with the extension content script
-   window.addEventListener('message', (e) => {
-     if (e.data && e.data.type === 'COYOTE_CONTENT_SCRIPT_READY') {
-       // Extension attached; example track event
-       window.postMessage({ type: 'COYOTE_TRACK', payload: { event: 'new_tab_open' } }, '*');
-     }
-   });
-   // Announce the page is ready so content.js can attach
-   window.postMessage({ type: 'COYOTE_PAGE_READY' }, '*');
- </script>
+          <div class="recent-purposes">
+            <label for="recent-purposes">Recent</label>
+            <p>Your recent purposes will appear here for quick reuse.</p>
+            <ul id="recentPurposesList"></ul>
+          </div>
+        </div>
+
+        <div class="search-terms" style="margin-top:16px;">
+          <label for="searchTermsInput">Search Terms:</label>
+          <input type="text" id="searchTermsInput" placeholder="Enter keywords or a full question..."/>
+        </div>
+
+        <button id="searchButton" disabled style="margin-top:16px;">Search</button>
+      </form>
+    </section>
+  </div>
+
+  <script src="/static/js/new_tab_ui.js"></script>
 </body>
 </html>

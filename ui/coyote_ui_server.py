@@ -14,6 +14,8 @@ from pathlib import Path
 import base64
 import urllib.request
 import urllib.error
+import shlex
+import traceback
 
 # Configure paths
 current_dir = Path(__file__).parent
@@ -55,6 +57,30 @@ DEFAULT_COMPOSE_DIR = BASE_DIR / "compose"
 COMPOSE_DIR = Path(os.environ.get("COYOTE_COMPOSE_DIR", str(DEFAULT_COMPOSE_DIR))).resolve()
 COMPOSE_FILE = COMPOSE_DIR / "compose.yaml"
 ENV_FILE = COMPOSE_DIR / ".env"
+
+def _parse_env_file():
+    env = {}
+    try:
+        for line in ENV_FILE.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line: continue
+            k, v = line.split('=', 1)
+            env[k.strip()] = v.strip()
+    except Exception:
+        pass
+    return env
+
+def _write_env(updates: dict):
+    """Merge key/value `updates` into compose/.env and chmod 600."""
+    env = _parse_env_file()
+    env.update(updates or {})
+    lines = [f"{k}={env[k]}" for k in sorted(env.keys())]
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ENV_FILE.write_text("\n".join(lines) + "\n")
+    try:
+        os.chmod(ENV_FILE, 0o600)
+    except Exception:
+        logger.warning("Could not chmod 600 on .env")
 
 def get_compose_env():
     """Get consistent environment for all compose commands"""
@@ -521,6 +547,163 @@ def neo4j_browser_url():
     port = env.get('NEO4J_HTTP_PORT', '7474')
     return jsonify({"url": f"http://localhost:{port}"})
 
+@app.route('/api/search/init', methods=['POST'])
+def api_search_init():
+    """
+    Accept Purpose + Search Terms from the Flask-served new_tab and
+    best-effort forward to Core's /init_search to keep the pipeline consistent.
+    """
+    try:
+        payload = flask_request.get_json(silent=True) or {}
+        data = {
+            "timestamp": payload.get("timestamp") or datetime.utcnow().isoformat(),
+            "event": "User starts or modifies a search",
+            "purpose": (payload.get("purpose") or "").strip(),
+            "searchTerms": (payload.get("searchTerms") or "").strip(),
+        }
+
+        forwarded = False
+        try:
+            req = urllib.request.Request(
+                "http://127.0.0.1:5000/init_search",
+                data=json.dumps(data).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
+                _ = resp.read()
+            forwarded = True
+        except Exception:
+            # Core may be down; that's fine for COY-20 acceptance
+            forwarded = False
+
+        logger.info("Search init (forwarded=%s): purpose=%r terms=%r",
+                    forwarded, data["purpose"], data["searchTerms"])
+        return jsonify({"ok": True, "forwarded": forwarded})
+    except Exception as e:
+        logger.exception("api_search_init failed")
+        return jsonify({"ok": False, "message": str(e)}), 400
+
+def _neo4j_http_base_and_auth_override(user: str, pwd: str):
+    """HTTP base URL from .env port, but build Basic auth from provided user/pwd."""
+    env = _parse_env_file()
+    http_port = env.get('NEO4J_HTTP_PORT', '7474')
+    base = f"http://localhost:{http_port}"
+    auth = base64.b64encode(f"{user}:{pwd}".encode('utf-8')).decode('ascii')
+    return base, auth
+
+@app.route('/api/config/test-neo4j', methods=['POST'])
+def api_config_test_neo4j():
+    """
+    Test credentials against Neo4j's HTTP endpoint.
+    Does not persist anything.
+    """
+    try:
+        payload = flask_request.get_json(silent=True) or {}
+        user = (payload.get('user') or 'neo4j').strip()
+        pwd  = (payload.get('pass') or '').strip()
+        if not user or not pwd:
+            return jsonify({"ok": False, "message": "Username and password are required."}), 400
+        base, auth = _neo4j_http_base_and_auth_override(user, pwd)
+        url  = f"{base}/db/neo4j/tx/commit"
+        body = json.dumps({"statements":[{"statement":"RETURN 1 AS ok"}]}).encode('utf-8')
+        req = urllib.request.Request(url, data=body, method="POST",
+            headers={"Content-Type":"application/json", "Authorization": f"Basic {auth}"})
+        with urllib.request.urlopen(req, timeout=6.0) as resp:
+            _ = resp.read()
+        return jsonify({"ok": True, "message": "Neo4j connection succeeded."})
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return jsonify({"ok": False, "message": "Unauthorized: username/password rejected by Neo4j."}), 401
+        logger.exception("Neo4j test HTTPError")
+        return jsonify({"ok": False, "message": f"Neo4j test failed: HTTP {e.code}"}), 400
+    except Exception as e:
+        logger.exception("Neo4j test failed")
+        return jsonify({"ok": False, "message": f"Neo4j test failed: {e}"}), 400
+
+def _get_core_container_name() -> str | None:
+    """
+    Use `docker compose ps --format json coyote_app` to resolve the running container name.
+    Falls back to common default if parsing fails.
+    """
+    try:
+        res = run_compose_command(['ps', '--format', 'json', 'coyote_app'], timeout=5)
+        if res.returncode == 0 and res.stdout:
+            try:
+                # output may be one JSON object or one-per-line
+                data = json.loads(res.stdout.strip()) if res.stdout.strip().startswith('[') else [json.loads(res.stdout)]
+                if data:
+                    name = (data[0].get('Name') or data[0].get('Names') or '').strip()
+                    return name or None
+            except json.JSONDecodeError:
+                pass
+    except Exception:
+        pass
+    # Fallback that matches the logs you shared
+    return "coyote-coyote_app-1"
+
+def _apply_creds_inside_core(uri_container: str, user: str, pwd: str) -> bool:
+    """
+    Best-effort: write settings into Core's state DB using its own encryption path.
+    """
+    name = _get_core_container_name()
+    if not name:
+        return False
+    py = f"""
+from coyote.utils.config_manager import store_setting
+store_setting('neo4j_uri', '{uri_container}', encrypt=False)
+store_setting('neo4j_username', '{user}', encrypt=False)
+store_setting('neo4j_password', '{pwd}', encrypt=True)
+print('saved')
+"""
+    try:
+        cp = subprocess.run(
+            [DOCKER_BIN, 'exec', '-i', name, 'python', '-'],
+            input=py.encode('utf-8'),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10
+        )
+        if cp.returncode == 0 and (cp.stdout.decode(errors='ignore').strip().endswith('saved')):
+            return True
+        logger.info("Apply creds inside core returned code %s; stdout=%r stderr=%r",
+                    cp.returncode, cp.stdout.decode(errors='ignore'), cp.stderr.decode(errors='ignore'))
+        return False
+    except Exception:
+        logger.info("Core not running or exec failed:\n%s", traceback.format_exc())
+        return False
+
+@app.route('/api/config/save-neo4j', methods=['POST'])
+def api_config_save_neo4j():
+    """
+    Persist creds to compose/.env (plaintext .env, chmod 600) and
+    best-effort apply into Core's state DB (with encrypted password).
+    """
+    try:
+        p = flask_request.get_json(silent=True) or {}
+        user = (p.get('user') or 'neo4j').strip()
+        pwd  = (p.get('pass') or '').strip()
+        uri_host = (p.get('uri')  or 'bolt://localhost:7687').strip()
+        if not user or not pwd:
+            return jsonify({"ok": False, "message": "Username and password are required."}), 400
+        # container-internal URI is stable in your compose (service name: database)
+        uri_container = 'bolt://database:7687'
+
+        # 1) Write compose/.env
+        _write_env({
+            "NEO4J_USERNAME": user,
+            "NEO4J_PASSWORD": pwd,
+            "NEO4J_AUTH": f"{user}/{pwd}",
+            "NEO4J_URI": uri_container,              # used by Core/compose defaults
+            "COYOTE_NEO4J_URI_HOST": uri_host        # optional: what user typed (for display)
+        })
+
+        # 2) Best-effort apply into Core now (so password gets encrypted in state DB)
+        applied = _apply_creds_inside_core(uri_container, user, pwd)
+        msg = "Saved. " + ("Applied to running Core." if applied else "Start/Restart Core to take effect inside app.")
+        return jsonify({"ok": True, "applied": applied, "message": msg})
+    except Exception as e:
+        logger.exception("save-neo4j failed")
+        return jsonify({"ok": False, "message": f"Failed to save: {e}"}), 500
+
 
 @app.route('/api/graph/recent', methods=['GET'])
 def graph_recent():
@@ -577,19 +760,6 @@ def graph_run():
     except Exception as e:
         logger.error(f"/api/graph/run error: {e}")
         return jsonify({"status":"error","message":str(e)}), 500
-
-
-def _parse_env_file():
-    env = {}
-    try:
-        for line in ENV_FILE.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith('#') or '=' not in line: continue
-            k, v = line.split('=', 1)
-            env[k.strip()] = v.strip()
-    except Exception:
-        pass
-    return env
 
 def _neo4j_http_info():
     env = _parse_env_file()
