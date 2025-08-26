@@ -13,7 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
     searchButton.setAttribute("aria-disabled", String(!ok));
   }
 
-  // local recent purposes (COY-21 will move to SQLite)
+  // local recent purposes
   function loadRecent() {
     const recents = JSON.parse(localStorage.getItem("recentPurposes") || "[]");
     recentList.innerHTML = "";
@@ -65,7 +65,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadRecent();
 
     // fire-and-forget server submission
-    postInit(purpose, terms);
+    await postInit(purpose, terms);
 
     // navigate
     window.location.href = `https://www.google.com/search?q=${encodeURIComponent(terms)}`;

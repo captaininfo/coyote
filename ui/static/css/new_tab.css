@@ -3,7 +3,7 @@ body {
     font-family: 'Arial', sans-serif;
     margin: 0;
     padding: 0;
-    background: #b5a895 url("/images/coyote_background1.png") left top / cover no-repeat;
+    background: #b5a895 url("/static/images/coyote_background1.png") left top / cover no-repeat;
     color: #333;
 }
 
