@@ -704,6 +704,113 @@ def api_config_save_neo4j():
         logger.exception("save-neo4j failed")
         return jsonify({"ok": False, "message": f"Failed to save: {e}"}), 500
 
+# --- ADD: generic values runner (keeps _run_cypher_http intact) ----------------
+def _run_values_http(statement: str, parameters: dict | None = None, timeout=6.0):
+    """
+    Run a read-only Cypher and return list[dict] rows (columns -> values).
+    """
+    base, auth = _neo4j_http_info()
+    url = f"{base}/db/neo4j/tx/commit"
+    body = json.dumps({"statements": [{"statement": statement, "parameters": parameters or {}}]}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST",
+        headers={"Content-Type": "application/json", "Authorization": f"Basic {auth}"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    if data.get("errors"):
+        raise RuntimeError(data["errors"][0].get("message", "Cypher error"))
+    res = data.get("results", [])
+    if not res:
+        return []
+    cols = res[0].get("columns", [])
+    rows = []
+    for r in res[0].get("data", []):
+        arr = r.get("row", [])
+        rows.append({cols[i]: arr[i] for i in range(min(len(cols), len(arr)))})
+    return rows
+
+# --- ADD: /api/insights/new-topics --------------------------------------------
+@app.route('/api/insights/new-topics', methods=['GET'])
+def api_insights_new_topics():
+    """
+    New topics whose first connection (Webpage/Annotation) occurred in the last N days.
+    Falls back to interaction counts when active_seconds is absent.
+    """
+    try:
+        days  = int(flask_request.args.get('days', '7'))
+        limit = int(flask_request.args.get('limit', '12'))
+        cypher = """
+        MATCH (n)-[:HAS_TOPIC]->(t:WikiDataOntology)
+        WHERE (n:Webpage OR n:Annotation) AND n.timestamp IS NOT NULL
+        WITH t, datetime(n.timestamp) AS ts,
+             CASE WHEN n:Webpage THEN coalesce(n.active_seconds, 0) ELSE 0 END AS secs,
+             1 AS interaction
+        WITH t, min(ts) AS first_ts, sum(secs) AS active_seconds, sum(interaction) AS interactions
+        WHERE first_ts >= datetime() - duration({days: $days})
+        RETURN t.label AS topic, toString(date(first_ts)) AS first_seen,
+               active_seconds, interactions
+        ORDER BY interactions DESC
+        LIMIT $limit
+        """
+        rows = _run_values_http(cypher, {"days": days, "limit": limit})
+        return jsonify({"ok": True, "data": rows})
+    except Exception as e:
+        logger.exception("/api/insights/new-topics failed")
+        return jsonify({"ok": False, "message": str(e)}), 500
+
+# --- ADD: /api/insights/sensemaking-rate --------------------------------------
+@app.route('/api/insights/sensemaking-rate', methods=['GET'])
+def api_insights_sensemaking_rate():
+    """
+    By day for last N days: SERP count vs annotations within +window_min of SERP timestamp.
+    Requires Webpage.isSERP = true and Webpage->HAS_ANNOTATION->Annotation.
+    """
+    try:
+        days = int(flask_request.args.get('days', '30'))
+        window_min = int(flask_request.args.get('window', '30'))
+        cypher = """
+        MATCH (serp:Webpage)
+        WHERE serp.isSERP = true
+          AND serp.timestamp IS NOT NULL
+          AND datetime(serp.timestamp) >= datetime() - duration({days: $days})
+        OPTIONAL MATCH (serp)-[:LINKS_TO]->(p:Webpage)
+        OPTIONAL MATCH (p)-[:HAS_ANNOTATION]->(a:Annotation)
+        WHERE a.timestamp IS NOT NULL
+          AND datetime(a.timestamp) <= datetime(serp.timestamp) + duration({minutes: $window_min})
+        WITH date(datetime(serp.timestamp)) AS d, count(DISTINCT serp) AS searches, count(DISTINCT a) AS annos
+        RETURN toString(d) AS d, searches, annos,
+               (CASE WHEN searches = 0 THEN 0.0 ELSE toFloat(annos)/toFloat(searches) END) AS rate
+        ORDER BY d ASC
+        """
+        rows = _run_values_http(cypher, {"days": days, "window_min": window_min})
+        return jsonify({"ok": True, "data": rows})
+    except Exception as e:
+        logger.exception("/api/insights/sensemaking-rate failed")
+        return jsonify({"ok": False, "message": str(e)}), 500
+
+# --- ADD: /api/insights/rhythms -----------------------------------------------
+@app.route('/api/insights/rhythms', methods=['GET'])
+def api_insights_rhythms():
+    """
+    Hour-of-day activity (sum weight) over last N days.
+    Uses active_seconds if present; otherwise weight=1 per Webpage.
+    """
+    try:
+        days = int(flask_request.args.get('days', '7'))
+        cypher = """
+        MATCH (w:Webpage)
+        WHERE w.timestamp IS NOT NULL
+          AND datetime(w.timestamp) >= datetime() - duration({days: $days})
+        WITH datetime(w.timestamp) AS dt, coalesce(w.active_seconds, 1) AS weight
+        WITH dt.hour AS hour, sum(weight) AS value
+        RETURN hour, value
+        ORDER BY hour ASC
+        """
+        rows = _run_values_http(cypher, {"days": days})
+        return jsonify({"ok": True, "data": rows})
+    except Exception as e:
+        logger.exception("/api/insights/rhythms failed")
+        return jsonify({"ok": False, "message": str(e)}), 500
+
 
 @app.route('/api/graph/recent', methods=['GET'])
 def graph_recent():

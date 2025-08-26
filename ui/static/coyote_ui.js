@@ -796,14 +796,14 @@ RETURN
     await runCypher(chosen.cypher);
   }
 
-  async function runCypher(cypher) {
+  async function runCypher(cypher, params = {}) {
     ensureCy();
     setStatus('Running query…');
     try {
       const data = await fetchJSON('/api/graph/run', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ cypher, params: { seedLimit: DEFAULTS.seedLimit } })
+        body: JSON.stringify({ cypher, params: { seedLimit: DEFAULTS.seedLimit, ...params } })
       });
       if (data.status !== 'success') throw new Error(data.message || data.error || 'Query failed');
       cy.elements().remove();
@@ -815,6 +815,9 @@ RETURN
       setStatus(`Query error: ${e.message}`, 'error');
     }
   }
+
+  // NEW: export to other modules (Insights can deep-link into graph)
+  window.coyoteRunCypher = runCypher;
 
   async function askNL() {
     const txt = document.getElementById('cg-nl')?.value.trim();

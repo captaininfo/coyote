@@ -238,6 +238,19 @@
             display: block;
         }
 
+        .insight-chart {
+            position: relative;
+            width: 100%;
+            /* never shorter than 220px, prefer ~35% viewport height, never taller than 420px */
+            height: clamp(220px, 35vh, 420px);
+        }
+
+        .insight-chart > canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
         /* Browse section styles */
         .browse-tabs {
             display: flex;
@@ -522,6 +535,10 @@
     </style>
     <script src="{{ url_for('static', filename='coyote_ui.js') }}" defer></script>
     <script src="{{ url_for('static', filename='vendor/cytoscape.min.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='vendor/d3.v7.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/insights.js') }}" defer></script>
+
 </head>
 <body>
     <div class="container">
@@ -618,32 +635,45 @@
                     </div>
                     
                     <div class="viz-slide active">
-                        <div class="viz-content">
-                            <div>
-                                <strong>New Topics This Week</strong><br>
-                                [Bar chart showing newly discovered topics with engagement time]<br>
-                                <small>Implementation: Chart.js bar chart</small>
+                        <div class="viz-content" style="background:white;border:none;display:block;padding:12px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                                <strong>New Topics This Week</strong>
+                                <small id="ntw-meta" style="color:#7f8c8d;"></small>
                             </div>
+                            <div class="insight-chart">
+                                <canvas id="newTopicsChart" aria-label="New topics bar chart"></canvas>
+                            </div>
+
+                            <div class="viz-footnote" style="margin-top:8px;color:#7f8c8d;font-size:12px;">
+                                Tip: click a bar to explore pages about that topic.
+                            </div>
+                            <div id="ntw-empty" style="display:none;color:#7f8c8d;font-style:italic;">No new topics yet — try starting a Coyote Search.</div>
+                        </div>
+                    </div>
+
+                    
+                    <div class="viz-slide">
+                        <div class="viz-content" style="background:white;border:none;display:block;padding:12px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                                <strong>Sensemaking Rate</strong>
+                                <small id="smr-meta" style="color:#7f8c8d;"></small>
+                            </div>
+                            <div class="insight-chart">
+                                <canvas id="sensemakingChart" aria-label="Sensemaking rate line chart"></canvas>
+                            </div>
+
+                            <div id="smr-empty" style="display:none;color:#7f8c8d;font-style:italic;">No SERP activity yet in the selected window.</div>
                         </div>
                     </div>
                     
                     <div class="viz-slide">
-                        <div class="viz-content">
-                            <div>
-                                <strong>Sensemaking Rate</strong><br>
-                                [Line chart showing search → annotation conversion rate over last 30 days]<br>
-                                <small>Implementation: Chart.js line chart with trend indicators</small>
+                        <div class="viz-content" style="background:white;border:none;display:block;padding:12px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                                <strong>Learning Rhythms</strong>
+                                <small id="lr-meta" style="color:#7f8c8d;"></small>
                             </div>
-                        </div>
-                    </div>
-                    
-                    <div class="viz-slide">
-                        <div class="viz-content">
-                            <div>
-                                <strong>Learning Rhythms</strong><br>
-                                [Radial timeline showing daily learning patterns this week]<br>
-                                <small>Implementation: D3.js radial area chart</small>
-                            </div>
+                            <svg id="rhythmsSvg" width="100%" height="280" role="img" aria-label="Radial timeline of learning rhythms"></svg>
+                            <div id="lr-empty" style="display:none;color:#7f8c8d;font-style:italic;">No recent browsing yet.</div>
                         </div>
                     </div>
                 </div>
@@ -913,6 +943,7 @@
             slides[index].classList.add('active');
             dots[index].classList.add('active');
             currentSlideIndex = index;
+            if (window.__insightsResize) window.__insightsResize(index);
         }
 
         function nextSlide() {
@@ -1011,6 +1042,24 @@
         setInterval(() => {
             nextSlide();
         }, 10000); // Rotate every 10 seconds
+
+
+        function showSlide(index) {
+            slides.forEach(slide => slide.classList.remove('active'));
+            dots.forEach(dot => dot.classList.remove('active'));
+
+            slides[index].classList.add('active');
+            dots[index].classList.add('active');
+            currentSlideIndex = index;
+
+            // NEW: render the active insights slide
+            if (window.renderInsightsSlide) window.renderInsightsSlide(index);
+        }
+
+        // initial render of first slide
+        window.addEventListener('DOMContentLoaded', () => {
+            if (window.renderInsightsSlide) window.renderInsightsSlide(0);
+        });
     </script>
 </body>
 </html>
