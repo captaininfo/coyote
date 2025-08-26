@@ -27,12 +27,19 @@ COYOTE_SERVER_LOG_FILE = str(_BASE / "logs" / "coyote_server.log")
 DATA_DIR               = COYOTE_DATA_DIR
 LOGS_DIR               = COYOTE_SERVER_LOG_DIR
 
-# ---- Explicitly define the constant that is currently missing
-EVENT_STAGING_DB_FILE  = str(_BASE / "event_staging.db")
-# Back-compat: some modules import STAGING_DB_FILE (without EVENT_)
-STAGING_DB_FILE        = str(_BASE / "staging.db")
-# Some code imports KEY_FILE for secrets/keys
-KEY_FILE               = str(_BASE / "key.json")
+# ---- Canonical filenames (avoid accidental generics like state.db/event_data.db)
+STATE_DB_FILE          = str(_BASE / "coyote_state.db")
+EVENT_DATA_DB_FILE     = str(_BASE / "coyote_event_data.db")
+EVENT_STAGING_DB_FILE  = str(_BASE / "coyote_event_staging.db")
+STAGING_DB_FILE        = EVENT_STAGING_DB_FILE  # back-compat alias
+WIKIDATA_CACHE_DB_FILE = str(_BASE / "wikidata_cache.db")
+
+# Keys/secrets (preserve existing on disk if present)
+KEY_FILE               = str(_BASE / "coyote_encryption_key.key")
+SECRET_KEY_FILE        = str(_BASE / "coyote_secret_key.key")
+
+# Some callers import LOG_FILE – point to the server log file
+LOG_FILE               = COYOTE_SERVER_LOG_FILE
 
 # You can optionally predefine other known DBs here, but it's not required
 # because of the dynamic fallback implemented below.
@@ -72,7 +79,9 @@ def __dir__():
     return sorted(list(globals().keys()) + [
         "COYOTE_DATA_DIR","COYOTE_SERVER_LOG_DIR","COYOTE_SERVER_LOG_FILE",
         "DATA_DIR","LOGS_DIR",
-        "EVENT_STAGING_DB_FILE","STAGING_DB_FILE","KEY_FILE",
+        "STATE_DB_FILE","EVENT_DATA_DB_FILE","EVENT_STAGING_DB_FILE",
+        "STAGING_DB_FILE","WIKIDATA_CACHE_DB_FILE",
+        "KEY_FILE","SECRET_KEY_FILE","LOG_FILE",
         "__getattr__"
     ])
 

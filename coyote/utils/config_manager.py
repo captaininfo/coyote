@@ -32,6 +32,15 @@ from coyote.utils.config_container import (
 # (config_container may export str; we need Path-like behavior here)
 KEY_FILE = Path(_KEY_FILE)
 SECRET_KEY_FILE = Path(_SECRET_KEY_FILE)
+DATA_PATH = Path(DATA_DIR)
+# Legacy candidates we’ll adopt automatically if present
+LEGACY_KEY_CANDIDATES = [
+    DATA_PATH / "coyote_encrytion_key.key",  # historical typo
+    DATA_PATH / "key.json",                  # recent fallback name
+]
+LEGACY_SECRET_CANDIDATES = [
+    DATA_PATH / "secret_key",                # generic fallback name
+]
 # Ensure parent dirs exist (no-op if already present)
 KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
 SECRET_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -50,11 +59,17 @@ def load_encryption_key() -> bytes:
         if KEY_FILE.exists():
             with KEY_FILE.open('rb') as key_file:
                 return key_file.read()
-        else:
-            key = Fernet.generate_key()
-            with KEY_FILE.open('wb') as key_file:
-                key_file.write(key)
-            return key
+        # Adopt legacy key file if found
+        for legacy in LEGACY_KEY_CANDIDATES:
+            if legacy.exists():
+                data = legacy.read_bytes()
+                KEY_FILE.write_bytes(data)
+                logging.getLogger(__name__).info(f"Migrated encryption key from '{legacy.name}' → '{KEY_FILE.name}'.")
+                return data
+        # Otherwise generate fresh
+        key = Fernet.generate_key()
+        KEY_FILE.write_bytes(key)
+        return key
     except Exception as e:
         logger.error(f"Error loading encryption key: {e}", exc_info=True)
         raise
@@ -77,10 +92,17 @@ def load_secret_key() -> bytes:
                 secret_key = key_file.read()
                 logger.debug(f"Secret key loaded from '{SECRET_KEY_FILE}'.")
         else:
-            secret_key = os.urandom(24)
-            with SECRET_KEY_FILE.open('wb') as key_file:
-                key_file.write(secret_key)
-            logger.info(f"Generated new secret key and stored it in '{SECRET_KEY_FILE}'.")
+            # Adopt legacy secret file if found
+            for legacy in LEGACY_SECRET_CANDIDATES:
+                if legacy.exists():
+                    secret_key = legacy.read_bytes()
+                    SECRET_KEY_FILE.write_bytes(secret_key)
+                    logger.info(f"Migrated secret key from '{legacy.name}' → '{SECRET_KEY_FILE.name}'.")
+                    break
+            else:
+                secret_key = os.urandom(24)
+                SECRET_KEY_FILE.write_bytes(secret_key)
+                logger.info(f"Generated new secret key and stored it in '{SECRET_KEY_FILE}'.")
         return secret_key
     except Exception as e:
         logger.error(f"Error loading secret key: {e}", exc_info=True)
