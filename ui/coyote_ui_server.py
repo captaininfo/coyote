@@ -547,6 +547,13 @@ def neo4j_browser_url():
     port = env.get('NEO4J_HTTP_PORT', '7474')
     return jsonify({"url": f"http://localhost:{port}"})
 
+@app.route('/api/bot-url', methods=['GET'])
+def bot_url():
+    env = _parse_env_file()
+    port = env.get('BOT_PORT', '8501')   # same default you use in .env
+    # Streamlit supports ?embed=true to reduce outer chrome
+    return jsonify({"url": f"http://localhost:{port}/?embed=true"})
+
 @app.route('/api/search/init', methods=['POST'])
 def api_search_init():
     """

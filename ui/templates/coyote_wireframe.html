@@ -742,17 +742,20 @@
                     <p class="page-subtitle">Ask questions about your learning patterns and data</p>
                 </div>
 
-                <div class="chat-container" style="height: 600px;">
+                <div class="chat-container" id="chat-assistant" style="height: 600px;">
                     <div class="chat-header">
-                        <span>🤖 Coyote Assistant - Powered by Streamlit</span>
+                        <span>🤖 Coyote Assistant</span>
+                        <small id="chat-health" style="margin-left:8px;color:#7f8c8d;"></small>
                     </div>
-                    <div class="chat-messages">
-                        <div style="padding: 20px; text-align: center; color: #7f8c8d;">
-                            <p><em>Streamlit chat interface would be embedded here</em></p>
-                            <p><small>This will iframe your existing bot.py Streamlit app</small></p>
+                    <div class="chat-messages" id="chat-frame-holder" style="padding:0;">
+                        <iframe id="botFrame" title="Coyote Assistant"
+                                style="border:0;width:100%;height:100%;display:none;"></iframe>
+                        <div id="chat-placeholder" style="display:flex;align-items:center;justify-content:center;height:100%;color:#7f8c8d;">
+                            <em>Starting assistant…</em>
                         </div>
                     </div>
-                    <div class="chat-input-area">
+                    <!-- Hide the native input when the Streamlit frame is present -->
+                    <div class="chat-input-area" id="chat-native-input" style="display:none;">
                         <input type="text" class="chat-input" placeholder="Ask me anything about your learning data...">
                     </div>
                 </div>
@@ -978,6 +981,9 @@
             // Add active class to selected nav item
             document.querySelector(`[data-section="${sectionName}"]`).classList.add('active');
             if (sectionName === 'browse' && window.coyoteLoadExplore) window.coyoteLoadExplore();
+
+            if (sectionName === 'browse' && window.coyoteLoadExplore) window.coyoteLoadExplore();
+            if (sectionName === 'chat'   && window.loadChatAssistant) window.loadChatAssistant();
         }
 
         // Navigation click handlers

@@ -1,3 +1,4 @@
+import logging
 from langchain_openai import OpenAIEmbeddings
 from langchain_ollama import OllamaEmbeddings
 from langchain_aws import BedrockEmbeddings
@@ -21,6 +22,8 @@ from langchain.prompts import (
 from typing import List, Any
 from utils import BaseLogger, extract_title_and_question, format_docs
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+log = logging.getLogger("coyote.agent")
 
 AWS_MODELS = (
     "ai21.jamba-instruct-v1:0",
@@ -57,6 +60,7 @@ def load_embedding_model(embedding_model_name: str, logger=BaseLogger(), config=
         )
         dimension = 384
         logger.info("Embedding: Using SentenceTransformer")
+    log.debug("Embeddings loaded: name=%s dim=%s", embedding_model_name, dimension)
     return embeddings, dimension
 
 
@@ -95,6 +99,7 @@ def load_llm(llm_name: str, logger=BaseLogger(), config={}):
             num_ctx=3072,  # Sets the size of the context window used to generate the next token.
         )
     logger.info("LLM: Using GPT-3.5")
+    log.debug("LLM instantiated: %s", llm_name)
     return ChatOpenAI(temperature=0, model_name="gpt-3.5-turbo", streaming=True)
 
 

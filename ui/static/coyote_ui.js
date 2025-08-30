@@ -868,6 +868,52 @@ RETURN
     await loadRecent();
   }
 
+  async function loadChatAssistant() {
+  const holder = document.getElementById('chat-frame-holder');
+  const frame  = document.getElementById('botFrame');
+  const ph     = document.getElementById('chat-placeholder');
+  const health = document.getElementById('chat-health');
+
+  // Is the bot service up?
+  let botOk = false;
+  try {
+    const st = await fetch('/api/health-check/bot').then(r => r.json());
+    botOk = !!st.running;
+    health.textContent = botOk ? '· Online' : '· Offline';
+    health.style.color = botOk ? '#155724' : '#721c24';
+  } catch { health.textContent = '· Unknown'; }
+
+  if (!botOk) {
+    // Suggest starting services; reuse your existing buttons on Status page
+    ph.innerHTML = `
+      <div style="text-align:center;padding:20px;">
+        <p style="margin-bottom:6px;">Assistant is offline.</p>
+        <button class="btn btn-primary" onclick="switchSection('status')">Open System Status</button>
+      </div>
+    `;
+    frame.style.display = 'none';
+    return;
+  }
+
+  // Get the URL and show the frame
+  try {
+    const info = await fetch('/api/bot-url').then(r => r.json());
+    frame.src = info.url || 'http://localhost:8501/?embed=true';
+    frame.onload = () => {
+      ph.style.display = 'none';
+      frame.style.display = 'block';
+    };
+  } catch {
+    ph.innerHTML = `<div style="text-align:center;padding:20px;">
+        <p>Could not load assistant frame.</p>
+        <button class="btn" onclick="switchSection('status')">Troubleshoot</button>
+      </div>`;
+    frame.style.display = 'none';
+  }
+}
+window.loadChatAssistant = loadChatAssistant;
+
+
   // Expose an init hook that the HTML will call when switching sections
   window.coyoteLoadExplore = boot;
 })();
