@@ -8,9 +8,9 @@ from langchain_openai import ChatOpenAI
 from langchain_ollama import ChatOllama
 from langchain_aws import ChatBedrock
 
-from langchain_neo4j import Neo4jVector
+from langchain_neo4j import Neo4jGraph
 
-from langchain_core.runnables import RunnableParallel, RunnablePassthrough
+from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 
 from langchain.prompts import (
@@ -120,124 +120,157 @@ def configure_llm_only_chain(llm):
 
 
 def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, password):
-    # RAG response
-    #   System: Always talk in pirate speech.
-    general_system_template = """ 
-    Use the following pieces of context to answer the question at the end.
-    The context contains question-answer pairs and their links from Stackoverflow.
-    You should prefer information from accepted or more upvoted answers.
-    Make sure to rely on information from the answers and not on questions to provide accurate responses.
-    When you find particular answer in the context useful, make sure to cite it in the answer using the link.
-    If you don't know the answer, just say that you don't know, don't try to make up an answer.
+    """
+    Browsing‑corpus GraphRAG (graph‑only retriever).
+    Hardened against label=list vs string type mismatches.
+    """
+    import re
+    from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
+    from langchain_core.output_parsers import StrOutputParser
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain.prompts import SystemMessagePromptTemplate, HumanMessagePromptTemplate
+    from langchain_neo4j import Neo4jGraph
+    import logging
+
+    log = logging.getLogger("coyote.agent")
+
+    general_system_template = """
+    You answer ONLY from the user's personal browsing corpus shown in CONTEXT.
+    Rules (must follow):
+    - If CONTEXT is just the single character "∅", reply exactly:
+      "I couldn't find anything matching your query in the selected time window."
+    - Do not invent items, categories, or URLs. Cite only URLs that appear in CONTEXT.
+    - Never include <think> or reveal internal reasoning.
+    - Keep it concise; use bullet points; group by Webpages vs Annotations when helpful.
     ----
+    CONTEXT:
     {summaries}
     ----
-    Each answer you generate should contain a section at the end of links to 
-    Stackoverflow questions and answers you found useful, which are described under Source value.
-    You can only use links to StackOverflow questions that are present in the context and always
-    add links to the end of the answer in the style of citations.
-    Generate concise answers with references sources section of links to 
-    relevant StackOverflow questions only at the end of the answer.
     """
     general_user_template = "Question:```{question}```"
-    messages = [
+    qa_prompt = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(general_system_template),
         HumanMessagePromptTemplate.from_template(general_user_template),
-    ]
-    qa_prompt = ChatPromptTemplate.from_messages(messages)
+    ])
 
-    # Vector + Knowledge Graph response
-    kg = Neo4jVector.from_existing_index(
-        embedding=embeddings,
-        url=embeddings_store_url,
-        username=username,
-        password=password,
-        database="neo4j",  # neo4j by default
-        index_name="stackoverflow",  # vector by default
-        text_node_property="body",  # text by default
-        retrieval_query="""
-    WITH node AS question, score AS similarity
-    CALL  { with question
-        MATCH (question)<-[:ANSWERS]-(answer)
-        WITH answer
-        ORDER BY answer.is_accepted DESC, answer.score DESC
-        WITH collect(answer)[..2] as answers
-        RETURN reduce(str='', answer IN answers | str + 
-                '\n### Answer (Accepted: '+ answer.is_accepted +
-                ' Score: ' + answer.score+ '): '+  answer.body + '\n') as answerTexts
-    } 
-    RETURN '##Question: ' + question.title + '\n' + question.body + '\n' 
-        + answerTexts AS text, similarity as score, {source: question.link} AS metadata
-    ORDER BY similarity ASC // so that best answers are the last
-    """,
+    graph = Neo4jGraph(
+        url=embeddings_store_url, username=username, password=password, refresh_schema=False
     )
-    kg_qa = (
-        RunnableParallel(
-            {
-                "summaries": kg.as_retriever(search_kwargs={"k": 2}) | format_docs,
-                "question": RunnablePassthrough(),
-            }
-        )
+
+    # --- small helper: infer a day window from natural language (today, last N days, etc.)
+    def _days_from_text(text: str) -> int:
+        t = (text or "").lower()
+        m = re.search(r"(past|last)\s+(\d+)\s+(day|week|month|year)s?", t)
+        if m:
+            n = int(m.group(2))
+            unit = m.group(3)
+            return {"day": 1, "week": 7, "month": 30, "year": 365}[unit] * n
+        if "today" in t: return 1
+        if "yesterday" in t: return 2
+        if "this week" in t or "past week" in t: return 7
+        if "last week" in t: return 7
+        if "this month" in t or "past month" in t: return 30
+        if "last month" in t: return 30
+        if "this year" in t or "past year" in t: return 365
+        return 90  # sensible default for browsing topics
+
+    # --- Extract terms: prefer quoted spans, else de-stopworded keywords (<=6 terms)
+    STOP = {"the","a","an","and","or","what","which","have","i","about","in","of","on","for",
+            "to","this","that","past","last","week","weeks","month","months","year","years",
+            "today","yesterday","recent","recently","my","me","did","do"}
+    def _terms(q: str) -> list[str]:
+        quoted = re.findall(r'["“](.+?)["”]', (q or "").lower())
+        if quoted:
+            return [t.strip() for t in quoted if len(t.strip()) >= 3][:6]
+        words = re.findall(r"[a-z0-9\-]{3,}", (q or "").lower())
+        return [w for w in words if w not in STOP][:6]
+
+    # TOPIC/WEBPAGE lines — APOC‑free and resilient when HAS_TOPIC edges are missing.
+    CY_TOPICS_SAFE = """
+    WITH $terms AS terms, $days AS days
+    MATCH (w:Webpage)
+    WHERE w.timestamp IS NOT NULL
+      AND (days IS NULL OR datetime(w.timestamp) >= datetime() - duration({days: days}))
+    // include topics if present
+    OPTIONAL MATCH (w)-[:HAS_TOPIC]->(t:WikiDataOntology)
+    WITH w, terms, collect(DISTINCT toLower(coalesce(t.label,''))) AS lbls
+    WITH w, terms, [l IN lbls WHERE l <> ''] AS lbls2
+    // keep when ANY term matches either topic labels OR title/summary/topics property text
+    WHERE size(terms) = 0 OR any(term IN terms WHERE
+             any(l IN lbls2 WHERE l CONTAINS term)
+          OR toLower(coalesce(w.title,''))   CONTAINS term
+          OR toLower(coalesce(w.summary,'')) CONTAINS term
+          OR toLower(coalesce(w.topics,''))  CONTAINS term
+    )
+    WITH w, lbls2,
+         (CASE WHEN size(lbls2) > 0
+               THEN ' | topics: ' + reduce(s = '', x IN lbls2 | s + CASE WHEN s = '' THEN '' ELSE ', ' END + x)
+               ELSE '' END) AS topics_part
+    RETURN 'WEBPAGE: ' + coalesce(w.title,'(untitled)') + topics_part +
+           ' | url: ' + coalesce(w.url,'') AS text,
+           datetime(w.timestamp) AS ts
+    ORDER BY ts DESC
+    LIMIT 12
+    """
+
+    # ANNOTATION lines — APOC‑free and uses extracted terms
+    CY_TEXT_SAFE = """
+    WITH $terms AS terms, $days AS days
+    MATCH (a:Annotation)<-[:HAS_ANNOTATION]-(w:Webpage)
+    WHERE a.timestamp IS NOT NULL
+      AND (days IS NULL OR datetime(a.timestamp) >= datetime() - duration({days: days}))
+      AND (size(terms) = 0 OR any(term IN terms WHERE
+             toLower(coalesce(a.annotation_text,'')) CONTAINS term
+          OR toLower(coalesce(w.title,''))          CONTAINS term))
+    RETURN 'ANNOTATION: ' + coalesce(a.annotation_text,'') +
+           ' | page: ' + coalesce(w.title,'(untitled)') +
+           ' | url: '  + coalesce(w.url,'') AS text,
+           datetime(a.timestamp) AS ts
+    ORDER BY ts DESC
+    LIMIT 12
+    """
+
+    def _build_context(q: str) -> str:
+        days  = _days_from_text(q)
+        terms = _terms(q)
+        try:
+            params = {"terms": terms, "days": days}
+            rows1 = graph.query(CY_TOPICS_SAFE, params) or []
+            rows2 = graph.query(CY_TEXT_SAFE,   params) or []
+            log.debug(
+                "GraphRAG: days=%s terms=%s; CY_TOPICS rows=%d; CY_TEXT rows=%d",
+                days, terms, len(rows1), len(rows2)
+            )
+            lines = [r.get("text","") for r in rows1] + [r.get("text","") for r in rows2]
+            ctx = "\n\n".join(x for x in lines if x)
+            return ctx if ctx else "∅"
+        except Exception:
+            log.exception("GraphRAG context retrieval failed (q=%r, days=%s terms=%s)", q, days, terms)
+            return "∅"
+
+    summaries_fn = RunnableLambda(lambda q: _build_context(q))
+
+    chain = (
+        RunnableParallel({
+            "summaries": summaries_fn,
+            "question": RunnablePassthrough(),
+        })
         | qa_prompt
         | llm
         | StrOutputParser()
     )
-    return kg_qa
+    return chain
+
 
 
 def generate_ticket(neo4j_graph, llm_chain, input_question):
-    # Get high ranked questions
-    records = neo4j_graph.query(
-        "MATCH (q:Question) RETURN q.title AS title, q.body AS body ORDER BY q.score DESC LIMIT 3"
-    )
-    questions = []
-    for i, question in enumerate(records, start=1):
-        questions.append((question["title"], question["body"]))
-    # Ask LLM to generate new question in the same style
-    questions_prompt = ""
-    for i, question in enumerate(questions, start=1):
-        questions_prompt += f"{i}. \n{question[0]}\n----\n\n"
-        questions_prompt += f"{question[1][:150]}\n\n"
-        questions_prompt += "----\n\n"
-
-    gen_system_template = f"""
-    You're an expert in formulating high quality questions. 
-    Formulate a question in the same style and tone as the following example questions.
-    {questions_prompt}
-    ---
-
-    Don't make anything up, only use information in the following question.
-    Return a title for the question, and the question post itself.
-
-    Return format template:
-    ---
-    Title: This is a new title
-    Question: This is a new question
-    ---
     """
-    # we need jinja2 since the questions themselves contain curly braces
-    system_prompt = SystemMessagePromptTemplate.from_template(
-        gen_system_template, template_format="jinja2"
-    )
-    chat_prompt = ChatPromptTemplate.from_messages(
-        [
-            system_prompt,
-            SystemMessagePromptTemplate.from_template(
-                """
-                Respond in the following template format or you will be unplugged.
-                ---
-                Title: New title
-                Question: New question
-                ---
-                """
-            ),
-            HumanMessagePromptTemplate.from_template("{question}"),
-        ]
-    )
-    llm_response = llm_chain(
-        f"Here's the question to rewrite in the expected format: ```{input_question}```",
-        [],
-        chat_prompt,
-    )
-    new_title, new_question = extract_title_and_question(llm_response["answer"])
-    return (new_title, new_question)
+    Remove dependency on (q:Question) / StackOverflow demo.
+    Minimal, deterministic ticket draft: title = first line (trimmed),
+    description = original user input.
+    """
+    if not input_question:
+        return ("Coyote support request", "No description provided.")
+    first = input_question.strip().splitlines()[0].strip()
+    title = (first[:80] + "…") if len(first) > 80 else first
+    return (title or "Coyote support request", input_question.strip())

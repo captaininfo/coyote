@@ -63,7 +63,3 @@ def create_constraints(driver):
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
-def create_vector_index(driver) -> None:
-    log.debug("create_vector_index start")
-    ...
-    log.debug("create_vector_index done")

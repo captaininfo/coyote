@@ -8,6 +8,7 @@ import subprocess
 import json
 import os
 import secrets
+import re
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
@@ -16,9 +17,19 @@ import urllib.request
 import urllib.error
 import shlex
 import traceback
+import sys
+current_dir = Path(__file__).parent
+ROOT_DIR = current_dir.parent  # .../Coyote_0.4
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from shared.nl2cypher import (
+    prompt_text, schema_for_prompts, SCHEMA_MIN,
+    strip_fences_or_json,  # also used in bot.py
+    looks_like_cypher,     # reuse the same heuristic
+)
 
 # Configure paths
-current_dir = Path(__file__).parent
 template_dir = current_dir / 'templates'
 static_dir = current_dir / 'static'
 
@@ -42,6 +53,27 @@ logger.info(f"Logging to file: {LOG_FILE}")
 app = Flask(__name__, 
            template_folder=str(template_dir),
            static_folder=str(static_dir))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Allowed schema (lightweight allow‑list for schema gate)
+# Labels, relationship types, and property names present in SCHEMA_MIN.
+# NOTE: property->label mapping is intentionally not enforced here (MVP).
+ALLOWED_LABELS = {
+    "Webpage", "Annotation", "Purpose", "SearchTerms", "WikiDataOntology"
+}
+ALLOWED_REL_TYPES = {"HAS_TOPIC", "INITIATES_SEARCH", "HAS_ANNOTATION", "LINKS_TO"}
+ALLOWED_PROPS = {
+    # Webpage
+    "event_id","url","title","summary","timestamp","isSERP","dataSource","entities","topics","active_seconds",
+    # Annotation
+    "annotation_id","annotation_text","highlighted_text","webpage_title",
+    # Purpose
+    "text","relevance",
+    # SearchTerms shares text/relevance/timestamp/dataSource/entities/topics
+    "uri","label"
+}
+# Ban legacy/demo artifacts explicitly
+_BANNED_ARTIFACTS_RE = re.compile(r'(?i)\bstackoverflow\b|[:\[]\s*:?ANSWERS\b|:\s*(Question|Answer)\b')
 
 # Extension heartbeat tracking
 extension_heartbeats = {}
@@ -616,7 +648,7 @@ def api_config_test_neo4j():
         body = json.dumps({"statements":[{"statement":"RETURN 1 AS ok"}]}).encode('utf-8')
         req = urllib.request.Request(url, data=body, method="POST",
             headers={"Content-Type":"application/json", "Authorization": f"Basic {auth}"})
-        with urllib.request.urlopen(req, timeout=6.0) as resp:
+        with urllib.request.urlopen(req, timeout=120.0) as resp:
             _ = resp.read()
         return jsonify({"ok": True, "message": "Neo4j connection succeeded."})
     except urllib.error.HTTPError as e:
@@ -858,14 +890,22 @@ def graph_run():
     nl     = (payload.get('nl') or "").strip()
     params = payload.get('params') or {}
     if nl and not cypher:
-        gen = _nl_to_cypher(nl)
+        gen, diag = _nl_to_cypher(nl)
         if not gen:
-            return jsonify({"status":"unavailable","message":"LLM not available to translate NL→Cypher"}), 200
+            # Surface a helpful reason to the UI
+            return jsonify({"status":"unavailable","message": diag or "LLM could not translate NL→Cypher"}), 200
         cypher = gen
     if not cypher:
         return jsonify({"status":"error","message":"No query provided"}), 400
     try:
         _sanitize_readonly(cypher)
+        # 1) If this came from NL→Cypher, enforce the visual return shape up front.
+        if nl and not _has_nodes_rels_return(cypher):
+            raise ValueError("Shape guard: NL→Cypher must RETURN both `nodes` and `rels` for visualization.")
+        # 2) Schema gate: block unknown labels/rels/props and any Q/A leftovers.
+        _schema_gate(cypher)
+        # 3) Preflight with EXPLAIN so Neo4j's error text can flow back verbatim.
+        _explain_http(cypher, params)
         row = _run_cypher_http(cypher, params)
         counts = _to_cytoscape_counts(row if isinstance(row, dict) else {"nodes":[],"rels":[]})
         return jsonify({"status":"success", **row, "counts": counts})
@@ -925,6 +965,71 @@ def _run_cypher_http(statement:str, parameters:dict=None, timeout=6.0):
     except Exception as e:
         raise
 
+def _explain_http(statement: str, parameters: dict | None = None, timeout=6.0):
+    """
+    Preflight: run EXPLAIN to catch syntax/schema errors early and
+    return Neo4j's error text verbatim on failure.
+    """
+    base, auth = _neo4j_http_info()
+    url  = f"{base}/db/neo4j/tx/commit"
+    body = json.dumps({
+        "statements": [{"statement": "EXPLAIN " + statement, "parameters": parameters or {}}]
+    }).encode('utf-8')
+    req = urllib.request.Request(url, data=body, method="POST",
+        headers={"Content-Type":"application/json","Authorization": f"Basic {auth}"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode('utf-8'))
+    if data.get("errors"):
+        # Return the message verbatim (UI will show this string)
+        msg = data["errors"][0].get("message","Cypher error")
+        raise RuntimeError(msg)
+    return True
+
+def _has_nodes_rels_return(cypher: str) -> bool:
+    """
+    Shape guard (for NL→Cypher only): require a RETURN that includes both nodes and rels.
+    Accept either aliases "... AS nodes, ... AS rels" or a returned map with keys.
+    """
+    low = " ".join((cypher or "").lower().split())
+    if re.search(r'\bas\s+nodes\b', low) and re.search(r'\bas\s+rels\b', low):
+        return True
+    if re.search(r'\breturn\s+nodes\s*,\s*rels\b', low):
+        return True
+    # map-style return
+    if "return" in low and ("{nodes" in low or "nodes:" in low) and ("{rels" in low or "rels:" in low):
+        return True
+    return False
+
+def _schema_gate(cypher: str):
+    """
+    Ban unknown labels/relationship types/property names and any leftover
+    StackOverflow demo artifacts. Fail fast with precise messages.
+    """
+    if _BANNED_ARTIFACTS_RE.search(cypher):
+        raise ValueError("Schema gate: Query references banned artifacts (StackOverflow/Q&A demo).")
+
+    # Extract labels in node patterns like (n:Label) or (:Label)
+    labels = set(re.findall(r'\(\s*[A-Za-z_][A-Za-z0-9_]*?\s*:(?:\s*([A-Za-z_][A-Za-z0-9_]*))', cypher))
+    # Extract relationship types like [:TYPE]
+    rels   = set(re.findall(r'\[\s*[A-Za-z_][A-Za-z0-9_]*?\s*:\s*([A-Za-z_][A-Za-z0-9_]*)', cypher))
+    # Extract property names var.prop (second group)
+    props  = set(p for (_v, p) in re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\.(\w+)\b', cypher))
+
+    unknown_labels = {x for x in labels if x not in ALLOWED_LABELS}
+    unknown_rels   = {x for x in rels   if x not in ALLOWED_REL_TYPES}
+    unknown_props  = {x for x in props  if x not in ALLOWED_PROPS}
+
+    errs = []
+    if unknown_labels:
+        errs.append(f"unknown label(s): {', '.join(sorted(unknown_labels))}")
+    if unknown_rels:
+        errs.append(f"unknown relationship type(s): {', '.join(sorted(unknown_rels))}")
+    if unknown_props:
+        errs.append(f"unknown property name(s): {', '.join(sorted(unknown_props))}")
+    if errs:
+        raise ValueError("Schema gate: " + "; ".join(errs))
+    return True
+
 def _sanitize_readonly(cypher:str):
     # very simple write-guard (MVP). Reject write keywords.
     banned = ['create ', 'merge ', 'delete ', 'remove ', 'set ', 'call dbms.', 'call db.index.', 'load csv', 'apoc.load']
@@ -938,55 +1043,83 @@ def _to_cytoscape_counts(payload):
     rels  = payload.get('rels')  if isinstance(payload, dict) else []
     return {'nodes': len(nodes or []), 'rels': len(rels or [])}
 
-def _nl_to_cypher(nl_question:str):
-    """NL→Cypher via local Ollama if available; else return None."""
+def _nl_to_cypher(nl_question:str) -> tuple[str|None, str|None]:
+    """NL→Cypher via local Ollama. Returns (cypher, error_message)."""
     # Probe LLM service quickly
     env = _parse_env_file()
     port = env.get('OLLAMA_PORT','11434')
     model = env.get('LLM','phi3:mini')
     url = f"http://localhost:{port}/api/generate"
-    # minimal schema to steer the model (matches your bot.py schema)
-    schema = """
-Node Labels and Properties:
-(:Webpage {event_id, url, title, summary, timestamp, isSERP, dataSource, entities, topics})
-(:Annotation {annotation_id, annotation_text, highlighted_text, timestamp, url, webpage_title, entities, topics})
-(:Purpose {event_id, text, timestamp, dataSource, topics, entities})
-(:SearchTerms {event_id, text, relevance, timestamp, dataSource, topics, entities})
-(:WikiDataOntology {uri, label})
+    # Shared prompt builder; keeps schema & rules aligned with Chat.
+    try:
+        schema = schema_for_prompts(None)  # safe default (static)
+        prompt = prompt_text("graph").format(schema=schema, question=nl_question)
+    except Exception:
+        # Hard fallback: embed a working prompt if shared import ever fails
+        prompt = f"""You translate user questions into ONE read-only Cypher query over the schema below.
 
-Relationships:
-(:Webpage)-[:HAS_TOPIC]->(:WikiDataOntology)
-(:Annotation)-[:HAS_TOPIC]->(:WikiDataOntology)
-(:Purpose)-[:HAS_TOPIC]->(:WikiDataOntology)
-(:Purpose)-[:INITIATES_SEARCH]->(:SearchTerms)
-(:Webpage)-[:HAS_ANNOTATION]->(:Annotation)
-(:Webpage)-[:LINKS_TO]->(:Webpage)
-"""
-    prompt = f"""You translate questions into ONE read-only Cypher query over the schema below.
-Rules: use ONLY listed labels/props/rels; prefer recent data with datetime() filters when user says 'recent/last N days'; RETURN nodes/relationships shape like:
-RETURN [x IN nodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes,
-       [x IN rels  | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels
-Output STRICT JSON: {{"cypher":"..."}}
 SCHEMA:
-{schema}
-QUESTION: {nl_question}
+{SCHEMA_MIN}
+
+Rules:
+- Use ONLY the listed labels/props/rels.
+- Prefer datetime() filters when the user asks for "recent/last N days".
+- The query MUST RETURN the exact shape below (for Cytoscape):
+
+RETURN
+  [x IN nodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes,
+  [x IN rels  | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels
+
+Where `nodes` and `rels` are lists you construct in the query.
+
+Output STRICT JSON with a single key:
+{{"cypher":"<your query here>"}}
+
+USER QUESTION: {nl_question}
 """
-    payload = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode("utf-8")
+    # Be conservative to reduce latency & verbosity
+    payload = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0, "num_predict": 256}
+    }).encode("utf-8")
     try:
         req = urllib.request.Request(url, data=payload, method="POST", headers={"Content-Type":"application/json"})
-        with urllib.request.urlopen(req, timeout=6.0) as resp:
+        # phi3:mini + long prompt often needs >6s on CPU. Make this configurable.
+        timeout_s = float(os.environ.get("OLLAMA_TIMEOUT", "120"))
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             out = json.loads(resp.read().decode('utf-8'))
         # Ollama returns {"response":"..."} where ... should be our JSON block
-        text = out.get('response','').strip()
+        text = out.get('response','') or ''
+        text = text.strip()
+        if not text:
+            logger.warning("NL→Cypher: empty LLM response")
+            return None, "LLM returned empty response"
+
+        # First try strict JSON extraction
         # try to extract a JSON object
         start = text.find('{'); end = text.rfind('}')
         if start >= 0 and end > start:
             blob = json.loads(text[start:end+1])
             cypher = blob.get('cypher','').strip()
-            return cypher if cypher else None
-        return None
-    except Exception:
-        return None
+            if cypher:
+                return cypher, None
+
+        # Next, strip code fences / json fences and see if the remainder looks like Cypher
+        clean = strip_fences_or_json(text).strip()
+        if looks_like_cypher(clean):
+            return clean, None
+
+        logger.warning("NL→Cypher: could not parse JSON or detect Cypher. head=%r", text[:120])
+        return None, "Model did not return parseable JSON or Cypher"
+    except Exception as e:
+        logger.exception("NL→Cypher call failed")
+        # Distinguish timeouts for clearer UX
+        msg = f"Ollama call failed: {getattr(e,'reason',e)}"
+        if isinstance(e, urllib.error.URLError) and "timed out" in str(e).lower():
+            msg = "LLM timed out before replying"
+        return None, msg
 
 
 if __name__ == '__main__':

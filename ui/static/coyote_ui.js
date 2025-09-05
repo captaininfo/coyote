@@ -830,7 +830,7 @@ RETURN
         body: JSON.stringify({ nl: txt })
       });
       if (data.status === 'unavailable') {
-        return setStatus('LLM not running. Start the LLM service on the System Status page, or use Quick Cypher.', 'warn');
+        return setStatus(data.message || 'LLM unavailable. Start the LLM service or use Quick Cypher.', 'warn');
       }
       if (data.status !== 'success') throw new Error(data.message || data.error || 'NL→Cypher failed');
       cy.elements().remove();

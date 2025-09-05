@@ -6,9 +6,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.output_parsers import StrOutputParser
 from langchain_neo4j import Neo4jGraph
 from dotenv import load_dotenv
-from utils import (
-    create_vector_index,
-)
+from utils import create_vector_index
 from chains import (
     load_embedding_model,
     load_llm,
@@ -26,6 +24,13 @@ from pathlib import Path
 from contextlib import contextmanager
 from logging_config import configure_logging
 from obs import trace, trunc
+from shared.nl2cypher import (
+    prompt_text,
+    schema_for_prompts,
+    is_read_only,
+    strip_fences_or_json,
+    looks_like_cypher,
+)
 
 load_dotenv(".env")
 
@@ -89,110 +94,26 @@ class StreamHandler(BaseCallbackHandler):
 llm = load_llm(llm_name, logger=logger, config={"ollama_base_url": ollama_base_url})
 
 # ── LLM output sanitizer (fallback-only) ─────────────────────────────────
-def _strip_fences_or_json(s: str) -> str:
-    """
-    Best-effort cleanup for models that occasionally wrap Cypher in ``` fences
-    or JSON despite instructions. Used only for logging/debug fallback.
-    """
-    if s is None:
-        return ""
-    s = s.strip()
-    # remove surrounding code fences
-    if s.startswith("```") and s.endswith("```"):
-        s = s.strip("`")
-        lines = s.splitlines()
-        # drop optional language tag on the first line
-        if lines and lines[0].strip().lower() in ("cypher", "json"):
-            lines = lines[1:]
-        s = "\n".join(lines).strip()
-    # if it's JSON with a "cypher" field, extract it
-    if s.startswith("{") and '"cypher"' in s:
-        try:
-            import json
-            s = json.loads(s).get("cypher", s)
-        except Exception:
-            pass
-    # kill accidental leading language tag tokens
-    low = s.lower()
-    if low.startswith("json\n") or low.startswith("cypher\n"):
-        s = "\n".join(s.splitlines()[1:]).strip()
-    return s
-
-# ── Quick shape check for Cypher (fail-fast logging) ─────────────────────
-def _looks_like_cypher(s: str) -> bool:
-    kw = ("MATCH","CALL","WITH","UNWIND","MERGE","CREATE","RETURN","EXPLAIN","PROFILE")
-    return bool(s) and s.lstrip().upper().startswith(kw)
+_strip_fences_or_json = strip_fences_or_json
+# use looks_like_cypher from shared directly
 
 llm_chain = configure_llm_only_chain(llm)
 rag_chain = configure_qa_rag_chain(
     llm, embeddings, embeddings_store_url=url, username=username, password=password
 )
 
+
+
+
+
+
 # ── 3️⃣ direct Cypher chain ───────────────────────────────────────────────
-
-# Define the complete schema
-schema_text = """
-Node Labels and Properties:
-(:Webpage {event_id, url, title, summary, timestamp, isSERP, dataSource, entities, topics})
-(:Annotation {annotation_id, annotation_text, highlighted_text, timestamp, url, webpage_title, entities, topics})
-(:Purpose {event_id, text, timestamp, dataSource, topics, entities})
-(:SearchTerms {event_id, text, relevance, timestamp, dataSource, topics, entities})
-(:WikiDataOntology {uri, label})
-
-Relationships:
-(:Webpage)-[:HAS_TOPIC]->(:WikiDataOntology)
-(:Annotation)-[:HAS_TOPIC]->(:WikiDataOntology)
-(:Purpose)-[:HAS_TOPIC]->(:WikiDataOntology)
-(:Purpose)-[:INITIATES_SEARCH]->(:SearchTerms)
-(:Webpage)-[:HAS_ANNOTATION]->(:Annotation)
-(:Webpage)-[:LINKS_TO]->(:Webpage)
-"""
-
-CUSTOM_PROMPT = """
-You are an expert Neo4j/Cypher query assistant for the Coyote personal learning system.
-
-TASK: Generate ONE Cypher query to answer the user's question using ONLY the schema below.
-
-SCHEMA:
-{schema}
-
-IMPORTANT RULES:
-1. Use ONLY the labels, properties, and relationships listed above.
-2. Topics and entities are linked via WikiDataOntology nodes (property: label).
-3. To find content about specific topics: (:Webpage)-[:HAS_TOPIC]->(:WikiDataOntology)
-4. Use case-insensitive matching with toLower(...).
-5. For counts: RETURN count(DISTINCT node) AS numberOfResults
-6. For date filtering, use: datetime(node.timestamp) >= datetime() - duration({{days: N}})
-7. The database uses ISO8601 timestamps in a `timestamp` property on nodes listed below; adjust the label accordingly.
-
-OUTPUT RULES (CRITICAL):
-- Return **only** a valid Cypher statement.
-- Do **not** wrap the output in JSON.
-- Do **not** include code fences or a leading language tag (e.g., no ```cypher, no ```json, no 'json').
-- The first word of your output must be a Cypher keyword like MATCH, CALL, WITH, or UNWIND.
-
-COMMON PATTERNS:
-- Articles about topic X:
-  MATCH (w:Webpage)-[:HAS_TOPIC]->(t:WikiDataOntology)
-  WHERE toLower(t.label) CONTAINS toLower('X')
-  RETURN w
-
-- Annotations about topic X:
-  MATCH (a:Annotation)-[:HAS_TOPIC]->(t:WikiDataOntology)
-  WHERE toLower(t.label) CONTAINS toLower('X')
-  RETURN a
-
-- Recent content within N days:
-  WHERE datetime(node.timestamp) >= datetime() - duration({{days: N}})
-
-- "How many ... ?":
-  ... RETURN count(DISTINCT node) AS numberOfResults
-
-USER QUESTION: {question}
-"""
+# Build a **table** prompt for Chat (graph mode is used by Explore Visually).
+CUSTOM_PROMPT = prompt_text(mode="table")
 
 # Initialize the cypher chain
-cypher_prompt = ChatPromptTemplate.from_template(CUSTOM_PROMPT).partial(schema=schema)
+cypher_prompt = ChatPromptTemplate.from_template(CUSTOM_PROMPT)\
+    .partial(schema=schema_for_prompts(schema))
 cypher_gen = cypher_prompt | llm | StrOutputParser()
 USE_LC_NL2CYPHER = os.getenv("USE_LC_NL2CYPHER", "0") == "1"
 if USE_LC_NL2CYPHER:
@@ -363,7 +284,7 @@ def chat_input():
 _WRITE_BLOCKLIST = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP)\b", re.I)
 
 def _is_read_only(cy: str) -> bool:
-    return _WRITE_BLOCKLIST.search(cy) is None
+    return is_read_only(cy)
 
 def _days_from_text(text: str) -> int:
     t = text.lower()
@@ -463,10 +384,10 @@ def cypher_only_answer(question: str) -> str:
     logger.debug("nl2cypher.raw=%s", trunc(raw, 300))
     logger.debug("nl2cypher.clean=%s", trunc(clean, 300))
 
-    if not _looks_like_cypher(clean):
+    if not looks_like_cypher(clean):
         logger.warning("nl2cypher produced non-cypher; fallback. head=%r", (clean[:60]))
         return _run_canned(question)
-    if not _is_read_only(clean):
+    if not is_read_only(clean):
         logger.warning("write keyword detected; blocked and fallback")
         return _run_canned(question)
 
