@@ -709,6 +709,7 @@ print('saved')
     except Exception:
         logger.info("Core not running or exec failed:\n%s", traceback.format_exc())
         return False
+    
 
 @app.route('/api/config/save-neo4j', methods=['POST'])
 def api_config_save_neo4j():
@@ -914,6 +915,82 @@ def graph_run():
     except Exception as e:
         logger.error(f"/api/graph/run error: {e}")
         return jsonify({"status":"error","message":str(e)}), 500
+
+def _apply_hypothesis_creds_inside_core(username: str, token: str) -> bool:
+    """Write Hypothes.is creds into Core's state DB via its config_manager (encrypt token)."""
+    name = _get_core_container_name()
+    if not name:
+        return False
+    py = f"""
+from coyote.utils.config_manager import store_setting
+store_setting('hypothesis_username', {json.dumps(username)}, encrypt=False)
+store_setting('hypothesis_token', {json.dumps(token)}, encrypt=True)
+print('saved')
+"""
+    try:
+        cp = subprocess.run(
+            [DOCKER_BIN, 'exec', '-i', name, 'python', '-'],
+            input=py.encode('utf-8'),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10
+        )
+        return cp.returncode == 0 and cp.stdout.decode(errors='ignore').strip().endswith('saved')
+    except Exception:
+        logger.info("Apply Hypothes.is creds inside core failed:\n%s", traceback.format_exc())
+        return False
+
+@app.route('/api/integrations/hypothesis/test', methods=['POST'])
+def api_hypothesis_test():
+    p = flask_request.get_json(silent=True) or {}
+    token = (p.get('token') or '').strip()
+    if not token:
+        return jsonify({"ok": False, "message": "API token required."}), 400
+    try:
+        req = urllib.request.Request(
+            "https://api.hypothes.is/api/profile",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            prof = json.loads(resp.read().decode('utf-8'))
+        return jsonify({"ok": True, "userid": prof.get('userid')})
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return jsonify({"ok": False, "message": "Unauthorized: token rejected by Hypothes.is."}), 401
+        return jsonify({"ok": False, "message": f"Hypothes.is error: HTTP {e.code}"}), 400
+    except Exception as e:
+        logger.exception("Hypothes.is test failed")
+        return jsonify({"ok": False, "message": f"Test failed: {e}"}), 400
+
+@app.route('/api/integrations/hypothesis/save', methods=['POST'])
+def api_hypothesis_save():
+    p = flask_request.get_json(silent=True) or {}
+    username = (p.get('username') or '').strip()
+    token    = (p.get('token') or '').strip()
+    if not token:
+        return jsonify({"ok": False, "message": "Token required."}), 400
+
+    _write_env({
+        "HYPOTHESIS_USERNAME": username,
+        "HYPOTHESIS_TOKEN": token
+    })
+    applied = _apply_hypothesis_creds_inside_core(username, token)
+    msg = "Saved. " + ("Applied to running Core." if applied else "Start/Restart Core to take effect inside app.")
+    return jsonify({"ok": True, "applied": applied, "message": msg})
+
+@app.route('/api/integrations/hypothesis/fetch', methods=['POST'])
+def api_hypothesis_fetch():
+    """Forward a fetch request to Core if available; otherwise succeed with a helpful message."""
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:5000/hypothesis/fetch",
+            data=json.dumps({}).encode('utf-8'),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            _ = resp.read()
+        return jsonify({"ok": True, "forwarded": True, "message": "Fetch started in Coyote Core."})
+    except Exception:
+        return jsonify({"ok": True, "forwarded": False, "message": "Core not reachable; request was not forwarded."})
 
 def _neo4j_http_info():
     env = _parse_env_file()

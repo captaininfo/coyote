@@ -730,7 +730,7 @@
                       <a id="cg-browser" class="btn" style="background:#f0f3ff;" href="#" target="_blank" rel="noopener">Open Neo4j Browser</a>
                     </div>
                   </div>
-                  <div id="graphCanvas" class="viz-content" style="flex:1; border:1px solid #ecf0f1; border-radius:6px; padding:0;"></div>
+                  <div id="graphCanvas" class="viz-content" style="flex:1; border:1px solid #ecf0f1; border-radius:6px; padding:0; text-align: left;"></div>
                   <div id="cg-status" style="font-size:12px; color:#7f8c8d;"></div>
                 </div>
             </div>
@@ -763,35 +763,39 @@
 
             <!-- Configure Section -->
             <div class="content-area" id="configure">
-                <div class="page-header">
-                    <h1 class="page-title">Configure Coyote</h1>
-                    <p class="page-subtitle">Set up your databases and authentication</p>
-                </div>
+            <div class="page-header">
+                <h1 class="page-title">Configure Coyote</h1>
+                <p class="page-subtitle">Set up your databases and authentication</p>
+            </div>
 
-                <div class="config-section">
-                    <div class="config-header">🗄️ Neo4j Database</div>
-                    <div class="form-group">
-                        <label class="form-label">Neo4j URI</label>
-                        <input type="text" class="form-input" value="bolt://localhost:7687">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Username</label>
-                        <input type="text" class="form-input" placeholder="neo4j">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Password</label>
-                        <input type="password" class="form-input" placeholder="Your secure password">
-                    </div>
-                    <button class="btn btn-primary">Test Connection</button>
+            <div class="config-section">
+                <div class="config-header">🗄️ Neo4j Database</div>
+                <div class="form-group">
+                <label class="form-label" for="neoUri">Neo4j URI</label>
+                <input id="neoUri" type="text" class="form-input" value="bolt://localhost:7687">
                 </div>
-
-                <div class="config-section">
-                    <div class="config-header">🌐 Browser Extension</div>
-                    <p style="margin-bottom: 15px; color: #7f8c8d;">Install the Coyote browser extension to capture your web browsing data.</p>
-                    <button class="btn btn-primary">Download Extension</button>
-                    <button class="btn btn-success" style="margin-left: 10px;">Setup Guide</button>
+                <div class="form-group">
+                <label class="form-label" for="neoUser">Username</label>
+                <input id="neoUser" type="text" class="form-input" placeholder="neo4j">
+                </div>
+                <div class="form-group">
+                <label class="form-label" for="neoPass">Password</label>
+                <input id="neoPass" type="password" class="form-input" placeholder="Your secure password">
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <button id="btnNeoTest" class="btn btn-primary">Test Connection</button>
+                <button id="btnNeoSave" class="btn">Save</button>
                 </div>
             </div>
+
+            <div class="config-section">
+                <div class="config-header">🌐 Browser Extension</div>
+                <p style="margin-bottom: 15px; color: #7f8c8d;">Install the Coyote browser extension to capture your web browsing data.</p>
+                <button class="btn btn-primary">Download Extension</button>
+                <button class="btn btn-success" style="margin-left: 10px;">Setup Guide</button>
+            </div>
+            </div>
+
 
             <!-- Integrations Section -->
             <div class="content-area" id="integrations">
@@ -836,16 +840,20 @@
                     </div>
                     
                     <div class="form-group">
-                        <label class="form-label">Hypothes.is Username</label>
-                        <input type="text" class="form-input" placeholder="Your Hypothes.is username">
+                        <label class="form-label" for="hypUser">Hypothes.is Username</label>
+                        <input id="hypUser" type="text" class="form-input" placeholder="Your Hypothes.is username" autocomplete="username">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">API Token</label>
-                        <input type="password" class="form-input" placeholder="Paste your API token here">
+                        <label class="form-label" for="hypToken">API Token</label>
+                        <input id="hypToken" type="password" class="form-input" placeholder="Paste your API token here" autocomplete="off">
                     </div>
-                    <button class="btn btn-primary">Test Connection</button>
-                    <button class="btn btn-success" style="margin-left: 10px;">Fetch Data</button>
-                </div>
+
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                        <button id="btnHypTest"  class="btn btn-primary">Test Connection</button>
+                        <button id="btnHypSave"  class="btn">Save</button>
+                        <button id="btnHypFetch" class="btn btn-success">Fetch Data</button>
+                    </div>
+                    </div> <!-- end #hypothesis-config -->
             </div>
 
             <!-- System Status Section -->

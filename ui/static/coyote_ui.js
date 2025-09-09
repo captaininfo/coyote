@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Wire up button click handlers
     setupButtonHandlers();
+    wireConfigHandlers(); 
     
     // Start status monitoring
     checkStatus();
@@ -183,6 +184,8 @@ function showSetupModal(r) {
   };
   document.body.appendChild(el);
 }
+
+// ============== System Status ==============
 
 async function startCoreServices() {
     console.log('Starting core services...');
@@ -569,6 +572,133 @@ function showErrorDetails(errorText) {
             }
         }, 30000);
     }
+}
+
+function wireConfigHandlers() {
+  wireNeo4jConfig();
+  wireHypothesisConfig();
+}
+
+
+// ============== Configure & Integrations ==============
+
+function wireNeo4jConfig() {
+  const btnTest = document.getElementById('btnNeoTest');
+  const btnSave = document.getElementById('btnNeoSave');
+  if (btnTest) btnTest.addEventListener('click', async () => {
+    const user = document.getElementById('neoUser')?.value.trim();
+    const pass = document.getElementById('neoPass')?.value.trim();
+    if (!user || !pass) return showStatus('Enter username and password first.', 'warning');
+    btnTest.disabled = true;
+    try {
+      const r = await fetch('/api/config/test-neo4j', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({user, pass})
+      });
+      const data = await r.json();
+      if (data.ok) showStatus('Neo4j connection succeeded.', 'success');
+      else showStatus(data.message || 'Neo4j test failed.', 'error');
+    } catch (e) {
+      showStatus('Neo4j test failed: ' + e.message, 'error');
+    } finally {
+      btnTest.disabled = false;
+    }
+  });
+
+  if (btnSave) btnSave.addEventListener('click', async () => {
+    const uri  = document.getElementById('neoUri')?.value.trim() || 'bolt://localhost:7687';
+    const user = document.getElementById('neoUser')?.value.trim();
+    const pass = document.getElementById('neoPass')?.value.trim();
+    if (!user || !pass) return showStatus('Enter username and password first.', 'warning');
+    btnSave.disabled = true;
+    try {
+      const r = await fetch('/api/config/save-neo4j', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({uri, user, pass})
+      });
+      const data = await r.json();
+      if (data.ok) showStatus(data.message || 'Saved.', 'success');
+      else showStatus(data.message || 'Failed to save.', 'error');
+    } catch (e) {
+      showStatus('Failed to save: ' + e.message, 'error');
+    } finally {
+      btnSave.disabled = false;
+    }
+  });
+}
+
+function wireHypothesisConfig() {
+  const elUser  = document.getElementById('hypUser');
+  const elToken = document.getElementById('hypToken');
+  const btnTest = document.getElementById('btnHypTest');
+  const btnSave = document.getElementById('btnHypSave');
+  const btnFetch= document.getElementById('btnHypFetch');
+
+  const read = () => ({
+    username: (elUser?.value || '').trim(),
+    token:    (elToken?.value || '').trim()
+  });
+
+  if (btnTest) btnTest.addEventListener('click', async () => {
+    const {username, token} = read();
+    if (!token) return showStatus('Paste your Hypothes.is API token first.', 'warning');
+    btnTest.disabled = true;
+    try {
+      const r = await fetch('/api/integrations/hypothesis/test', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({username, token})
+      });
+      const data = await r.json();
+      if (data.ok) {
+        const who = data.userid ? `(${data.userid})` : '';
+        showStatus(`Hypothes.is OK ${who}`, 'success');
+      } else {
+        showStatus(data.message || 'Hypothes.is test failed.', 'error');
+      }
+    } catch (e) {
+      showStatus('Hypothes.is test failed: ' + e.message, 'error');
+    } finally {
+      btnTest.disabled = false;
+    }
+  });
+
+  if (btnSave) btnSave.addEventListener('click', async () => {
+    const {username, token} = read();
+    if (!username || !token) return showStatus('Enter username and token first.', 'warning');
+    btnSave.disabled = true;
+    try {
+      const r = await fetch('/api/integrations/hypothesis/save', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({username, token})
+      });
+      const data = await r.json();
+      if (data.ok) showStatus(data.message || 'Saved credentials.', 'success');
+      else showStatus(data.message || 'Failed to save credentials.', 'error');
+    } catch (e) {
+      showStatus('Failed to save: ' + e.message, 'error');
+    } finally {
+      btnSave.disabled = false;
+    }
+  });
+
+  if (btnFetch) btnFetch.addEventListener('click', async () => {
+    btnFetch.disabled = true;
+    showStatus('Starting Hypothes.is fetch…', 'info');
+    try {
+      const r = await fetch('/api/integrations/hypothesis/fetch', { method:'POST' });
+      const data = await r.json();
+      if (data.ok) {
+        const msg = data.message || (data.forwarded ? 'Fetch started in Coyote Core.' : 'Fetch requested.');
+        showStatus(msg, 'success');
+      } else {
+        showStatus(data.message || 'Fetch failed.', 'error');
+      }
+    } catch (e) {
+      showStatus('Fetch failed: ' + e.message, 'error');
+    } finally {
+      btnFetch.disabled = false;
+    }
+  });
 }
 
 // ============== Explore Visually (Cytoscape) ==============
