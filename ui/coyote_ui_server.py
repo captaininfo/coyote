@@ -54,6 +54,16 @@ app = Flask(__name__,
            template_folder=str(template_dir),
            static_folder=str(static_dir))
 
+try:
+    from shared.nl2cypher import prompt_text, schema_for_prompts
+    test_prompt = prompt_text("graph")
+    if "date(datetime(" in test_prompt:
+        logger.info("✓ nl2cypher.py import successful and prompt is updated")
+    else:
+        logger.error("✗ nl2cypher.py imported but prompt still has old syntax!")
+except Exception as e:
+    logger.error(f"✗ Failed to import from nl2cypher: {e}")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Allowed schema (lightweight allow‑list for schema gate)
 # Labels, relationship types, and property names present in SCHEMA_MIN.
@@ -183,7 +193,7 @@ EMBEDDING_MODEL_DIR=./volumes/embedding_model
 # Service configuration
 NEO4J_URI=bolt://database:7687
 OLLAMA_BASE_URL=http://llm:11434
-LLM=phi3:mini
+LLM=qwen2.5-coder:7b
 EMBEDDING_MODEL=sentence_transformer
 """
         ENV_FILE.write_text(default_env)
@@ -1122,52 +1132,65 @@ def _to_cytoscape_counts(payload):
 
 def _nl_to_cypher(nl_question:str) -> tuple[str|None, str|None]:
     """NL→Cypher via local Ollama. Returns (cypher, error_message)."""
-    # Probe LLM service quickly
     env = _parse_env_file()
     port = env.get('OLLAMA_PORT','11434')
-    model = env.get('LLM','phi3:mini')
+    model = env.get('LLM','qwen2.5-coder:7b')
     url = f"http://localhost:{port}/api/generate"
-    # Shared prompt builder; keeps schema & rules aligned with Chat.
+    
+    using_fallback = False
     try:
-        schema = schema_for_prompts(None)  # safe default (static)
+        schema = schema_for_prompts(None)
         prompt = prompt_text("graph").format(schema=schema, question=nl_question)
-    except Exception:
+        logger.info("Using imported prompt from nl2cypher")
+    except Exception as e:
+        using_fallback = True
+        logger.warning(f"Import failed, using fallback prompt: {e}")
         # Hard fallback: embed a working prompt if shared import ever fails
+        # NOTE: Use DOUBLE braces {{  }} in f-string to produce SINGLE braces { } in output
         prompt = f"""You translate user questions into ONE read-only Cypher query over the schema below.
 
 SCHEMA:
 {SCHEMA_MIN}
 
-Rules:
-- Use ONLY the listed labels/props/rels.
-- Prefer datetime() filters when the user asks for "recent/last N days".
-- The query MUST RETURN the exact shape below (for Cytoscape):
+CRITICAL RULES:
+1. Use ONLY the listed labels/properties/relationships
+2. For time ranges: datetime(node.timestamp) >= datetime() - duration({{days: N}})
+3. For "today": date(datetime(node.timestamp)) = date()
+4. ALWAYS collect nodes first with WITH:
 
+MATCH <pattern>
+WHERE <filters>
+WITH collect(DISTINCT <node>) AS matchedNodes
 RETURN
-  [x IN nodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes,
-  [x IN rels  | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels
+  [x IN matchedNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes,
+  [] AS rels
 
-Where `nodes` and `rels` are lists you construct in the query.
+EXAMPLE:
+{{
+  "cypher": "MATCH (w:Webpage {{isSERP: false}}) WHERE date(datetime(w.timestamp)) = date() WITH collect(DISTINCT w) AS matchedNodes RETURN [x IN matchedNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes, [] AS rels"
+}}
 
-Output STRICT JSON with a single key:
-{{"cypher":"<your query here>"}}
+Output STRICT JSON: {{"cypher":"<query>"}}
 
 USER QUESTION: {nl_question}
 """
-    # Be conservative to reduce latency & verbosity
+    
+    logger.info(f"Prompt source: {'FALLBACK' if using_fallback else 'IMPORTED'}")
+    logger.debug(f"Prompt preview: {prompt[:500]}...")
+    
     payload = json.dumps({
         "model": model,
         "prompt": prompt,
         "stream": False,
         "options": {"temperature": 0, "num_predict": 256}
     }).encode("utf-8")
+    
     try:
         req = urllib.request.Request(url, data=payload, method="POST", headers={"Content-Type":"application/json"})
-        # phi3:mini + long prompt often needs >6s on CPU. Make this configurable.
         timeout_s = float(os.environ.get("OLLAMA_TIMEOUT", "120"))
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             out = json.loads(resp.read().decode('utf-8'))
-        # Ollama returns {"response":"..."} where ... should be our JSON block
+        
         text = out.get('response','') or ''
         text = text.strip()
         if not text:
@@ -1175,24 +1198,24 @@ USER QUESTION: {nl_question}
             return None, "LLM returned empty response"
 
         # First try strict JSON extraction
-        # try to extract a JSON object
         start = text.find('{'); end = text.rfind('}')
         if start >= 0 and end > start:
             blob = json.loads(text[start:end+1])
             cypher = blob.get('cypher','').strip()
             if cypher:
+                logger.info("NL→Cypher SUCCESS: %s → %s", nl_question, cypher[:200])
                 return cypher, None
 
-        # Next, strip code fences / json fences and see if the remainder looks like Cypher
+        # Next, strip code fences
         clean = strip_fences_or_json(text).strip()
         if looks_like_cypher(clean):
+            logger.info("NL→Cypher SUCCESS (stripped): %s → %s", nl_question, clean[:200])
             return clean, None
 
         logger.warning("NL→Cypher: could not parse JSON or detect Cypher. head=%r", text[:120])
         return None, "Model did not return parseable JSON or Cypher"
     except Exception as e:
         logger.exception("NL→Cypher call failed")
-        # Distinguish timeouts for clearer UX
         msg = f"Ollama call failed: {getattr(e,'reason',e)}"
         if isinstance(e, urllib.error.URLError) and "timed out" in str(e).lower():
             msg = "LLM timed out before replying"

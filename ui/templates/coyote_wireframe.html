@@ -614,11 +614,6 @@
                         <p>Browse your knowledge graph</p>
                     </a>
                     
-                    <a href="#" class="action-card">
-                        <div class="icon">📝</div>
-                        <h3>Recent Annotations</h3>
-                        <p>See your latest insights</p>
-                    </a>
                 </div>
 
                 <!-- Visualization Carousel -->
@@ -687,24 +682,58 @@
                 </div>
 
                 <div class="config-section">
-                    <div class="config-header">🚀 Quick Start</div>
-                    <p style="margin-bottom: 15px;">Follow these steps to get Coyote up and running:</p>
-                    
-                    <ol style="margin-left: 20px; line-height: 1.6;">
-                        <li><strong>Configure Neo4j Database</strong> - Set up your personal knowledge graph</li>
-                        <li><strong>Install Browser Extension</strong> - Enable web browsing data capture</li>
-                        <li><strong>Optional: Connect Integrations</strong> - Link external platforms like Hypothes.is</li>
-                        <li><strong>Start Learning</strong> - Begin browsing and let Coyote track your journey</li>
-                    </ol>
-                    
-                    <div style="margin-top: 20px;">
-                        <button class="btn btn-primary" onclick="switchSection('configure')">Start Configuration</button>
-                    </div>
+                    <div class="config-header">📋 Detailed Setup Instructions</div>
+                    <p>For screenshots, OS notes, and fixes, open the full guide:</p>
+                    <p>
+                    <a class="btn" href="{{ url_for('static', filename='detailed_setup.html') }}" target="_blank" rel="noopener">
+                        Open Detailed Setup Instructions ↗
+                    </a>
+                    </p>
                 </div>
 
                 <div class="config-section">
-                    <div class="config-header">📋 Detailed Setup Instructions</div>
-                    <p>Comprehensive step-by-step setup documentation would be displayed here, including screenshots and troubleshooting tips.</p>
+                    <div class="config-header">🚀 Quick Start</div>
+                    <p style="margin-bottom: 25px;">Follow these steps to get Coyote up and running:</p>
+
+                    <h2 style="font-size: large; margin-bottom: 5px;">1. Configure Neo4j Database</h2>
+                    <p>Navigate to the Configure tab. Enter unique authentication credentials for Neo4j (i.e., username and password) so Coyote can communicate with Neo4j securely.</p>
+                    <button class="btn btn-primary" onclick="switchSection('configure','#setup-neo4j')" style="margin: 10px;">Open Configure</button>
+                    <p>&nbsp;</p>
+
+                    <h2 style="font-size: large; margin-bottom: 5px;">2. Start Core Services (Coyote Core + Neo4j)</h2>
+                    <p>Navigate to the System Status tab. Click the "Start Core Services" button (found under "Docker Management").</p>
+                    <button class="btn btn-primary" onclick="switchSection('status','#setup-services')" style="margin: 10px;">Open System Status</button>
+                    <p>&nbsp;</p>
+
+                    <h2 style="font-size: large; margin-bottom: 5px;">3. Run Coyote's Browser Extension as a temporary add-on</h2>
+                    <p>Coyote's extension is not an official Firefox extension, so you must run it as a temporary add-on.</p>
+                    <p> - Open a new Firefox browser tab and navigate to the following address: <br/> <a href="about:debugging#/runtime/this-firefox" target="_blank">about:debugging#/runtime/this-firefox</a></p>
+                    <p> - Click the "Load Temporary Add-on..." button.</p>
+                    <p> - Select the `manifest.json` file from `coyote_0.4/extension/manifest.json`</p>
+                    <p> - <strong>Coyote is now ready to record your web-browsing data.</strong></p>
+                    <p>&nbsp;</p>
+                    <p>&nbsp;</p>
+
+                    <h2 style="font-size: large; margin-bottom: 5px;">4. (Optional) Connect Hypothes.is</h2>
+                    <p>Hypothes.is is a social, web-annotation tool. </p>
+                    <p> - Log in to Hypothes.is at <a href="https://hypothes.is/login" target="_blank">https://hypothes.is/login</a></p>
+                    <p> - Copy your Hypothes.is username.</p>
+                    <p> - Copy your Hypothes.is API token by navigating to <a href="https://hypothes.is/account/developer" target="_blank">https://hypothes.is/account/developer</a>.</p>
+                    <p> - Open Coyote UI's "Integrations" tab, enter your Hypothes.is credentials, then click "Test Connection" and "Save."</p>
+                    <p> - Clicking "Fetch Data" will retrieve your Hypothes.is user data. Your first fetch may take quite some time.</p>
+                    <button class="btn btn-primary" onclick="switchSection('integrations','#setup-hypothesis')" style="margin: 10px;">Open Integrations</button>
+                    <p>&nbsp;</p>
+
+                    <h2 style="font-size: large; margin-bottom: 5px;">5. (Optional) Start All Services</h2>
+                    <p>Starts all of Coyote's Docker services: "Coyote Core" + "Neo4j" + "Ollama" + "Coyote Agent".</p>
+                    <p>Coyote's "Chat Assistant" and "Explore Visually" features require that all Docker services are running.</p>
+                    <p> - Navigate to the System Status tab. Click the "Start All Services" button.</p>
+                    <button class="btn btn-primary" onclick="switchSection('status','#setup-services')" style="margin: 10px;">Open System Status</button>
+                    <p>&nbsp;</p>
+
+                    <h2 style="font-size: large; margin-bottom: 5px;">6. Start a search to record your data</h2>
+                    <p>Navigate to the Coyote UI's "Overview" tab, then click the "Open Coyote Search" button.</p>
+
                 </div>
             </div>
 

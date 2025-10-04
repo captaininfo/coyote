@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Coyote – Detailed Setup Instructions</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root{
+      --ink:#2c3e50; --muted:#7f8c8d; --blue:#4A90E2; --ok:#155724; --okbg:#d4edda;
+      --warn:#856404; --warnbg:#fff3cd; --err:#721c24; --errbg:#f8d7da; --line:#ecf0f1;
+    }
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;line-height:1.55;color:var(--ink);background:#fff;margin:0;}
+    .wrap{max-width:980px;margin:0 auto;padding:24px;}
+    h1{font-size:28px;margin:0 0 6px;}
+    h2{font-size:22px;margin:18px 0 8px;}
+    h3{font-size:18px;margin:18px 0 8px;}
+    h4{font-size:16px;margin:14px 0 6px;}
+    p,li{font-size:15px;}
+    code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f8f9fa;border:1px solid #eee;padding:2px 6px;border-radius:4px;}
+    pre{background:#f8f9fa;border:1px solid #eee;padding:10px;border-radius:6px;overflow:auto}
+    a{color:#1f6feb;text-decoration:none}
+    a:hover{text-decoration:underline}
+    hr{border:0;border-top:1px solid var(--line);margin:20px 0}
+
+    .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0 18px;border-bottom:1px solid var(--line);margin-bottom:16px;}
+    .back a{display:inline-block;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#f8f9fa}
+    .subtitle{color:var(--muted);}
+
+    .toc{border:1px solid var(--line);border-radius:8px;padding:12px;margin:16px 0 22px;background:#fcfcfc}
+    .toc strong{display:block;margin-bottom:6px}
+    .toc ul{margin:8px 0 0 18px}
+    .toc li{margin:4px 0}
+
+    .callout{border-left:4px solid var(--blue);background:#f7fbff;padding:10px 12px;margin:10px 0;border-radius:6px;}
+    .callout.ok{border-color:var(--ok);background:var(--okbg);color:var(--ok)}
+    .callout.warn{border-color:var(--warn);background:var(--warnbg);color:var(--warn)}
+    .callout.err{border-color:var(--err);background:var(--errbg);color:var(--err)}
+
+    .step{margin:10px 0 14px}
+    ol{margin-left:20px}
+    ol li{margin:6px 0}
+
+    .meta{color:var(--muted);font-size:13px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media (max-width: 760px){.grid{grid-template-columns:1fr}}
+    .kbd{background:#f8f9fa;border:1px solid #ddd;border-radius:4px;padding:2px 6px}
+
+    .btn{display:inline-block;padding:8px 12px;border-radius:6px;border:1px solid var(--line);background:#f8f9fa}
+    .small{font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1>Detailed Coyote Instructions</h1>
+        <div class="subtitle">Step‑by‑step setup, integrations, and troubleshooting</div>
+      </div>
+      <div class="back">
+        <a href="/" title="Back to the Coyote UI">← Back to Coyote UI</a>
+      </div>
+    </div>
+
+    <div class="toc">
+      <strong>Contents</strong>
+      <ul>
+        <li><a href="#setup-prereqs">Prerequisites</a></li>
+        <li><a href="#setup-neo4j">Coyote Configuration: Neo4j</a></li>
+        <li><a href="#setup-extension">Coyote Browser Extension (Firefox)</a></li>
+        <li><a href="#setup-services">Docker Services</a>
+          <ul>
+            <li><a href="#start-core">Start Core Services (Coyote Core + Neo4j)</a></li>
+            <li><a href="#start-all">Start All Services (Core + Agent + Ollama)</a></li>
+          </ul>
+        </li>
+        <li><a href="#setup-hypothesis">Hypothes.is Integration</a></li>
+        <li><a href="#setup-troubleshooting">Troubleshooting</a></li>
+      </ul>
+    </div>
+
+    <p class="meta">
+      Tip: You can deep‑link to a section (e.g., <code>#setup-hypothesis</code>) from Coyote’s status messages or help icons.
+    </p>
+
+    <h2 id="setup-prereqs">Prerequisites</h2>
+    <p>For Coyote to track and analyze your learning data, the **Browser Extension** and the **Core services** (Coyote Core + Neo4j) must be running. To use the chat assistant and NL→Cypher, also start the **Agent/Bot** and **Ollama/LLM** services.</p>
+    <div class="grid">
+      <div>
+        <h4>Software</h4>
+        <ul>
+          <li>Docker Desktop/Engine + Compose v2</li>
+          <li>Python 3.10+</li>
+          <li>Firefox (temporary add‑on flow in 0.4)</li>
+        </ul>
+        <h4>Hardware</h4>
+        <ul>
+          <li>8 GB RAM minimum for Core (Neo4j + Coyote Core)</li>
+          <li>16 GB RAM recommended if running Agent + LLM</li>
+          <li>~8–15 GB free disk (first‑run images, Neo4j data, optional model cache)</li>
+        </ul>
+      </div>
+      <div>
+        <h4>Ports (defaults)</h4>
+        <ul>
+          <li>UI: <code>8080</code></li>
+          <li>Coyote Core API: <code>5000</code></li>
+          <li>Neo4j HTTP/Bolt: <code>7474 / 7687</code></li>
+          <li>Ollama: <code>11434</code></li>
+          <li>Agent/Bot: <code>8501</code></li>
+        </ul>
+        <p class="meta">If a port is taken on your machine, edit <code>compose/.env</code> then click <em>Restart Services</em> in the UI.</p>
+      </div>
+    </div>
+    <div class="callout warn small"><strong>First run:</strong> the UI will create <code>compose/.env</code> (chmod 600) with sensible defaults and a random Neo4j password. Keep it private.</div>
+    <hr>
+
+    <h2 id="setup-neo4j">Coyote Configuration: Neo4j</h2>
+    <p>Neo4j is the graph database where your personal learning record is stored. Configure credentials from the UI.</p>
+    <ol class="step">
+      <li>Open <strong>Configure → Neo4j Database</strong> in the left sidebar.</li>
+      <li><strong>Neo4j URI:</strong> leave as <code>bolt://localhost:7687</code> unless you changed ports.</li>
+      <li>Enter a unique <strong>Username</strong> and <strong>Password</strong> to keep your data private.</li>
+      <li>Click <strong>Test Connection</strong>. If you see “Unauthorized”, verify the values against <code>compose/.env</code>.</li>
+      <li>Click <strong>Save</strong>. If Core is already running, click <strong>Restart Services</strong> (or <em>Stop All → Start Core</em>) so all services pick up the new credentials.</li>
+    </ol>
+    <div class="callout small">
+      Behind the scenes, the Compose services use the internal URI <code>bolt://database:7687</code>. The UI writes your auth to <code>compose/.env</code> and also applies it to the running Core app.
+    </div>
+    <div class="callout ok small"><strong>Success check:</strong> On <em>System Status</em>, Neo4j and Coyote Core indicators turn <em>Online/green</em>. You can also open the Neo4j Browser from <em>Explore Visually</em>.</div>
+    <hr>
+
+    <h2 id="setup-extension">Coyote Browser Extension (Firefox)</h2>
+    <p>The extension records search intent, SERP visits, pages read, and connects them to annotations. In 0.4 you’ll load it as a temporary add‑on.</p>
+    <ol class="step">
+      <li>Open a new tab and go to <code>about:debugging#/runtime/this-firefox</code>.</li>
+      <li>Click <strong>Load Temporary Add‑on…</strong>.</li>
+      <li>Select <code>Coyote_0.4/extension/manifest.json</code>.</li>
+      <li>Keep this tab open while testing; temporary add‑ons unload when Firefox restarts.</li>
+    </ol>
+    <div class="callout ok small"><strong>Success check:</strong> On <em>System Status</em>, “Browser Extension” turns <em>Online/green</em> within a few seconds (heartbeats drive the status).</div>
+    <hr>
+
+    <h2 id="setup-services">Docker Services</h2>
+    <p>Most of Coyote runs in containers. Use the UI’s <em>System Status</em> tab to start/stop services by profile.</p>
+
+    <h3 id="start-core">Start Core Services (Coyote Core + Neo4j)</h3>
+    <ol class="step">
+      <li>Open the <strong>System Status</strong> tab.</li>
+      <li>Click <strong>Start Core Services</strong>. On first run, Docker will pull images—this can take a few minutes.</li>
+      <li>Watch the health indicators near the top; they turn <em>Online/green</em> when ready.</li>
+    </ol>
+    <p class="meta">Core is required for logging and analysis; pair it with the extension for recording to work.</p>
+
+    <h3 id="start-all">Start All Services (Core + Agent + Ollama)</h3>
+    <ol class="step">
+      <li>Open the <strong>System Status</strong> tab.</li>
+      <li>Click <strong>Start All Services</strong>. On first run, the LLM service pulls the configured model.</li>
+      <li>Indicators for Core, LLM, and Agent turn <em>Online/green</em> when everything is ready.</li>
+    </ol>
+    <div class="callout small">
+      The default model in Compose is <code>qwen2.5-coder:7b</code> (configurable). You can also start only the LLM via <strong>Start LLM Service</strong>.
+    </div>
+    <div class="callout ok small"><strong>Success check:</strong> “Open Coyote Search” works without the LLM, but the Chat Assistant and NL→Cypher require the LLM and Agent.</div>
+    <hr>
+
+    <h2 id="setup-hypothesis">Hypothes.is Integration</h2>
+    <p>Hypothes.is is an annotation service. Connecting your account lets Coyote import your highlights and notes and link them to the pages and concepts in your graph.</p>
+    <h4>What it does</h4>
+    <ul>
+      <li>Imports your annotations (public and your private ones accessible via your token).</li>
+      <li>Creates <strong>Annotation</strong> nodes linked to their <strong>Webpage</strong> via <code>HAS_ANNOTATION</code>.</li>
+      <li>Annotations and pages are associated to <strong>WikiDataOntology</strong> topics via <code>HAS_TOPIC</code> when NLP analysis yields entities/topics.</li>
+    </ul>
+    <h4>Connect your account</h4>
+    <ol class="step">
+      <li>Open the <strong>Integrations</strong> tab and toggle <strong>Hypothes.is</strong> on (reveals its config panel).</li>
+      <li>Find your credentials:
+        <ul>
+          <li><strong>Username:</strong> visit <code>https://hypothes.is/users/</code> (shown on your profile).</li>
+          <li><strong>API token:</strong> visit <code>https://hypothes.is/account/developer</code> and generate a token.</li>
+        </ul>
+      </li>
+      <li>Paste <strong>Username</strong> and <strong>API token</strong> into the fields.</li>
+      <li>Click <strong>Test</strong>. A success message confirms the token is valid.</li>
+      <li>Click <strong>Save</strong>. The UI stores the values for the Core service (token stored encrypted in Core’s config; also written to <code>compose/.env</code> for service restarts).</li>
+      <li>Click <strong>Fetch Data</strong> to start an import. If Core is running, the request is forwarded immediately.</li>
+    </ol>
+    <div class="callout warn small">
+      Treat your token like a password. Do not commit <code>compose/.env</code> to source control. To rotate, generate a new token on Hypothes.is, update it in the UI, and click <em>Save</em>.
+    </div>
+    <div class="callout ok small"><strong>Success check:</strong> Open <em>Explore Visually</em> and run “Recent annotations → pages”. You should see your Annotation nodes linked to Webpages; topics may appear as red <em>WikiDataOntology</em> nodes when NLP has run.</div>
+    <hr>
+
+    <h2 id="setup-troubleshooting">Troubleshooting</h2>
+    <h4>Port conflicts</h4>
+    <p>If a service won’t start and logs mention an address in use:</p>
+    <ol class="step">
+      <li>Edit the relevant port in <code>compose/.env</code> (e.g., <code>NEO4J_HTTP_PORT</code>, <code>NEO4J_BOLT_PORT</code>, <code>COYOTE_PORT</code>, <code>OLLAMA_PORT</code>, <code>BOT_PORT</code>).</li>
+      <li>Click <strong>Restart Services</strong> (or <em>Stop All → Start…</em>).</li>
+    </ol>
+
+    <h4>Containers won’t stop / zombie processes</h4>
+    <p>On <em>System Status</em> first use <strong>Stop All Services</strong>. If anything is still “Up”, click <strong>Force Cleanup (Emergency)</strong>.</p>
+
+    <h4>Neo4j “Unauthorized” on Test</h4>
+    <ul>
+      <li>Re‑enter credentials on <strong>Configure → Neo4j Database</strong> and click <strong>Save</strong>.</li>
+      <li>Click <strong>Restart Services</strong> so Core/Agent reload the new auth.</li>
+    </ul>
+
+    <h4>LLM service “starting” for a long time</h4>
+    <p>The first run downloads the selected model. This can take a while depending on bandwidth. Once the model exists, health turns green quickly on subsequent starts.</p>
+
+    <h4>Browser Extension shows “Offline”</h4>
+    <ul>
+      <li>Reopen <code>about:debugging#/runtime/this-firefox</code> and ensure the temporary add‑on is loaded.</li>
+      <li>Reload the add‑on after a Firefox restart (temporary add‑ons do not persist). The indicator should turn green within ~10s.</li>
+    </ul>
+
+    <hr>
+    <p class="meta">Have a persistent issue? From a terminal run <code>docker compose logs &gt; logs.txt</code> in the <code>compose/</code> folder and attach it to a GitHub issue.</p>
+  </div>
+</body>
+</html>

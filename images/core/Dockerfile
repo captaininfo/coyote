@@ -1,6 +1,6 @@
 # Dockerfile
 
-# Use Python 3.10.17 slim as the base image
+# Use Python 3.11-slim as the base image
 FROM python:3.11-slim-bullseye
 
 # Set environment variables
@@ -18,7 +18,10 @@ RUN apt-get update && apt-get install -y \
 # Copy the requirements file and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    && python -m spacy download en_core_web_sm
+    && pip install --no-cache-dir \
+       https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl \
+    && python -m spacy validate
+
 
 # Copy the rest of the application code
 COPY . .

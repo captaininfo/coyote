@@ -3,17 +3,17 @@
 
 from __future__ import annotations
 import re
-from typing import Literal, Tuple, Optional
+from typing import Literal
 
 # Conservative static schema (works without drivers); you can swap in a
 # dynamic one where available.
 SCHEMA_MIN = """
 Node Labels and Properties:
-(:Webpage {event_id, url, title, summary, timestamp, isSERP, dataSource, entities, topics})
-(:Annotation {annotation_id, annotation_text, highlighted_text, timestamp, url, webpage_title, entities, topics})
-(:Purpose {event_id, text, timestamp, dataSource, topics, entities})
-(:SearchTerms {event_id, text, relevance, timestamp, dataSource, topics, entities})
-(:WikiDataOntology {uri, label})
+(:Webpage {{event_id, url, title, summary, timestamp, isSERP, dataSource, entities, topics}})
+(:Annotation {{annotation_id, annotation_text, highlighted_text, timestamp, url, webpage_title, entities, topics}})
+(:Purpose {{event_id, text, timestamp, dataSource, topics, entities}})
+(:SearchTerms {{event_id, text, relevance, timestamp, dataSource, topics, entities}})
+(:WikiDataOntology {{uri, label}})
 
 Relationships:
 (:Webpage)-[:HAS_TOPIC]->(:WikiDataOntology)
@@ -53,16 +53,45 @@ PROMPT_GRAPH = """You translate user questions into ONE read-only Cypher query o
 SCHEMA:
 {schema}
 
-Rules:
-- Use ONLY the listed labels/props/rels.
-- Prefer datetime() filters when the user asks for "recent/last N days".
-- The query MUST RETURN the exact shape below (for Cytoscape):
+CRITICAL RULES:
+1. Use ONLY the listed labels/properties/relationships
+2. For date filtering: datetime(node.timestamp) >= datetime() - duration({{days: N}})
+3. For "today" comparisons: date(datetime(node.timestamp)) = date()
+4. ALWAYS use this EXACT pattern for the RETURN statement:
 
+MATCH <your pattern>
+WHERE <your filters>
+WITH collect(DISTINCT <matched_node>) AS matchedNodes
+OPTIONAL MATCH <relationships if needed>
+WITH matchedNodes + collect(DISTINCT <related_node>) AS allNodes, collect(DISTINCT <relationship>) AS allRels
 RETURN
-  [x IN nodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes,
-  [x IN rels  | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels
+  [x IN allNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes,
+  [x IN allRels | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels
 
-Where `nodes` and `rels` are lists you construct in the query.
+EXAMPLES:
+
+Question: "What webpages have I viewed today?"
+{{
+  "cypher": "MATCH (w:Webpage {{isSERP: false}}) WHERE date(datetime(w.timestamp)) = date() WITH collect(DISTINCT w) AS matchedNodes RETURN [x IN matchedNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes, [] AS rels"
+}}
+
+Question: "Show annotations from the last 7 days"
+{{
+  "cypher": "MATCH (a:Annotation) WHERE datetime(a.timestamp) >= datetime() - duration({{days: 7}}) WITH collect(DISTINCT a) AS matchedNodes OPTIONAL MATCH (w:Webpage)-[r:HAS_ANNOTATION]->(a) WITH matchedNodes + collect(DISTINCT w) AS allNodes, collect(DISTINCT r) AS allRels RETURN [x IN allNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes, [x IN allRels | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels"
+}}
+
+Question: "Show me webpages from yesterday"
+{{
+  "cypher": "MATCH (w:Webpage) WHERE date(datetime(w.timestamp)) = date() - duration({{days: 1}}) WITH collect(DISTINCT w) AS matchedNodes RETURN [x IN matchedNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes, [] AS rels"
+}}
+
+KEY POINTS:
+- For "today" or specific date comparisons: use date(datetime(node.timestamp)) = date()
+- For time ranges: use datetime(node.timestamp) >= datetime() - duration({{days: N}})
+- First collect your matched nodes with WITH
+- Then optionally get related nodes/relationships  
+- Then combine everything into allNodes and allRels
+- Finally use the list comprehension pattern on those collections
 
 Output STRICT JSON with a single key:
 {{"cypher":"<your query here>"}}
@@ -82,7 +111,6 @@ _WRITE_BLOCKLIST = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP|LO
 def is_read_only(cypher: str) -> bool:
     return not _WRITE_BLOCKLIST.search(" ".join((cypher or "").split()))
 
-# New strip_fences_or_json doesn't match old. If script breaks, try old function
 def strip_fences_or_json(s: str) -> str:
     if not s: return ""
     t = s.strip()
@@ -107,78 +135,3 @@ def strip_fences_or_json(s: str) -> str:
 def looks_like_cypher(s: str) -> bool:
     kw = ("MATCH","CALL","WITH","UNWIND","MERGE","CREATE","RETURN","EXPLAIN","PROFILE")
     return bool(s) and s.lstrip().upper().startswith(kw)
-
-class CypherValidator:
-    def __init__(self, schema_str: str):
-        self.schema = schema_str
-        self._extract_valid_elements()
-    
-    def _extract_valid_elements(self):
-        """Extract valid labels, properties, and relationships from schema"""
-        self.valid_labels = set(re.findall(r':(\w+)', self.schema))
-        self.valid_props = set(re.findall(r'\.(\w+)', self.schema))
-        
-    def validate_query(self, cypher: str) -> Tuple[bool, Optional[str]]:
-        """Basic validation of Cypher syntax and variable definitions"""
-        # Check for undefined variables
-        defined_vars = set()
-        used_vars = set()
-        
-        # Pattern to find variable definitions (simplified)
-        for match in re.finditer(r'\b(\w+):[\w]+', cypher):
-            defined_vars.add(match.group(1))
-        for match in re.finditer(r'WITH\s+([\w\s,]+)', cypher):
-            vars_str = match.group(1)
-            for var in re.findall(r'\b(\w+)\b', vars_str):
-                if var not in ['AS', 'WHERE', 'AND', 'OR']:
-                    defined_vars.add(var)
-        
-        # Find variable usage
-        for match in re.finditer(r'\b(\w+)\.\w+', cypher):
-            var_name = match.group(1)
-            if var_name not in ['datetime', 'size', 'any', 'coalesce', 'toString', 'toLower']:
-                used_vars.add(var_name)
-        
-        # Check for undefined variables
-        undefined = used_vars - defined_vars
-        if undefined:
-            return False, f"Undefined variables: {', '.join(undefined)}"
-        
-        # Check for write operations
-        if not is_read_only(cypher):
-            return False, "Query contains write operations"
-        
-        return True, None
-
-def validated_cypher_generation(question: str, llm_chain, validator: CypherValidator, max_retries: int = 3) -> str:
-    """Generate and validate Cypher with retry logic"""
-    for attempt in range(max_retries):
-        # Generate Cypher
-        raw = llm_chain.invoke({"question": question})
-        cypher = strip_fences_or_json(raw)
-        
-        # Validate
-        is_valid, error = validator.validate_query(cypher)
-        if is_valid:
-            return cypher
-        
-        # If invalid, retry with error feedback
-        if attempt < max_retries - 1:
-            error_prompt = f"""
-            The previous Cypher query had an error: {error}
-            
-            Generated query:
-            {cypher}
-            
-            Please fix this query. Remember:
-            - All variables must be defined before use
-            - Use only read operations (MATCH, WITH, RETURN)
-            - Follow the exact schema provided
-            
-            Original question: {question}
-            """
-            logger.debug(f"Retry {attempt + 1}: {error}")
-            # Continue to next iteration with enhanced prompt
-            question = error_prompt
-    
-    return None  # Failed after all retries

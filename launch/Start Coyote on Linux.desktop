@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Start Coyote
+Comment=Launch the Coyote UI (http://localhost:8080)
+Terminal=true
+# Run the sibling shell script no matter where this .desktop sits
+Exec=sh -c 'cd "$(dirname "%k")" && ./start_coyote_mac_linux.sh'
+# Optional: set to an absolute path if you prefer a custom icon
+# Icon=
