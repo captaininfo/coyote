@@ -138,7 +138,7 @@ def insert_event(data_conn: sqlite3.Connection, event_id: str, event: dict) -> b
 
 
 
-def insert_event_specific_data(conn: sqlite3.Connection, event_data: Dict[str, Any]) -> None:
+def insert_event_specific_data(conn: sqlite3.Connection, event_data: Dict[str, Any]) -> bool:
     """
     Inserts the event-specific data based on the event type.
 
@@ -155,13 +155,23 @@ def insert_event_specific_data(conn: sqlite3.Connection, event_data: Dict[str, A
 
             if event_type == 'User starts or modifies a search':
                 insert_search_event(conn, event_data)
+                return True
             elif event_type == 'User clicks hyperlink':
                 insert_hyperlink_click_event(conn, event_data)
+                return True
             elif event_type == 'Webpage loads':
                 insert_webpage_loads_event(conn, event_data)
+                return True
             elif event_type == 'User annotated webpage':
-                insert_annotation_event(conn, event_data)
-
+                ok = insert_annotation_event(conn, event_data)
+                if not ok:
+                    # Duplicate (annotation_id already exists) or insert ignored.
+                    logger.info(
+                        "Annotation insert skipped (duplicate). event_id=%s annotation_id=%s",
+                        event_data.get('event_id'), event_data.get('annotation_id')
+                    )
+                    return False
+                # Only add tags when the annotation row was actually created for this event_id
                 if 'tags' in event_data and isinstance(event_data['tags'], list):
                     for tag in event_data['tags']:
                         annotation_tag_data = {
@@ -170,14 +180,18 @@ def insert_event_specific_data(conn: sqlite3.Connection, event_data: Dict[str, A
                             'tag': tag
                         }
                         insert_annotation_tag(conn, annotation_tag_data)
+                return True
             else:
                 logger.warning(f"Unknown event type: {event_type}. Skipping event-specific data insertion.")
 
+                return True
+
         logger.debug(f"[insert_event_specific_data] AFTER context manager: in_transaction={conn.in_transaction}")
+        return True
 
     except sqlite3.Error as e:
         logger.error(f"SQLite error while inserting event-specific data: {e}", exc_info=True)
-        raise
+        return False
 
 
 def mark_event_ready_for_nlp(conn: sqlite3.Connection, event_id: str) -> None:

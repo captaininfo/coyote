@@ -10,14 +10,54 @@ import sqlite3
 import logging
 import json
 import uuid
+import inspect, os, time
 from pathlib import Path
 from typing import Dict, Any, List
 from coyote.utils.config_container import DATA_DIR, LOGS_DIR
-from coyote.utils.config_manager import get_staging_db_connection
 from coyote.utils.event_status import insert_event_status
+from coyote.utils.config_manager import (
+    get_staging_db_connection,
+    get_event_data_db_connection,
+)
 
 # Get the logger for this module
 logger = logging.getLogger(__name__)
+logger.info("insert_annotation_event variant: OR IGNORE enabled")
+logger.info("Loaded %s (mtime=%s)", __file__, time.ctime(os.path.getmtime(__file__)))
+
+
+def _annotation_already_seen(annotation_id: str) -> bool:
+    """Return True if this annotation_id is already staged or already in event_data."""
+    if not annotation_id:
+        return False
+    try:
+        # Check event_data.Annotations
+        ed_conn = get_event_data_db_connection()
+        cur = ed_conn.cursor()
+        cur.execute("SELECT 1 FROM Annotations WHERE annotation_id=? LIMIT 1", (annotation_id,))
+        if cur.fetchone():
+            return True
+    except Exception:
+        logger.exception("Failed checking event_data for annotation_id=%s", annotation_id)
+    finally:
+        try:
+            ed_conn.close()
+        except Exception:
+            pass
+
+    try:
+        # Check staging.EventStaging (in-flight)
+        st_conn = get_staging_db_connection()
+        cur = st_conn.cursor()
+        cur.execute("""
+            SELECT 1 FROM EventStaging
+             WHERE annotation_id=? AND data_source='Hypothesis'
+             LIMIT 1
+        """, (annotation_id,))
+        return cur.fetchone() is not None
+    except Exception:
+        logger.exception("Failed checking staging for annotation_id=%s", annotation_id)
+        return False
 
 def insert_staging_event(event_data: Dict[str, Any]) -> None:
     """
@@ -97,14 +137,18 @@ def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
     """
     for annotation in annotations:
         try:
+            # Idempotency at the DB boundary
+            anno_id = annotation.get('id')
+            if _annotation_already_seen(anno_id):
+                logger.info("Hypothesis annotation already seen; skipping. annotation_id=%s", anno_id)
+                continue
+
             event_id = str(uuid.uuid4())  # Generate a UUID for each annotation
             text = annotation.get('text', '')
 
-            highlighted_text = "".join([
-                sel.get('exact', '')
-                for sel in annotation['target'][0].get('selector', [])
-                if sel.get('type') == 'TextQuoteSelector'
-            ])
+            highlighted_text = _safe_highlighted_text(annotation)
+            webpage_title   = _safe_title(annotation)
+            visibility      = _safe_visibility(annotation)
 
             annotation_data = {
                 "event_id": event_id,
@@ -112,14 +156,14 @@ def process_hypothesis_annotations(annotations: List[Dict[str, Any]]) -> None:
                 "event_type": "User annotated webpage",
                 "data_source": "Hypothesis",
                 "url": annotation['uri'],
-                "webpage_title": annotation['document']['title'][0] if annotation['document'].get('title') else '',
+                "webpage_title": webpage_title,
                 "annotation_id": annotation['id'],
                 "annotation_text": text,
                 "highlighted_text": highlighted_text,
                 "tags": annotation.get('tags', []),
                 "user_account": annotation['user'],
                 "groups": annotation['group'],
-                "visibility": "public" if "group:__world__" in annotation['permissions']['read'] else "private",
+                "visibility": visibility,
                 # Add default values for missing fields
                 "purpose": None,
                 "search_terms": None,
@@ -227,7 +271,7 @@ def insert_annotation_event(conn: sqlite3.Connection, annotation_event_data: Dic
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO Annotations (
+            INSERT OR IGNORE INTO Annotations (
                 event_id,
                 url,
                 webpage_title,
@@ -251,9 +295,24 @@ def insert_annotation_event(conn: sqlite3.Connection, annotation_event_data: Dic
             annotation_event_data.get('visibility', '')
         ))
         conn.commit()
-        logger.debug(f"Inserted annotation event {annotation_event_data['event_id']} into Annotations table.")
+        if cursor.rowcount == 0:
+            # Duplicate (unique constraint hit and ignored)
+            logger.info(
+                "Duplicate Hypothesis annotation ignored (already in Annotations). "
+                "annotation_id=%s event_id=%s",
+                annotation_event_data.get('annotation_id'),
+                annotation_event_data.get('event_id'),
+            )
+            return False
+        logger.debug(
+            "Inserted annotation event %s (annotation_id=%s) into Annotations.",
+            annotation_event_data['event_id'],
+            annotation_event_data.get('annotation_id'),
+        )
+        return True
     except sqlite3.Error as e:
         logger.error(f"SQLite error in insert_annotation_event: {e}", exc_info=True)
+        return False
 
 
 def insert_entity(conn: sqlite3.Connection, entity_data: Dict[str, Any]) -> None:
@@ -365,3 +424,22 @@ def insert_topics_and_entities(event_id: str, context: str, topics_data: Dict[st
             'score': details.get('score', 0.0)
         }
         insert_entity(entity_data)
+
+def _safe_highlighted_text(anno: Dict[str, Any]) -> str:
+    try:
+        target = (anno.get('target') or [])
+        if target and isinstance(target[0], dict):
+            for sel in target[0].get('selector', []) or []:
+                if sel.get('type') == 'TextQuoteSelector':
+                    return sel.get('exact') or ''
+    except Exception:
+        logger.debug("No TextQuoteSelector for annotation_id=%s", anno.get('id'))
+    return ''
+
+def _safe_title(anno: Dict[str, Any]) -> str:
+    titles = (anno.get('document') or {}).get('title') or []
+    return titles[0] if titles else ''
+
+def _safe_visibility(anno: Dict[str, Any]) -> str:
+    read = (anno.get('permissions') or {}).get('read') or []
+    return 'public' if 'group:__world__' in read else 'private'

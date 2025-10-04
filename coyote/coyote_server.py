@@ -27,6 +27,7 @@ from coyote.utils.database_cleanup_manager import CoyoteDatabaseCleanupManager
 from coyote.utils.event_status import insert_event_status
 from coyote.utils.config_manager import (
     store_setting, 
+    load_setting,
     load_secret_key, 
     load_credentials,
     get_event_data_db_connection
@@ -194,6 +195,7 @@ def process_request_data(data: Dict[str, Any], event_description: str) -> Any:
     # Normalize key names to match database schema
     key_mapping = {
         "searchTerms": "search_terms",
+        "terms": "search_terms",
         "sourceURL": "source_url",
         "destinationURL": "destination_url",
         "linkText": "link_text",
@@ -340,7 +342,15 @@ def fetch_hypothesis_data():
     Returns:
         Response: Redirect to the configure page with a success or error message.
     """
-    last_fetch_timestamp = get_latest_timestamp()
+    # Prefer the server-returned continuation token we stored earlier.
+    after = None
+    try:
+        after = load_setting('hypothesis_search_after')
+    except Exception:
+        after = None
+    if not after:
+        # Fallback only if we don't yet have a search_after token.
+        after = get_latest_timestamp()
     # Load credentials securely from SQLite database
     credentials = load_credentials()
     if not credentials:
@@ -358,20 +368,27 @@ def fetch_hypothesis_data():
 
     params = {
         'user': f'acct:{username}@hypothes.is',
-        'limit': 200  # Fetch the maximum number of annotations Hypothesis allows
+        'limit': 200,
+        'sort': 'updated',    # stable pagination field
+        'order': 'asc',       # oldest→newest, so search_after moves forward
     }
 
-    if last_fetch_timestamp:
-        params['search_after'] = last_fetch_timestamp
-        logger.info(f"Fetching data after timestamp: {last_fetch_timestamp}")
+    if after:
+        params['search_after'] = after
+        logger.info("Fetching Hypothes.is data after: %s", after)
     else:
-        logger.info("No previous Hypothes.is data found; fetching all available data.")
+        logger.info("No previous Hypothes.is token/timestamp; fetching from the beginning.")
 
     try:
         response = requests.get('https://api.hypothes.is/api/search', headers=headers, params=params)
         response.raise_for_status()
-        annotations = response.json().get('rows', [])
-        logger.debug(f"Received annotations: {annotations}")
+        payload = response.json() or {}
+        annotations = payload.get('rows', []) or []
+        next_after = payload.get('search_after')
+        if next_after:
+            store_setting('hypothesis_search_after', next_after)  # persist continuation
+            logger.debug("Stored new Hypothes.is search_after token: %s", next_after)
+        logger.debug("Received %d annotations", len(annotations))
 
         process_hypothesis_annotations(annotations)
 
@@ -386,6 +403,118 @@ def fetch_hypothesis_data():
         logger.exception(f"An error occurred: {err}")
         flash('An error occurred while fetching data from Hypothes.is.')
         return redirect(url_for('configure'))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JSON-friendly, async Hypothes.is fetch shim for the UI
+# UI calls POST /api/integrations/hypothesis/fetch → UI forwards to
+# POST http://127.0.0.1:5000/hypothesis/fetch (this route).
+# We kick off the real fetch work in a background thread and return immediately.
+
+from typing import Optional  # already imported above in your file; harmless to repeat in Python files
+
+def _run_hypothesis_fetch_worker(started_at_iso: str) -> None:
+    """
+    Background worker that performs the Hypothes.is fetch using the same
+    underlying logic/flow as the legacy GET /fetch_hypothesis_data route.
+    Runs inside a Flask app context so any utils that use `flask.g` work.
+    """
+    with app.app_context():
+        try:
+            logger.info("Hypothes.is fetch worker started at %s", started_at_iso)
+
+            after: Optional[str] = None
+            try:
+                after = load_setting('hypothesis_search_after')
+            except Exception:
+                after = None
+            if not after:
+                after = get_latest_timestamp()
+
+            # Load credentials (stored via config_manager.store_setting / UI apply step).
+            credentials = load_credentials()
+            if not credentials:
+                logger.error("Hypothes.is fetch aborted: credentials not found in state DB.")
+                return
+
+            token = credentials.get('token')
+            username = credentials.get('username')
+            if not token or not username:
+                logger.error("Hypothes.is fetch aborted: missing token and/or username.")
+                return
+
+            headers = {
+                'Authorization': f'Bearer {token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+            params = {
+                'user': f'acct:{username}@hypothes.is',
+                'limit': 200,
+                'sort': 'updated',
+                'order': 'asc',
+            }
+            if after:
+                params['search_after'] = after
+                logger.info("Fetching Hypothes.is data after: %s", after)
+            else:
+                logger.info("No previous Hypothes.is data found; fetching from beginning.")
+
+            total_processed = 0
+            page = 1
+            # Paginate conservatively: honor Hypothes.is 'search_after' token if present, else stop when rows < limit.
+            while True:
+                resp = requests.get(
+                    'https://api.hypothes.is/api/search',
+                    headers=headers,
+                    params=params,
+                    timeout=30
+                )
+                resp.raise_for_status()
+                payload = resp.json() or {}
+                rows = payload.get('rows', []) or []
+                if rows:
+                    process_hypothesis_annotations(rows)
+                    total_processed += len(rows)
+                    logger.debug("Hypothes.is page %d processed %d rows (running total=%d).",
+                                 page, len(rows), total_processed)
+                next_after = payload.get('search_after')
+                if next_after:
+                    params['search_after'] = next_after
+                    store_setting('hypothesis_search_after', next_after)  # persist continuation
+                    page += 1
+                    # Optional safety bound to avoid runaway loops in dev
+                    if page > 10:
+                        logger.warning("Stopping pagination after 10 pages to bound work.")
+                        break
+                    continue
+                # No continuation token → done
+                break
+
+            logger.info("Hypothes.is fetch completed. Total annotations handled: %d.", total_processed)
+
+        except requests.exceptions.HTTPError as http_err:
+            logger.error("Hypothes.is HTTP error: %s", http_err, exc_info=True)
+        except Exception as e:
+            logger.exception("Hypothes.is fetch worker failed: %s", e)
+
+
+@app.route('/hypothesis/fetch', methods=['POST'])
+def hypothesis_fetch_post():
+    """
+    JSON-friendly shim (used by the UI).
+    Returns immediately with ok=True; actual work runs in a background thread.
+    """
+    started_at_iso = datetime.utcnow().isoformat()
+    # Kick off background worker
+    t = Thread(target=_run_hypothesis_fetch_worker, args=(started_at_iso,), daemon=True)
+    t.start()
+    # Fast response the UI can toast as success
+    return jsonify({
+        "ok": True,
+        "message": "Hypothes.is fetch started in Coyote Core.",
+        "started_at": started_at_iso
+    }), 200
+
     
 # health endpoint for Compose healthcheck
 @app.route('/health', methods=['GET'])

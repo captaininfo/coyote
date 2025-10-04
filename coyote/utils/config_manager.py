@@ -381,6 +381,15 @@ def close_db_connections(exception: Optional[Exception] = None) -> None:
             conn.close()
             logger.debug(f"Closed {conn_name} connection.")
 
-
 # Example: Registering the teardown function with the Flask app.
 # app.teardown_appcontext(close_db_connections)
+
+def load_setting(setting_name: str, default: str | None = None) -> str | None:
+    conn = get_state_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT setting_value FROM user_settings WHERE setting_name=?", (setting_name,))
+        row = cur.fetchone()
+        return row[0] if row else default
+    finally:
+        conn.close()

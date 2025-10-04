@@ -3,13 +3,18 @@ import logging, threading, time
 from datetime import datetime, timedelta
 from pathlib import Path
 import sqlite3
+from coyote.utils.config_container import DATA_DIR as _DATA_DIR
 from coyote.utils.config_manager import (
     get_state_db_connection,
     get_state_read_only_connection,
+    event_data_db_lock,
+    EVENT_DATA_DB_FILE as EVENT_DATA_PATH,
 )
 
 logger = logging.getLogger(__name__)
 CLEANUP_INTERVAL = 6 * 60  # seconds – run every 6 minutes
+# Normalize to Path for safety even if older code passes str
+DATA_DIR = _DATA_DIR if isinstance(_DATA_DIR, Path) else Path(_DATA_DIR)
 
 class CoyoteDatabaseCleanupManager(threading.Thread):
     """Background janitor that keeps the SQLite files and Neo4j tidy."""
@@ -38,8 +43,6 @@ class CoyoteDatabaseCleanupManager(threading.Thread):
 
     # ───────────────────────── helpers ─────────────────────────────
     def _cleanup_staging_db(self) -> None:
-        from datetime import timedelta
-        from coyote.utils.config_manager import DATA_DIR
         path = (DATA_DIR / "coyote_event_staging.db").resolve()
         threshold = (datetime.now() - timedelta(days=7)).isoformat()
 
@@ -72,7 +75,6 @@ class CoyoteDatabaseCleanupManager(threading.Thread):
             return
 
         # 2. purge from staging DB
-        from coyote.utils.config_manager import DATA_DIR
         staging_path = (DATA_DIR / "coyote_event_staging.db").resolve()
         with sqlite3.connect(staging_path) as conn:
             cur = conn.cursor()
@@ -80,11 +82,6 @@ class CoyoteDatabaseCleanupManager(threading.Thread):
             conn.commit()
 
         # 3. purge from event-data DB (ON DELETE CASCADE handles satellites)
-        from coyote.utils.config_manager import (
-            event_data_db_lock,
-            EVENT_DATA_DB_FILE as EVENT_DATA_PATH,
-        )
-
         with event_data_db_lock, sqlite3.connect(EVENT_DATA_PATH) as conn:
             cur = conn.cursor()
             cur.executemany("DELETE FROM Events WHERE event_id = ?", [(i,) for i in ids])

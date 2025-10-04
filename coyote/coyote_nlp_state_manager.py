@@ -149,23 +149,44 @@ class CoyoteNLPStateManager:
                             # Step 1b: Copy the event data into coyote_event_data.db
                             with event_data_db_lock:
                                 if insert_event(self.data_conn, event_id, event_dict):
-                                    logger.info(f"Inserted event_id {event_id} into Events table.")
+                                    logger.info("Inserted event_id %s into Events table.", event_id)
                                     if insert_event_tracking(self.data_conn, event_id):
-                                        logger.info(f"Inserted event_id {event_id} into EventTracking table.")
-                                        insert_event_specific_data(self.data_conn, event_dict)
-                                        logger.info(f"Inserted event-specific data for event_id {event_id}.")
+                                        logger.info("Inserted event_id %s into EventTracking table.", event_id)
+
+                                        ok_specific = insert_event_specific_data(self.data_conn, event_dict)
+                                        if not ok_specific and event_dict.get("event_type") == "User annotated webpage":
+                                            # Duplicate Hypothesis annotation: do NOT move to NLP (local or centralized)
+                                            self.data_cursor.execute(
+                                                """
+                                                UPDATE EventTracking
+                                                SET status='duplicate',
+                                                    last_updated=CURRENT_TIMESTAMP,
+                                                    error_message=?
+                                                WHERE event_id=?
+                                                """,
+                                                ("Duplicate Hypothesis annotation_id; insert ignored", event_id),
+                                            )
+                                            self.data_conn.commit()
+                                            logger.info("Skipped NLP for duplicate annotation event_id %s.", event_id)
+
+                                            # Centralized queue terminal status for this pipeline
+                                            self.update_event_queue_status(event_id, "duplicate")
+                                            # Continue to the next pending event
+                                            continue
+
+                                        # Non-duplicate path → move to NLP (local + centralized)
+                                        logger.info("Inserted event-specific data for event_id %s.", event_id)
                                         mark_event_ready_for_nlp(self.data_conn, event_id)
-                                        logger.info(f"Marked event_id {event_id} as 'ready_for_nlp' in event_data.db.")
+                                        logger.info("Marked event_id %s as 'ready_for_nlp' in event_data.db.", event_id)
+
+                                        # IMPORTANT: keep the centralized status change co-located and atomic with local mark
+                                        self.update_event_queue_status(event_id, "ready_for_nlp")
+
                                     else:
-                                        logger.error(f"Failed to track event_id {event_id} in EventTracking.")
+                                        logger.error("Failed to track event_id %s in EventTracking.", event_id)
                                 else:
-                                    logger.error(f"Failed to insert event_id {event_id} into Events table.")
-                            # Step 1c: Update the centralized status in coyote_state.db to "ready_for_nlp"
-                            self.update_event_queue_status(event_id, "ready_for_nlp")
-                        else:
-                            logger.warning(f"No event found in staging for event_id {event_id}.")
-                else:
-                    logger.info("No pending events found in event_queue.")
+                                    logger.error("Failed to insert event_id %s into Events table.", event_id)
+
 
                 # Step 2: Process events in coyote_event_data.db that are 'ready_for_nlp'
                 with event_data_db_lock:
@@ -196,7 +217,11 @@ class CoyoteNLPStateManager:
         self.read_only_cursor.execute("SELECT event_id FROM EventTracking WHERE status='ready_for_nlp'")
         rows = self.read_only_cursor.fetchall()
         return [r[0] for r in rows] if rows else []
-
+    
+    def _is_ready_for_nlp(self, event_id: str) -> bool:
+        self.read_only_cursor.execute("SELECT status FROM EventTracking WHERE event_id=?", (event_id,))
+        row = self.read_only_cursor.fetchone()
+        return bool(row and row[0] == "ready_for_nlp")
 
     def get_event_type(self, event_id: str) -> Optional[str]:
         """
@@ -289,7 +314,10 @@ class CoyoteNLPStateManager:
                 logger.error(f"No SearchEvents data found for event_id {event_id}.")
                 self.data_conn.rollback()
                 return
+            # Correctly unpack from the DB row, then coalesce
             purpose, search_terms = row
+            purpose = purpose or ""
+            search_terms = search_terms or ""
             logger.debug(f"Fetched purpose: {purpose}")
             logger.debug(f"Fetched search_terms: {search_terms}")
             
@@ -386,6 +414,11 @@ class CoyoteNLPStateManager:
                 (str(e), event_id)
             )
             self.data_conn.commit()
+            # keep centralized state consistent for observability
+            try:
+                self.update_event_queue_status(event_id, "nlp_failed")
+            except Exception:
+                logger.exception("Failed to mark event %s as nlp_failed in event_queue", event_id)
 
 
     def process_webpage_loads_event(self, event_id: str) -> None:
@@ -801,8 +834,12 @@ class CoyoteNLPStateManager:
                 self.data_conn.rollback()
                 return
             annotation_id, annotation_text, highlighted_text = row
-            logger.debug(f"Fetched annotation data for event_id={event_id}: annotation_id={annotation_id}, "
-                        f"annotation_text length={len(annotation_text.split())}, highlighted_text length={len(highlighted_text.split())}")
+            annotation_text   = (annotation_text   or "")
+            highlighted_text  = (highlighted_text  or "")
+            logger.debug(
+                "Fetched annotation for %s: annotation_text_words=%d highlighted_text_words=%d",
+                event_id, len(annotation_text.split()), len(highlighted_text.split())
+            )
 
             # Combine texts for word count check
             full_text = (annotation_text or "") + " " + (highlighted_text or "")
