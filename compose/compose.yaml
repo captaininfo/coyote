@@ -34,7 +34,7 @@ services:
     environment:
       - OLLAMA_ORIGINS=*
       # Expose the target model inside this service so the healthcheck can reference it.
-      - LLM=${LLM-qwen2.5-coder:7b}
+      - LLM=${LLM-mistral:7b-instruct}
     volumes:
       - ${COYOTE_MODELS_DIR-./volumes/ollama}:/root/.ollama
     # Option B: "healthy" only when the model is present *and* the server is responding.
@@ -99,7 +99,7 @@ services:
       - NEO4J_USERNAME=${NEO4J_USERNAME-neo4j}
       - NEO4J_PASSWORD=${NEO4J_PASSWORD-password}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL-http://llm:11434}
-      - LLM=${LLM-qwen2.5-coder:7b}
+      - LLM=${LLM-mistral:7b-instruct}
       - AGENT_LOG_DIR=/app/logs
       - AGENT_LOG_LEVEL=DEBUG
       - USE_LC_NL2CYPHER=0 
@@ -129,7 +129,7 @@ services:
         condition: service_started
     environment:
       - OLLAMA_HOST=http://llm:11434
-    entrypoint: ["/bin/sh","-lc","ollama pull ${LLM-qwen2.5-coder:7b}"]
+    entrypoint: ["/bin/sh","-lc","ollama pull ${LLM-mistral:7b-instruct}"]
     networks: [coyote_net]
     restart: "no"
 

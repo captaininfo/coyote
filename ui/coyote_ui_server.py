@@ -193,7 +193,7 @@ EMBEDDING_MODEL_DIR=./volumes/embedding_model
 # Service configuration
 NEO4J_URI=bolt://database:7687
 OLLAMA_BASE_URL=http://llm:11434
-LLM=qwen2.5-coder:7b
+LLM=mistral:7b-instruct
 EMBEDDING_MODEL=sentence_transformer
 """
         ENV_FILE.write_text(default_env)
@@ -1134,7 +1134,7 @@ def _nl_to_cypher(nl_question:str) -> tuple[str|None, str|None]:
     """NL→Cypher via local Ollama. Returns (cypher, error_message)."""
     env = _parse_env_file()
     port = env.get('OLLAMA_PORT','11434')
-    model = env.get('LLM','qwen2.5-coder:7b')
+    model = env.get('LLM','mistral:7b-instruct')
     url = f"http://localhost:{port}/api/generate"
     
     using_fallback = False

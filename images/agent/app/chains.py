@@ -1,4 +1,5 @@
 import logging
+import re
 from langchain_openai import OpenAIEmbeddings
 from langchain_ollama import OllamaEmbeddings
 from langchain_aws import BedrockEmbeddings
@@ -12,14 +13,14 @@ from langchain_neo4j import Neo4jGraph
 
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 
 from langchain.prompts import (
-    ChatPromptTemplate,
     HumanMessagePromptTemplate,
     SystemMessagePromptTemplate,
 )
 
-from typing import List, Any
+from typing import List, Dict, Any
 from utils import BaseLogger, extract_title_and_question, format_docs
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from shared.nl2cypher import (
@@ -126,29 +127,6 @@ def configure_llm_only_chain(llm):
     return chain
 
 
-# images/agent/app/chains.py
-# Complete hybrid implementation - replace the relevant sections
-
-from typing import List, Dict, Any
-import re
-from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain.prompts import SystemMessagePromptTemplate, HumanMessagePromptTemplate
-from langchain_neo4j import Neo4jGraph
-import logging
-
-# Import from shared nl2cypher
-from shared.nl2cypher import (
-    strip_fences_or_json,
-    looks_like_cypher,
-    is_read_only,
-    prompt_text,
-    schema_for_prompts
-)
-
-log = logging.getLogger("coyote.agent")
-
 def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, password):
     """
     Hybrid GraphRAG chain with intelligent fallback:
@@ -157,24 +135,41 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
     TIER 3: Time-filtered fallback (for generic queries)
     """
     
-    general_system_template = """
-    You answer ONLY from the user's personal browsing corpus shown in CONTEXT.
-    Rules (must follow):
-    - If CONTEXT is just the single character "∅", reply exactly:
-      "I couldn't find anything matching your query in the selected time window."
-    - Do not invent items, categories, or URLs. Cite only URLs that appear in CONTEXT.
-    - Never include <think> or reveal internal reasoning.
-    - Keep it concise; use bullet points; group by Webpages vs Annotations when helpful.
-    ----
-    CONTEXT:
+    general_system_template = """You are a personal research assistant analyzing browsing history data.
+
+    CRITICAL INSTRUCTION - READ CAREFULLY:
+    You MUST answer questions using ONLY the information provided in the CONTEXT section below.
+    The CONTEXT contains real data from the user's browsing history.
+    DO NOT say you don't have access to data - the data IS in CONTEXT.
+    DO NOT use your training knowledge - ONLY use what's in CONTEXT.
+
+    If CONTEXT is the single character "∅", respond: "I couldn't find anything matching your query in the selected time window."
+
+    Otherwise, answer the question using the webpages and annotations shown in CONTEXT.
+    Cite URLs when providing information.
+    
+    CONTEXT (this is real data you MUST use):
     {summaries}
-    ----
+
+    Now answer the user's question using ONLY the CONTEXT above.
     """
-    general_user_template = "Question:```{question}```"
+    general_user_template = "Question: {question}"
     qa_prompt = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(general_system_template),
         HumanMessagePromptTemplate.from_template(general_user_template),
     ])
+
+    # TEST: Verify prompt template works
+    log.info("🧪 Testing prompt template expansion...")
+    try:
+        test_expansion = qa_prompt.format_messages(
+            summaries="TEST CONTEXT HERE",
+            question="test question"
+        )
+        log.info("✅ Prompt template expands correctly")
+        log.debug("Template system message preview: %s", str(test_expansion[0])[:200])
+    except Exception as e:
+        log.error("❌ Prompt template expansion FAILED: %s", e)
 
     graph = Neo4jGraph(
         url=embeddings_store_url, username=username, password=password, refresh_schema=False
@@ -274,23 +269,41 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
     WITH $terms AS terms, $days AS days
     MATCH (w:Webpage)
     WHERE w.timestamp IS NOT NULL
-      AND (days IS NULL OR datetime(w.timestamp) >= datetime() - duration({days: days}))
+    AND (days IS NULL OR datetime(w.timestamp) >= datetime() - duration({days: days}))
     OPTIONAL MATCH (w)-[:HAS_TOPIC]->(t:WikiDataOntology)
-    WITH w, terms, collect(DISTINCT toLower(coalesce(t.label,''))) AS lbls
-    WITH w, terms, [l IN lbls WHERE l <> ''] AS lbls2
+    WITH w, terms, 
+        // Parse topics JSON and extract scores
+        [item IN apoc.convert.fromJsonList(coalesce(w.topics, '[]')) |
+        {label: toLower(coalesce(item.label, item.topic, '')), 
+        score: coalesce(item.score, 0.0)}
+        ] AS topic_items
+
+    // Filter and sort by TF-IDF score
+    WITH w, terms,
+        [t IN topic_items 
+        WHERE t.label <> ''
+            AND NOT t.label STARTS WITH 'category:'
+            AND NOT t.label STARTS WITH 'q'
+            AND size(t.label) > 2
+            AND size(t.label) < 50
+        ORDER BY t.score DESC
+        ][0..5] AS top_topics  // Top 5 by score
+
     WHERE size(terms) = 0 OR any(term IN terms WHERE
-             any(l IN lbls2 WHERE l CONTAINS term)
-          OR toLower(coalesce(w.title,''))   CONTAINS term
-          OR toLower(coalesce(w.summary,'')) CONTAINS term
-          OR toLower(coalesce(w.topics,''))  CONTAINS term
+        any(t IN top_topics WHERE t.label CONTAINS term)
+    OR toLower(coalesce(w.title,'')) CONTAINS term
+    OR toLower(coalesce(w.summary,'')) CONTAINS term
     )
-    WITH w, lbls2,
-         (CASE WHEN size(lbls2) > 0
-               THEN ' | topics: ' + reduce(s = '', x IN lbls2 | s + CASE WHEN s = '' THEN '' ELSE ', ' END + x)
-               ELSE '' END) AS topics_part
-    RETURN 'WEBPAGE: ' + coalesce(w.title,'(untitled)') + topics_part +
-           ' | url: ' + coalesce(w.url,'') AS text,
-           datetime(w.timestamp) AS ts
+
+    WITH w, top_topics,
+        (CASE WHEN size(top_topics) > 0
+            THEN ' | topics: ' + reduce(s = '', t IN top_topics | 
+                    s + CASE WHEN s = '' THEN '' ELSE ', ' END + t.label)
+            ELSE '' END) AS topics_part
+
+    RETURN 'WEBPAGE: ' + coalesce(w.title, w.url, '(no title)') + topics_part +
+        ' | url: ' + coalesce(w.url, '') AS text,
+        datetime(w.timestamp) AS ts
     ORDER BY ts DESC
     LIMIT 12
     """
@@ -317,6 +330,8 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
         Returns: (success, context_string)
         """
         try:
+            if not terms:
+                return (False, "")
             params = {"terms": terms, "days": days}
             rows1 = graph.query(CY_TOPICS_SAFE, params) or []
             rows2 = graph.query(CY_TEXT_SAFE, params) or []
@@ -343,23 +358,18 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
         try:
             log.debug("TIER 2 (Cypher generation): attempting for analytical query")
             
-            # Get schema and build prompt
-            schema = graph.get_structured_schema
-            if callable(schema):
-                schema_str = str(schema)
-            else:
-                schema_str = str(schema) if schema else schema_for_prompts(None)
-            
-            # Use the PROMPT_TABLE from nl2cypher (better for analytical queries)
-            prompt_template = prompt_text("table")
-            full_prompt = prompt_template.format(schema=schema_str, question=question)
+            # Get text schema the same way the bot does for NL→Cypher
+            from coyote_schema import get_schema
+            schema_str = get_schema(url=os.getenv("NEO4J_URI"), username=os.getenv("NEO4J_USERNAME"), password=os.getenv("NEO4J_PASSWORD"))
+            prompt_template = prompt_text("table")  # shared prompt
+            full_prompt = prompt_template.format(schema=schema_for_prompts(schema_str), question=question)
             
             # Generate Cypher from LLM
             from langchain_ollama import OllamaLLM
             import os
             
             llm_for_cypher = OllamaLLM(
-                model=os.getenv("LLM", "qwen2.5-coder:7b"),
+                model=os.getenv("LLM", "mistral:7b-instruct"),
                 base_url=os.getenv("OLLAMA_BASE_URL", "http://llm:11434"),
                 temperature=0
             )
@@ -418,13 +428,13 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
             WHERE w.timestamp IS NOT NULL
               AND datetime(w.timestamp) >= datetime() - duration({days: $days})
             OPTIONAL MATCH (w)-[:HAS_TOPIC]->(t:WikiDataOntology)
-            WITH w, collect(DISTINCT toLower(coalesce(t.label,''))) AS lbls
-            WITH w, [l IN lbls WHERE l <> ''] AS lbls2,
-                 (CASE WHEN size([l IN lbls WHERE l <> '']) > 0
-                       THEN ' | topics: ' + reduce(s = '', x IN [l IN lbls WHERE l <> ''] | 
-                            s + CASE WHEN s = '' THEN '' ELSE ', ' END + x)
-                       ELSE '' END) AS topics_part
-            RETURN 'WEBPAGE: ' + coalesce(w.title,'(untitled)') + topics_part + 
+            WITH w, [x IN collect(DISTINCT toLower(coalesce(t.label,''))) WHERE x <> ''] AS lbls2
+            WITH w, lbls2,
+                 CASE WHEN size(lbls2) > 0
+                      THEN ' | topics: ' + reduce(s = '', x IN lbls2 |
+                           s + CASE WHEN s = '' THEN '' ELSE ', ' END + x)
+                      ELSE '' END AS topics_part
+            RETURN 'WEBPAGE: ' + coalesce(w.title,'(untitled)') + topics_part +
                    ' | url: ' + coalesce(w.url,'') AS text,
                    datetime(w.timestamp) AS ts
             ORDER BY ts DESC
@@ -454,14 +464,27 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
         """
         days = _days_from_text(q)
         terms = _terms(q)
+
+        log.info("📅 Parsed: days=%d, terms=%s", days, terms)
         
         # TIER 1: Try topic/term-based GraphRAG first (fastest)
         success, context = _try_tier1_graphrag(days, terms)
         if success:
+            log.debug("HYBRID: answered via TIER‑1")
+
+            # 🚨 CRITICAL LOGGING - SEE WHAT WE'RE RETURNING
+            log.info("="*70)
+            log.info("📦 CONTEXT BEING RETURNED FROM _build_context_hybrid:")
+            log.info("   Length: %d characters", len(context))
+            log.info("   First 1000 chars:")
+            log.info("-"*70)
+            log.info("%s", context[:1000])
+            if len(context) > 1000:
+                log.info("   ... [%d more characters omitted]", len(context) - 1000)
+            log.info("="*70)
+
             return context
-        
-        # TIER 1 found nothing. Decide next step based on query type.
-        
+                
         # If we had specific search terms, this was a topic query that genuinely found nothing
         if terms:
             log.debug("TIER 1 found nothing for specific terms=%s; returning ∅", terms)
@@ -472,24 +495,67 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
             # TIER 2: Try Cypher generation for analytical/aggregate queries
             success, context = _try_tier2_cypher(q, days)
             if success:
+                log.info("📦 CONTEXT from TIER 2: length=%d", len(context))
                 return context
             # Cypher failed, continue to TIER 3
         
         # TIER 3: Fall back to time-filtered list
-        return _try_tier3_fallback(days)
+        fallback_context = _try_tier3_fallback(days)
+        log.info("📦 CONTEXT from TIER 3: length=%d", len(fallback_context))
+        return fallback_context
 
     # Build the chain
+    log.info("🔧 Constructing RAG chain...")
+
     summaries_fn = RunnableLambda(lambda q: _build_context_hybrid(q))
 
+    # Add debug wrapper to see what's being passed
+    def debug_passthrough(x):
+        log.info("="*70)
+        log.info("🔍 INPUTS TO PARALLEL CHAIN:")
+        log.info("   Type: %s", type(x))
+        log.info("   Value: %s", str(x)[:200])
+        log.info("="*70)
+        return x
+    
+    debug_fn = RunnableLambda(debug_passthrough)
+    
+    # Add debug wrapper to see parallel outputs
+    def debug_parallel_output(d: dict):
+        log.info("="*70)
+        log.info("🔍 OUTPUT FROM PARALLEL CHAIN (going to prompt):")
+        for key, value in d.items():
+            value_str = str(value)
+            log.info("   %s: %s", key, value_str[:500])
+            if len(value_str) > 500:
+                log.info("      ... [+%d more chars]", len(value_str) - 500)
+        log.info("="*70)
+        return d
+    
+    debug_parallel_fn = RunnableLambda(debug_parallel_output)
+
+    # Construct chain with debug points
     chain = (
-        RunnableParallel({
+        debug_fn  # Debug input
+        | RunnableParallel({
             "summaries": summaries_fn,
             "question": RunnablePassthrough(),
         })
+        | debug_parallel_fn  # Debug parallel output
         | qa_prompt
         | llm
         | StrOutputParser()
     )
+
+    log.info("✅ RAG chain constructed")
+    
+    # TEST the chain immediately
+    log.info("🧪 Testing RAG chain with sample input...")
+    try:
+        test_result = chain.invoke("test question")
+        log.info("✅ Chain test successful, output: %s", str(test_result)[:100])
+    except Exception as e:
+        log.error("❌ Chain test FAILED: %s", e, exc_info=True)
     
     return chain
 
@@ -504,16 +570,3 @@ def generate_ticket(neo4j_graph, llm_chain, input_question):
     title = (first[:80] + "…") if len(first) > 80 else first
     return (title or "Coyote support request", input_question.strip())
 
-
-
-def generate_ticket(neo4j_graph, llm_chain, input_question):
-    """
-    Remove dependency on (q:Question) / StackOverflow demo.
-    Minimal, deterministic ticket draft: title = first line (trimmed),
-    description = original user input.
-    """
-    if not input_question:
-        return ("Coyote support request", "No description provided.")
-    first = input_question.strip().splitlines()[0].strip()
-    title = (first[:80] + "…") if len(first) > 80 else first
-    return (title or "Coyote support request", input_question.strip())

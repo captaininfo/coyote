@@ -103,10 +103,6 @@ rag_chain = configure_qa_rag_chain(
 )
 
 
-
-
-
-
 # ── 3️⃣ direct Cypher chain ───────────────────────────────────────────────
 # Build a **table** prompt for Chat (graph mode is used by Explore Visually).
 CUSTOM_PROMPT = prompt_text(mode="table")
@@ -269,7 +265,21 @@ def chat_input():
 
                 else:  # GraphRAG
                     with trace(logger, "rag.invoke", qchars=len(user_input)):
+                        logger.info("="*70)
+                        logger.info("🚀 INVOKING RAG CHAIN")
+                        logger.info("   Mode: GraphRAG")
+                        logger.info("   User input: %s", user_input)
+                        logger.info("="*70)
+
                         output = rag_chain.invoke(user_input, config={"callbacks": [stream_handler]})
+
+                        logger.info("="*70)
+                        logger.info("📤 LLM FINAL OUTPUT:")
+                        logger.info("   Length: %d chars", len(str(output)))
+                        logger.info("   Content: %s", str(output)[:500])
+                        if len(str(output)) > 500:
+                            logger.info("   ... [+%d more chars]", len(str(output)) - 500)
+                        logger.info("="*70)
 
             except Exception as e:
                 logger.exception("chat pipeline error")
@@ -443,7 +453,7 @@ def display_chat():
 
 
 def mode_select() -> str:
-    options = ["LLM-only", "GraphRAG", "Cypher-only"]
+    options = ["GraphRAG", "LLM-only"]
     return st.radio("Select mode", options, horizontal=True)
 
 
