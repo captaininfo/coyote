@@ -1,5 +1,6 @@
 import logging
 import re
+import os
 from langchain_openai import OpenAIEmbeddings
 from langchain_ollama import OllamaEmbeddings
 from langchain_aws import BedrockEmbeddings
@@ -190,7 +191,8 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
         "webpage","webpages","page","pages","article","articles","site","sites","website","websites",
         "annotation","annotations","note","notes","highlight","highlights",
         "viewed","visited","browsed","read","saw","looked","seen","shown","show",
-        "search","searches","query","queries","purpose","purposes","term","terms",
+        "search","searched", "searches","query","queries","purpose","purposes","term","terms",
+        "topic","topics","popular","most",
         
         # Spelled numbers
         "one","two","three","four","five","six","seven","eight","nine","ten",
@@ -269,41 +271,29 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
     WITH $terms AS terms, $days AS days
     MATCH (w:Webpage)
     WHERE w.timestamp IS NOT NULL
-    AND (days IS NULL OR datetime(w.timestamp) >= datetime() - duration({days: days}))
-    OPTIONAL MATCH (w)-[:HAS_TOPIC]->(t:WikiDataOntology)
-    WITH w, terms, 
-        // Parse topics JSON and extract scores
-        [item IN apoc.convert.fromJsonList(coalesce(w.topics, '[]')) |
-        {label: toLower(coalesce(item.label, item.topic, '')), 
-        score: coalesce(item.score, 0.0)}
-        ] AS topic_items
-
-    // Filter and sort by TF-IDF score
+      AND (days IS NULL OR datetime(w.timestamp) >= datetime() - duration({days: days}))
+    // Parse topics JSON → rows, filter, order, slice
+    WITH w, terms, apoc.convert.fromJsonList(coalesce(w.topics,'[]')) AS topic_items
+    UNWIND topic_items AS ti
     WITH w, terms,
-        [t IN topic_items 
-        WHERE t.label <> ''
-            AND NOT t.label STARTS WITH 'category:'
-            AND NOT t.label STARTS WITH 'q'
-            AND size(t.label) > 2
-            AND size(t.label) < 50
-        ORDER BY t.score DESC
-        ][0..5] AS top_topics  // Top 5 by score
-
+         toLower(coalesce(ti.label, ti.topic, '')) AS lab,
+         coalesce(ti.score, 0.0) AS sc
+    WHERE lab <> '' AND size(lab) > 2 AND size(lab) < 50
+      AND NOT lab STARTS WITH 'category:' AND NOT lab STARTS WITH 'q'
+    ORDER BY sc DESC
+    WITH w, terms, collect({label: lab, score: sc})[0..5] AS top_topics
     WHERE size(terms) = 0 OR any(term IN terms WHERE
-        any(t IN top_topics WHERE t.label CONTAINS term)
-    OR toLower(coalesce(w.title,'')) CONTAINS term
-    OR toLower(coalesce(w.summary,'')) CONTAINS term
-    )
-
+             any(t IN top_topics WHERE t.label CONTAINS term)
+          OR toLower(coalesce(w.title,''))   CONTAINS term
+          OR toLower(coalesce(w.summary,'')) CONTAINS term)
     WITH w, top_topics,
-        (CASE WHEN size(top_topics) > 0
-            THEN ' | topics: ' + reduce(s = '', t IN top_topics | 
-                    s + CASE WHEN s = '' THEN '' ELSE ', ' END + t.label)
-            ELSE '' END) AS topics_part
-
+         CASE WHEN size(top_topics) > 0
+              THEN ' | topics: ' + reduce(s = '', t IN top_topics |
+                   s + CASE WHEN s = '' THEN '' ELSE ', ' END + t.label)
+              ELSE '' END AS topics_part
     RETURN 'WEBPAGE: ' + coalesce(w.title, w.url, '(no title)') + topics_part +
-        ' | url: ' + coalesce(w.url, '') AS text,
-        datetime(w.timestamp) AS ts
+           ' | url: ' + coalesce(w.url, '') AS text,
+           datetime(w.timestamp) AS ts
     ORDER BY ts DESC
     LIMIT 12
     """
@@ -323,6 +313,31 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
     ORDER BY ts DESC
     LIMIT 12
     """
+
+    CY_SEARCHES_SAFE = """
+    WITH $days AS days
+    MATCH (p:Purpose)-[:INITIATES_SEARCH]->(s:SearchTerms)
+    WHERE p.timestamp IS NOT NULL
+      AND (days IS NULL OR datetime(p.timestamp) >= datetime() - duration({days: days}))
+    OPTIONAL MATCH (p)-[:HAS_TOPIC]->(t:WikiDataOntology)
+    WITH s, p, [x IN collect(DISTINCT toLower(coalesce(t.label,''))) WHERE x <> ''] AS lbls2
+    WITH s, p, lbls2,
+         CASE WHEN size(lbls2) > 0
+              THEN ' | topics: ' + reduce(s1 = '', x IN lbls2 |
+                   s1 + CASE WHEN s1 = '' THEN '' ELSE ', ' END + x)
+              ELSE '' END AS topics_part
+    RETURN 'SEARCH: ' + coalesce(s.text,'') + topics_part +
+           ' | ts: ' + toString(datetime(p.timestamp)) AS text,
+           datetime(p.timestamp) AS ts
+    ORDER BY ts DESC
+    LIMIT 12
+    """
+
+    def _try_tier1_searches(days: int) -> tuple[bool, str]:
+        rows = graph.query(CY_SEARCHES_SAFE, {"days": days}) or []
+        lines = [r.get("text","") for r in rows]
+        ctx = "\n\n".join(x for x in lines if x)
+        return (bool(ctx), ctx if ctx else "")
 
     def _try_tier1_graphrag(days: int, terms: list[str]) -> tuple[bool, str]:
         """
@@ -348,7 +363,8 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
             
         except Exception:
             log.exception("TIER 1 (GraphRAG) failed")
-            return (False, "")
+            # Signal orchestrator that this was an error (not an empty hit)
+            return (None, "")
 
     def _try_tier2_cypher(question: str, days: int) -> tuple[bool, str]:
         """
@@ -467,6 +483,13 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
 
         log.info("📅 Parsed: days=%d, terms=%s", days, terms)
         
+        # If user asks about searches, show recent searches first
+        if re.search(r"\bsearch(ed|es|ing)?\b", q.lower()):
+            ok, c = _try_tier1_searches(days)
+            if ok:
+                log.debug("HYBRID: answered via TIER-1 (searches)")
+                return c
+
         # TIER 1: Try topic/term-based GraphRAG first (fastest)
         success, context = _try_tier1_graphrag(days, terms)
         if success:
@@ -485,6 +508,11 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
 
             return context
                 
+        # If Tier-1 errored, do not lie with "∅": fall back to Tier-3
+        if success is None:
+            log.debug("HYBRID: Tier-1 errored; falling back to Tier-3")
+            return _try_tier3_fallback(days)
+
         # If we had specific search terms, this was a topic query that genuinely found nothing
         if terms:
             log.debug("TIER 1 found nothing for specific terms=%s; returning ∅", terms)

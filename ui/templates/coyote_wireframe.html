@@ -532,6 +532,66 @@
         .content-area.active {
             display: block;
         }
+
+        /* === Coyote “earth” theme overrides (non-destructive) === */
+        :root{
+        --primary: #4b4235;         /* requested hue */
+        --primary-600: #3f382d;     /* hover/darker */
+        --primary-700: #362f25;     /* active/deeper */
+        --sidebar-bg: #2f2a22;      /* darker companion for contrast */
+        --muted: #7a7266;           /* subdued text */
+        --surface: #ffffff;
+        --surface-alt: #f5f3f0;     /* off-white panels */
+        --divider: #e6e1d9;
+        --accent-soft: #efe9df;     /* notice backgrounds */
+        --accent-soft-border: #d7cebf;
+        --accent-soft-text: #3b3429;
+        }
+
+        /* Layout & chrome */
+        body { background: var(--surface-alt); color:#2c3e50; }
+        .sidebar { background: var(--sidebar-bg); }
+        .logo h1 { color: var(--surface-alt); }
+
+        /* Nav */
+        .nav-item:hover { background: #615849; }
+        .nav-item.active {
+        background: var(--primary);
+        border-right: 3px solid #6a6154;
+        }
+
+        /* Headlines / subtitles */
+        .page-subtitle { color: var(--muted); }
+
+        /* Cards & viz */
+        .action-card .icon { color: var(--primary); }
+        .viz-carousel, .viz-card { border-color: var(--divider); }
+        .carousel-dot.active { background: var(--primary); }
+        .tab-button.active {
+        color: var(--primary);
+        border-bottom-color: var(--primary);
+        }
+
+        /* Buttons */
+        .btn-primary { background: var(--primary); color: #fff; }
+        .btn-primary:hover { background: var(--primary-600); }
+
+        /* Toggles & status accents */
+        .toggle-switch.on { background: var(--primary); }
+        .status-value { color: var(--primary); }
+
+        /* New-user notice to match palette (soft neutral instead of bright blue) */
+        .new-user-notice {
+        background: var(--accent-soft);
+        border: 1px solid var(--accent-soft-border);
+        color: var(--accent-soft-text);
+        }
+        .new-user-notice a { color: var(--primary); }
+
+        /* Lines & subtle borders */
+        .carousel-header, .viz-header, .browse-tabs { border-bottom-color: var(--divider); }
+
+
     </style>
     <script src="{{ url_for('static', filename='coyote_ui.js') }}" defer></script>
     <script src="{{ url_for('static', filename='vendor/cytoscape.min.js') }}" defer></script>
