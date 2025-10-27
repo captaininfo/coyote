@@ -1,7 +1,8 @@
 # Coyote  🐾  
-*A local, privacy-first learning record & analytics engine for your AI-assisted workflow* 
+*A local, privacy-first learning record & analytics engine for your local AI agents.  
 
-**TL;DR** – Coyote quietly logs your research activity (purpose, searches, pages, hyperlinks, annotations), analyzes text locally, and writes a queryable graph in Neo4j. You explore it visually, ask questions with a local LLM (GraphRAG), and get simple, auditable “Learning Insights.” Everything runs on your machine; no cloud; you stay in control.
+**TL;DR** – Coyote quietly logs your web-search activity (purpose, searches, pages, hyperlinks, annotations), locally analyzes information you consume and create, and writes a queryable graph in Neo4j. You can explore your graph visually, ask questions with a local LLM (GraphRAG), and get simple, auditable “Learning Insights.” Everything runs on your machine; no cloud; you stay in control.
+Coyote treats your mind like a classic **“black box”**: study the inputs (what you sought and read) and the outputs (what you highlighted, wrote, and linked), then use transparent NLP to map both to real‑world concepts. This creates a private “learning ledger” you can inspect, query, and build on. The goal isn’t a robot teacher; it’s a **personal learning analytics toolkit** that helps you see patterns, systematically research your online behavior, and/or feed your preferred local LLM/agent with high‑quality, on‑device context.
 
 ---
 
@@ -24,20 +25,31 @@
 
 ## Requirements
 - **OS:** Windows 10/11 (WSL2), macOS 12+, or Linux x86_64/aarch64
-- **Software:** Docker Desktop/Engine + Compose v2; Firefox for the extension
+- **Software:** 
+    - **Windows/macOS:** Install [Docker Desktop](https://docs.docker.com/desktop/); Install [Firefox](https://www.firefox.com/en-US/) web browser. 
+    - **Linux (Ubuntu/Debian/Fedora/etc.):** You can either install [Docker Desktop](https://docs.docker.com/desktop/), or install [Docker Engine](https://docs.docker.com/engine/install/) plus the [Docker Compose v2 plugin](https://docs.docker.com/compose/install/linux/); Install Mozilla's [Firefox](https://www.firefox.com/en-US/) web browser. 
 - **Hardware:** 8 GB RAM for Core; 16 GB recommended if running LLM + Agent
 - **Disk:** ~8–15 GB for images + Neo4j + optional model cache
 
 
 ## Quick Start (no terminal required)
-1. **Unpack & Launch UI:** Unzip **Coyote_0.4** anywhere writable. Double-click your OS launcher to open the UI at `http://localhost:8080`. First run auto-creates `compose/.env` (chmod 600) with sensible defaults and a strong Neo4j password.
-2. **Start services** (UI → System Status)
-    - **Start Core Services** (Neo4j + Coyote Core)
+1. **Ensure requirements are met:** Is [Docker Desktop](https://docs.docker.com/desktop/) (or for Linux users, [Docker Engine](https://docs.docker.com/engine/install/) + [Docker Compose v2 plugin](https://docs.docker.com/compose/install/linux/)) installed on your computer? Is the Mozilla [Firefox](https://www.firefox.com/en-US/) web browser installed?  
+2. **Download `coyote-download-0.4.0.zip`:** The downloadable [Coyote package](https://github.com/captaininfo/coyote/releases/tag/v0.4.0-beta.1) can be found in the Resources section of [Coyote's GitHub repository](https://github.com/captaininfo/coyote).
+2. **Unpack Coyote and make launch files executable:** Unzip **Coyote_0.4** in a folder on your computer where you have "write" permissions, e.g., Documents. Linux & macOS users must make the following files executable: `start_coyote_mac_linux.sh`, `Start Coyote on Linux.desktop`, and `Start Coyote on Mac.command`. You can make files executable by right-clicking them in your computer's UI, or you can run the following files in terminal or console: 
+```
+chmod +x 'launch/start_coyote_mac_linux.sh'
+chmod +x 'launch/Start Coyote on Linux.desktop'
+chmod +x 'launch/Start Coyote on Mac.command'
+
+```
+3. Double-click your OS launcher to open the UI at `http://localhost:8080`. First run auto-creates `compose/.env` (chmod 600) with sensible defaults and a strong Neo4j password.
+4. **Start services** (UI → System Status)
+    - **Start Core Services** (Neo4j + Coyote Core): Your browsing data will be recorded when both the browser extension and Core Services are running. 
     - (Optional) **Start LLM Service** (Ollama)
     - (Optional) **Start All Services** (adds the Agent/Bot): The UI invokes docker compose with appropriate profiles and `--pull=missing`.
-3. **Configure Neo4j creds** (UI → Configure): Use **Test Connection** (HTTP `/db/neo4j/tx/commit`) and **Save** to persist credentials to `.env` and into Core’s encrypted store.
-4. **Load the Firefox extension (temporary add-on):** Open `about:debugging#/runtime/this-firefox` **→ Load Temporary Add-on… →** select extension/manifest.json. The UI receives heartbeats to show “Browser Extension: Online”.
-5. (Optional) **Connect Hypothes.is** (UI → Integrations): **Test** token **→ Save → Fetch Data**. The UI calls a Core worker that paginates with `search_after`. Tokens are stored encrypted in Core’s state DB.
+5. **Load the Firefox extension (temporary add-on):** In your Firefox browser, navigate to `about:debugging#/runtime/this-firefox`, then click **Load Temporary Add-on… →**. Locate `manifest.json` from `coyote-download-0.4.0/extension/manifest.json`, then select it. When the browser extension is connected to the Coyote UI, the UI's "System Status" tab will show “Browser Extension: Online”.
+6. (Optional) **Configure Neo4j creds** (UI → Configure): Coyote automatically generates a password for Neo4j and saves it in the `.env` file. However, if you want to create your own unique Neo4j credentials, use the Coyote UI's "Configure" tab. Enter your own credentials, click **Test Connection** (HTTP `/db/neo4j/tx/commit`), and then **Save** to persist credentials to `.env` and into Core’s encrypted store.
+7. (Optional) **Connect Hypothes.is** (UI → Integrations): **Test** token **→ Save → Fetch Data**. The UI calls a Core worker that paginates with `search_after`. Tokens are stored encrypted in Core’s state DB.
 
 ### Default ports
 UI **8080**, Core API **5000**, Neo4j **7474.7687**, Ollama **11434**, Agent **8501** (editable via `compose/.env`)

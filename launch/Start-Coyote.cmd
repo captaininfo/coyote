@@ -15,27 +15,45 @@ if not exist "%VENV_DIR%\Scripts\python.exe" (
   )
 )
 
-rem Create venv if missing
+rem --- Resolve a working Python interpreter (prefer launcher; avoid WindowsApps alias) ---
+set "PY_EXE="
+
+for /f "usebackq delims=" %%I in (`where py 2^>NUL`) do set "PY_EXE=py"
+if not defined PY_EXE (
+  for /f "usebackq delims=" %%I in (`where python 2^>NUL`) do (
+    echo %%I | findstr /i "WindowsApps" >NUL || (
+      set "PY_EXE=python"
+    )
+  )
+)
+
+if not defined PY_EXE (
+  echo Error: No usable Python found.
+  echo  - Turn OFF the "python.exe" alias: Settings > Apps > Advanced app settings > App execution aliases
+  echo  - Or reinstall Python 3.11 with "Install launcher" and "Add python.exe to PATH"
+  pause
+  exit /b 1
+)
+
+rem --- Create venv if missing ---
 if not exist "%VENV_DIR%\Scripts\python.exe" (
   echo Creating virtualenv at "%VENV_DIR%" …
-  set "PY_EXE="
-  for %%P in (py.exe) do if exist "%%~$PATH:P" set "PY_EXE=py"
-  if not defined PY_EXE (
-    for %%P in (python.exe) do if exist "%%~$PATH:P" set "PY_EXE=python"
-  )
-  if not defined PY_EXE (
-    echo Error: Could not find Python. Please install Python 3.10+ and try again.
-    pause
-    exit /b 1
-  )
   if "%PY_EXE%"=="py" (
     py -3.11 -m venv "%VENV_DIR%" || py -3 -m venv "%VENV_DIR%"
   ) else (
     python -m venv "%VENV_DIR%"
   )
-  "%VENV_DIR%\Scripts\python.exe" -m pip install -U pip
-  "%VENV_DIR%\Scripts\python.exe" -m pip install -r "%UI_DIR%\requirements.txt"
 )
+
+if not exist "%VENV_DIR%\Scripts\python.exe" (
+  echo Error: venv was not created at "%VENV_DIR%".
+  pause
+  exit /b 1
+)
+
+"%VENV_DIR%\Scripts\python.exe" -m pip install -U pip
+"%VENV_DIR%\Scripts\python.exe" -m pip install -r "%UI_DIR%\requirements.txt"
+
 
 rem Point UI to bundled compose project
 set "COYOTE_COMPOSE_DIR=%COMPOSE_DIR%"

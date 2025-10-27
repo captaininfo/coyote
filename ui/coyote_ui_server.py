@@ -3,6 +3,7 @@
 coyote_ui_server.py - Fixed version with proper project name handling
 """
 
+from __future__ import annotations
 from flask import Flask, render_template, jsonify, request as flask_request
 import subprocess
 import json
