@@ -29,15 +29,15 @@ if not defined PY_EXE (
 
 if not defined PY_EXE (
   echo Error: No usable Python found.
-  echo  - Turn OFF the "python.exe" alias: Settings > Apps > Advanced app settings > App execution aliases
-  echo  - Or reinstall Python 3.11 with "Install launcher" and "Add python.exe to PATH"
+  echo  - Turn OFF the "python.exe" alias: Settings > Apps > App execution aliases
+  echo  - Or install Python 3.11 with "Install launcher" and "Add python.exe to PATH"
   pause
   exit /b 1
 )
 
 rem --- Create venv if missing ---
 if not exist "%VENV_DIR%\Scripts\python.exe" (
-  echo Creating virtualenv at "%VENV_DIR%" …
+  echo Creating virtualenv at "%VENV_DIR%" ...
   if "%PY_EXE%"=="py" (
     py -3.11 -m venv "%VENV_DIR%" || py -3 -m venv "%VENV_DIR%"
   ) else (
