@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Coyote — Put your online data to use. Locally.</title>
+  <meta name="description" content="Coyote turns your browsing and annotations into a private, local knowledge graph you control — a dynamic PKM and private backend for local LLMs and AI agents." />
+  <meta name="theme-color" content="#4b4235" />
+  <meta property="og:title" content="Coyote — private, local learning analytics" />
+  <meta property="og:description" content="Turn your browsing + annotations into a private knowledge graph you control. Pair it with local LLMs or AI agents." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="" />
+  <style>
+    /* --- Design tokens --- */
+    :root{
+      --bg: #faf9f7;
+      --ink: #23231f;
+      --muted: #5e5a52;
+      --brand: #4b4235;       /* requested palette */
+      --brand-600:#3e362b;
+      --brand-300:#7a6d5a;
+      --surface:#ffffff;
+      --ring:#a48b63;         /* accessible focus color */
+      --maxw: 78rem;
+      --radius: 14px;
+      --shadow: 0 6px 30px rgba(0,0,0,.08);
+    }
+
+    /* --- Base / reset --- */
+    html,body{height:100%}
+    body{
+      margin:0; background:var(--bg); color:var(--ink);
+      font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased;
+    }
+    *, *::before, *::after{box-sizing:border-box}
+    a{color:var(--brand); text-decoration-color: color-mix(in oklab, var(--brand), #000 15%)}
+    a:hover{text-decoration-thickness:2px}
+    img{max-width:100%; display:block}
+
+    /* --- Accessibility helpers --- */
+    .skip{
+      position:absolute; left:-999px; top:auto; width:1px; height:1px; overflow:hidden;
+    }
+    .skip:focus{
+      left:1rem; top:1rem; width:auto; height:auto; padding:.5rem .75rem; background:var(--surface);
+      border-radius:.5rem; outline:3px solid var(--ring); box-shadow:var(--shadow);
+    }
+    :focus{outline:3px solid var(--ring); outline-offset:2px}
+    @media (prefers-reduced-motion: reduce){ *{scroll-behavior:auto; animation:none; transition:none} }
+
+    /* --- Layout --- */
+    .container{max-width:var(--maxw); margin-inline:auto; padding: clamp(16px, 3vw, 28px)}
+    header{background:linear-gradient(180deg, color-mix(in oklab, var(--brand), #fff 85%), var(--bg)); border-bottom:1px solid #e8e5e0}
+    .topbar{display:flex; align-items:center; justify-content:space-between; gap:1rem}
+    .brand{display:flex; align-items:center; gap:.5rem; font-weight:700; letter-spacing:.3px}
+    .brand .paw{font-size:1.25rem}
+    nav a{margin-left:1rem; font-weight:600}
+
+    /* --- Hero --- */
+    .hero{padding-block: clamp(2.5rem, 5vw, 5rem)}
+    .hero h1{font-size:clamp(2rem, 5vw, 3.2rem); line-height:1.1; margin:.2rem 0 .8rem}
+    .hero p{font-size:clamp(1rem, 2.3vw, 1.2rem); color:var(--muted); max-width:60ch}
+    .cta{display:flex; flex-wrap:wrap; gap:.75rem; margin-top:1.25rem}
+    .btn{display:inline-block; border:0; border-radius:var(--radius); padding:.9rem 1.1rem; font-weight:700; text-decoration:none}
+    .btn.primary{background:var(--brand); color:#fff; box-shadow:var(--shadow)}
+    .btn.secondary{background:var(--surface); color:var(--brand); border:1px solid #e6e1da}
+
+    /* --- Sections --- */
+    section{padding-block: clamp(2.2rem, 4.5vw, 4rem); border-top:1px solid #ece9e4}
+    section h2{font-size:clamp(1.4rem, 3vw, 2rem); margin:0 0 .75rem}
+    .lede{color:var(--muted); max-width:65ch}
+
+    /* --- Cards grid --- */
+    .grid{display:grid; gap:clamp(14px, 2vw, 22px)}
+    .grid.cols-3{grid-template-columns: repeat(3, 1fr)}
+    @media (max-width: 880px){ .grid.cols-3{grid-template-columns:1fr} }
+    .card{background:var(--surface); border:1px solid #ece9e4; border-radius:var(--radius); padding:1rem 1rem 1.1rem; box-shadow:var(--shadow)}
+    .card h3{margin:.2rem 0 .4rem; font-size:1.1rem}
+    .card p{color:var(--muted)}
+
+    /* --- Badges (use cases) --- */
+    .badges{display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.5rem}
+    .badge{background:var(--surface); border:1px solid #e6e1da; color:var(--brand-600); padding:.4rem .6rem; border-radius:999px; font-weight:600}
+
+    /* --- Link cards (Get involved) --- */
+    .linkcard{display:block}
+    .linkcard .title{display:flex; align-items:center; justify-content:space-between; gap:.5rem; font-weight:700}
+    .linkcard .title span{font-size:1.25rem}
+    .linkcard p{margin:.35rem 0 0; color:var(--muted)}
+
+    /* --- Footer --- */
+    footer{border-top:1px solid #ece9e4; padding-block:1.2rem; color:var(--muted)}
+    footer small{display:block}
+
+    /* --- Dark mode --- */
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg:#1d1c1a; --ink:#efede8; --muted:#bdb7ad; --surface:#272521; --brand:#a89678; --brand-600:#d2c3a3; --brand-300:#8b7b62; --ring:#d4bf93;
+      }
+      header{background:linear-gradient(180deg, color-mix(in oklab, var(--brand), #000 85%), var(--bg)); border-color:#2c2a26}
+      section{border-color:#2c2a26}
+      .card{border-color:#34312c}
+      .btn.secondary{border-color:#34312c}
+      a{ text-decoration-color: color-mix(in oklab, var(--brand), #fff 10%) }
+    }
+  </style>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Coyote",
+    "applicationCategory": "AI / Knowledge Graph / Personal Analytics",
+    "operatingSystem": "Windows, macOS, Linux",
+    "description": "Coyote turns your browsing and annotations into a private, local knowledge graph you control.",
+    "softwareVersion": "0.4.0",
+    "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+    "downloadUrl": "https://github.com/captaininfo/coyote/releases/latest"
+  }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header>
+    <div class="container topbar" role="navigation" aria-label="Primary">
+      <div class="brand"><span class="paw" aria-hidden>🐾</span><span>Coyote</span></div>
+      <nav>
+        <a href="#how">How it works</a>
+        <a href="#privacy">Why privacy</a>
+        <a href="#use-cases">Use cases</a>
+        <a href="#get-involved">Get involved</a>
+      </nav>
+    </div>
+    <div class="container hero">
+      <h1>Put your online data to use. Locally.</h1>
+      <p>Coyote turns your browsing + annotations into a private knowledge graph you control. A dynamic PKM, built for personal data‑driven analysis and to be a 100% private backend for pairing with local LLMs and/or AI agents.</p>
+      <div class="cta" role="group" aria-label="Download Coyote v0.4.0">
+        <a class="btn primary" href="https://github.com/captaininfo/coyote/releases/latest/download/coyote-0.4.0.zip">Download v0.4.0 — Windows (.zip)</a>
+        <a class="btn secondary" href="https://github.com/captaininfo/coyote/releases/latest/download/coyote-0.4.0.tar.gz">Download v0.4.0 — macOS/Linux (.tar.gz)</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section id="how">
+      <div class="container">
+        <h2>How it works</h2>
+        <p class="lede">Three simple steps to turn everyday browsing into a rich, machine‑readable personal knowledge graph.</p>
+        <div class="grid cols-3" style="margin-top:1rem">
+          <article class="card">
+            <h3>1) Capture</h3>
+            <p>Log searches, pages, and annotations automatically via the Coyote browser extension and Hypothes.is integration — with more platforms planned. You stay in control; capture is transparent and local.</p>
+          </article>
+          <article class="card">
+            <h3>2) Understand</h3>
+            <p>Coyote builds a detailed, time‑stamped semantic record structured with <strong>Wikidata‑aligned</strong> entities and relationships. The PKG lives on your device, backed by open‑source <strong>Neo4j</strong>. Coyote never phones home.</p>
+          </article>
+          <article class="card">
+            <h3>3) Research &amp; Model</h3>
+            <p>Query, visualize, and analyze your PKG to model interests and lines of inquiry — or use it as a private backend for <strong>local LLMs</strong> and agent workflows (GraphRAG, RAG, and more).</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="privacy">
+      <div class="container">
+        <h2>The urgency of privacy in an AI age</h2>
+        <p class="lede">AI thrives on personal context — but your context shouldn’t leak. Coyote’s default is local‑first and user‑controlled, so experimentation doesn’t trade away your data rights.</p>
+        <div class="grid">
+          <article class="card">
+            <h3>Local by design</h3>
+            <p>Your data is processed and stored on your machine. No accounts required. No telemetry. No surprise cloud bills.</p>
+          </article>
+          <article class="card">
+            <h3>Transparent &amp; inspectable</h3>
+            <p>Open‑source code and a graph you can inspect. Trust comes from clarity — not black boxes.</p>
+          </article>
+          <article class="card">
+            <h3>Composable private AI</h3>
+            <p>Pair your PKG with local LLMs/agents for private assistants that actually know you — without sending data away.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="use-cases">
+      <div class="container">
+        <h2>Use cases</h2>
+        <div class="badges" aria-label="Example use cases">
+          <span class="badge">Education</span>
+          <span class="badge">PKM</span>
+          <span class="badge">Quantified Self</span>
+          <span class="badge">LLM RAG</span>
+          <span class="badge">Open Recognition</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="get-involved">
+      <div class="container">
+        <h2>Get involved</h2>
+        <div class="grid cols-3" style="margin-top:1rem">
+          <a class="card linkcard" href="https://github.com/captaininfo/coyote/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22">
+            <div class="title">Good First Issues <span aria-hidden>→</span></div>
+            <p>Jump in with well‑scoped starter tasks.</p>
+          </a>
+          <a class="card linkcard" href="https://github.com/captaininfo/coyote/projects">
+            <div class="title">Roadmap <span aria-hidden>→</span></div>
+            <p>Track the MVP and upcoming milestones.</p>
+          </a>
+          <a class="card linkcard" href="mailto:justinmason.mlis@gmail.com?subject=Coyote%20workshops">
+            <div class="title">Workshops <span aria-hidden>→</span></div>
+            <p>Live walkthroughs for setup, GraphRAG, and privacy‑first workflows.</p>
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <small>© <span id="y"></span> Coyote. Code: <a href="https://www.gnu.org/licenses/gpl-3.0.en.html">GPLv3</a> • Docs: <a href="https://creativecommons.org/licenses/by/4.0/">CC‑BY 4.0</a> • <a href="https://github.com/captaininfo/coyote">GitHub</a> • <a href="mailto:justinmason.mlis@gmail.com">Contact</a></small>
+    </div>
+  </footer>
+
+  <script>document.getElementById('y').textContent = new Date().getFullYear()</script>
+</body>
+</html>

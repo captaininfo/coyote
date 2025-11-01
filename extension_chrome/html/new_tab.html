@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coyote New Tab</title>
+    <link rel="stylesheet" type="text/css" href="../css/new_tab.css">
+</head>
+<body>
+    <div class="container">
+
+        <header>
+            <h1>Welcome to Coyote</h1>
+            <p>Define your purpose, add keywords, and explore.</p>
+        </header>
+        <p>&nbsp;</p>
+        <section class="search-setup">
+            <div class="purpose-of-search">
+                <label for="purposeInput">Purpose of search:</label>
+                <p>Helps Coyote connect searches to your goals.</p>
+                <input type="text" id="purposeInput" placeholder="e.g., Plan trip to Glacier National Park">
+                <p>&nbsp;</p>
+                <div class="recent-purposes">
+                    <!--<h2>Recent</h2>-->
+                    <label for="recent-purposes">Recent</label>
+                    <p>Your recent purposes will appear here for quick reuse.</p>
+                    <ul id="recentPurposesList">
+                        <!-- Recent purposes will be populated here by the script -->
+                    </ul>
+                </div>
+            </div>
+            <p>&nbsp;</p>
+            <div class="search-terms">
+                <label for="searchTermsInput">Search Terms:</label>
+                <input type="text" id="searchTermsInput" placeholder="Enter keywords or a full question...">
+            </div>
+            
+            <button id="searchButton" disabled>Search</button>
+        </section>
+        <!--<img alt="Friendly coyote" src="../images/coyote_container_image2.png" height="200">-->
+    </div>
+
+    <script src="../js/new_tab.js"></script>
+</body>
+</html>

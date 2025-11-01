@@ -60,7 +60,7 @@ services:
   coyote_app:
     # Build the local app image from the source in ../../Coyote_v2 and tag it as coyote:latest
     # Once Coyote is launched, pull the published image from ghcr.io/captaininfo/coyote:latest
-    image: ghcr.io/captaininfo/coyote:latest
+    image: ghcr.io/captaininfo/coyote-core:latest
     profiles: ["core"]
     ports:
       - "${COYOTE_PORT-5000}:5000"
