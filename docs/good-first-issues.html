@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Coyote — Good First Issues</title>
+  <link rel="stylesheet" href="assets/css/site.css">
+  <style>
+    .tag{display:inline-block;background:#e5e7eb;color:#374151;border-radius:999px;font-size:.75rem;padding:.15rem .5rem}
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header>
+    <div class="container topbar" role="navigation" aria-label="Primary">
+      <div class="brand"><span class="paw" aria-hidden>🐾</span><span>Coyote</span></div>
+      <nav>
+        <a href="index.html#how">How it works</a>
+        <a href="index.html#privacy">Why privacy</a>
+        <a href="index.html#use-cases">Use cases</a>
+        <a href="index.html#get-involved">Get involved</a>
+      </nav>
+    </div>
+    <div class="container hero">
+      <h1>Good First Issues</h1>
+      <p class="lede">Jump in with well-scoped starter tasks. Each card includes why it matters, steps, and a clear Definition of Done.</p>
+      <div class="cta" role="group">
+        <a class="btn primary" href="https://github.com/captaininfo/coyote/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22" target="_blank" rel="noopener">View live issues on GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section>
+      <div class="container">
+        <h2>How we label &amp; scope</h2>
+        <ul class="lede" style="padding-left:1rem">
+          <li><strong>Components:</strong> <code>component:nlp</code>, <code>component:ingest</code>, <code>component:graph</code>, <code>component:ui</code>, <code>docs</code>.</li>
+          <li><strong>Difficulty:</strong> <code>good first issue</code> (≤2 hours) or <code>help wanted</code> (½–2 days).</li>
+          <li><strong>Every issue includes:</strong> repro steps, acceptance criteria, file paths, and a short test plan.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <div class="container">
+        <div class="grid cols-3" style="margin-top:1rem">
+          <!-- Copy-safe cards (no renames; scoped work) -->
+          <article class="card">
+            <h3>Docs: 90-second “happy path”</h3>
+            <p><strong>Why:</strong> Faster setup → more installs.</p>
+            <ol>
+              <li>Add 3 screenshots (launch UI, load extension, run Neo4j query).</li>
+              <li>Insert numbered list in <code>README.md</code> under Quick Start.</li>
+              <li>Link to troubleshooting page.</li>
+            </ol>
+            <p><strong>DoD:</strong> Section renders; links work; images &lt;300KB.</p>
+          </article>
+
+          <article class="card">
+            <h3>Docs: GHCR “unauthorized” troubleshooting</h3>
+            <p><strong>Why:</strong> Common first-run blocker.</p>
+            <ol>
+              <li>Create <code>docs/troubleshooting.md</code> entry on GHCR login.</li>
+              <li>Add CLI snippet to authenticate and retry pull.</li>
+              <li>Link from README Quick Start.</li>
+            </ol>
+            <p><strong>DoD:</strong> Steps verified on Win/macOS/Linux; anchors updated.</p>
+          </article>
+
+          <article class="card">
+            <h3>Examples: Starter Cypher queries</h3>
+            <p><strong>Why:</strong> Instant success in Neo4j.</p>
+            <ol>
+              <li>Add <code>/examples/cypher/starter.cypher</code> with 6 queries.</li>
+              <li>Reference from README and Quick Start.</li>
+            </ol>
+            <p><strong>DoD:</strong> Queries run on demo data.</p>
+          </article>
+
+          <article class="card">
+            <h3>NLP: <code>phrases.yml</code> wired to <code>text_topic_analysis.py</code></h3>
+            <p><strong>Why:</strong> Stable multi-word expressions improve “aboutness.”</p>
+            <ol>
+              <li>Create <code>config/phrases.yml</code> with seed entries.</li>
+              <li>Merge matched phrases before TF-IDF (no renames).</li>
+              <li>Add unit tests + eval notebook.</li>
+            </ol>
+            <p><strong>DoD:</strong> Phrases appear as single terms; tests green.</p>
+          </article>
+
+          <article class="card">
+            <h3>NLP: Configurable TF-IDF threshold</h3>
+            <p><strong>Why:</strong> Reduce noise &amp; storage.</p>
+            <ol>
+              <li>Add <code>min_topic_score</code> to <code>config.json</code>.</li>
+              <li>Filter below threshold before writing to SQLite/Neo4j.</li>
+              <li>Log filtered counts at DEBUG (no prints).</li>
+            </ol>
+            <p><strong>DoD:</strong> Threshold respected; docs updated.</p>
+          </article>
+
+          <article class="card">
+            <h3>Ingest: Watched folder scaffold</h3>
+            <p><strong>Why:</strong> Zero-auth path boosts adoption.</p>
+            <ol>
+              <li>Create <code>data_sources/watched_folder.py</code> with <code>watchdog</code>.</li>
+              <li>Parse <code>.md</code>/<code>.txt</code>/<code>.html</code>; write events via current API.</li>
+              <li>Doc: “Point Coyote at a folder.”</li>
+            </ol>
+            <p><strong>DoD:</strong> Drops → Document nodes in ~10s on all OSes.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <small>© <span id="y"></span> Coyote. Code: <a href="https://www.gnu.org/licenses/gpl-3.0.en.html">GPLv3</a> • Docs: <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY 4.0</a> • <a href="https://github.com/captaininfo/coyote">GitHub</a> • <a href="mailto:justinmason.mlis@gmail.com">Contact</a></small>
+    </div>
+  </footer>
+  <script>document.getElementById('y').textContent = new Date().getFullYear()</script>
+</body>
+</html>
