@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Coyote Roadmap</title>
+    <style>
+    :root{--fg:#1f2937;--muted:#6b7280;--card:#f8fafc;--border:#e5e7eb;--now:#16a34a;--next:#2563eb;--later:#a855f7}
+    #roadmap-hero{padding-block:2rem 1rem}.lede{color:var(--muted)}
+    .toc{display:flex;gap:.75rem;margin-top:.5rem;flex-wrap:wrap}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;margin-top:1rem}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1rem}
+    .tag{display:inline-block;background:#e5e7eb;color:#374151;border-radius:999px;font-size:.75rem;padding:.15rem .5rem}
+    .stage-badge{display:inline-block;color:#fff;border-radius:999px;font-size:.8rem;font-weight:700;padding:.2rem .6rem;vertical-align:middle}
+    .stage-badge.now{background:var(--now)}.stage-badge.next{background:var(--next)}.stage-badge.later{background:var(--later)}
+    .plan{margin:.25rem 0 .5rem 1rem}.plan li{margin:.25rem 0}.contrib{color:var(--muted);font-size:.95rem}
+  </style>
+</head>
+<body>
+  <header class="container">
+    <nav><a href="index.html">Home</a> · <a href="roadmap.html">Roadmap</a> · <a href="good-first-issues.html">Good first issues</a></nav>
+  </header>
+  <!--
+    Coyote Roadmap
+    - Static, accessible markup for GitHub Pages (works with default Jekyll themes).
+    - Uses <details> for collapsible sections (no JS), and simple "stage" badges.
+    - Keep item IDs stable so we can deep-link from issues/discussions.
+  -->
+
+  <section id="roadmap-hero">
+    <div class="container">
+      <h1>Coyote Roadmap</h1>
+      <p class="lede">
+        Transparent by design. This page outlines what we’re building <em>now</em>, <em>next</em>, and <em>later</em> —
+        with clear outcomes, milestones, and contribution paths that a solo developer can execute.
+      </p>
+      <nav aria-label="Roadmap quick links" class="toc">
+        <a href="#now">Now</a>
+        <a href="#next">Next</a>
+        <a href="#later">Later</a>
+      </nav>
+    </div>
+  </section>
+
+  <section id="now">
+    <div class="container">
+      <h2><span class="stage-badge now">Now</span> In progress</h2>
+
+      <div class="grid roadmap-grid">
+
+        <!-- TF-IDF tuning -->
+        <article class="card roadmap-item" id="tf-idf-tuning">
+          <header>
+            <h3>Fine-tune TF-IDF scoring</h3>
+            <span class="tag nlp">NLP</span> <span class="tag quality">Quality</span>
+          </header>
+          <p class="why"><strong>Why:</strong> More meaningful topic ranking improves “aboutness,” reduces noise, and sets a reliable baseline before adding embeddings.</p>
+          <ul class="plan">
+            <li><strong>Approach:</strong> Lemmatization + better stoplists; per-domain weighting; time-decay option; evaluate against a small labeled set.</li>
+            <li><strong>Milestones:</strong> M1 calibrate stopwords; M2 implement per-context TF-IDF (page vs. session); M3 add tests + docs with examples.</li>
+            <li><strong>Definition of Done:</strong> ≥20% reduction in low-value topics vs. baseline on test corpus; reproducible notebook + docs.</li>
+          </ul>
+          <p class="contrib"><strong>Contribute:</strong> <code>component:nlp</code> • <code>good first issue</code> • add sample queries to <code>/examples</code>.</p>
+        </article>
+
+        <!-- Phrase detection -->
+        <article class="card roadmap-item" id="phrase-detection">
+          <header>
+            <h3>Improve phrase detection (multi-word expressions)</h3>
+            <span class="tag nlp">NLP</span>
+          </header>
+          <p class="why"><strong>Why:</strong> Phrases like “open recognition” or “knowledge graph” carry meaning lost in unigram tokenization.</p>
+          <ul class="plan">
+            <li><strong>Approach:</strong> spaCy noun-chunking + phrase merger (configurable), optional RAKE/YAKE, PMI bigram/trigram fallback; align to Wikidata surface forms when available.</li>
+            <li><strong>Milestones:</strong> M1 noun-chunks in pipeline; M2 phrase whitelist/blacklist config; M3 evaluation notebook + examples.</li>
+            <li><strong>Definition of Done:</strong> Phrases appear as first-class topics/entities with stable IDs and are queryable in Neo4j.</li>
+          </ul>
+          <p class="contrib"><strong>Contribute:</strong> propose a <code>phrases.yml</code> config; add tests; update docs.</p>
+        </article>
+
+        <!-- Thresholding -->
+        <article class="card roadmap-item" id="topic-entity-thresholds">
+          <header>
+            <h3>Thresholds for topics &amp; entities</h3>
+            <span class="tag nlp">NLP</span> <span class="tag data">Data Hygiene</span>
+          </header>
+          <p class="why"><strong>Why:</strong> Recording everything increases storage and noise. Thresholds keep the graph lean and more interpretable.</p>
+          <ul class="plan">
+            <li><strong>Approach:</strong> Configurable TF-IDF and score cutoffs per context (page/session/global), with audit logs of filtered items.</li>
+            <li><strong>Milestones:</strong> M1 global cutoffs; M2 per-context overrides; M3 UI/CLI to preview what would be kept vs dropped.</li>
+            <li><strong>Definition of Done:</strong> Thresholding reduces nodes/edges by ≥25% while preserving top-K topics per page.</li>
+          </ul>
+          <p class="contrib"><strong>Contribute:</strong> add CLI flag + docs; create “before/after” graph screenshots for README.</p>
+        </article>
+
+        <!-- Watched folder ingestion -->
+        <article class="card roadmap-item" id="watched-folder">
+          <header>
+            <h3>Watched folder ingestion</h3>
+            <span class="tag ingest">Ingest</span> <span class="tag pkm">PKM</span>
+          </header>
+          <p class="why"><strong>Why:</strong> Many users keep notes or exports locally. A “drop files here” folder makes adoption simple without OAuth.</p>
+          <ul class="plan">
+            <li><strong>Approach:</strong> File watcher (e.g., watchdog) for a user-chosen directory; parse <code>.md</code>/<code>.txt</code>/<code>.html</code> first; PDF later.</li>
+            <li><strong>Milestones:</strong> M1 detect &amp; hash new/changed files; M2 extract text + metadata; M3 write events → SQLite → Neo4j.</li>
+            <li><strong>Definition of Done:</strong> Files dropped in the folder appear as Webpage/Document nodes within 10s and are searchable by topic/entity.</li>
+          </ul>
+          <p class="contrib"><strong>Contribute:</strong> schema note for Document nodes; example notebook; error handling for large files.</p>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <section id="next">
+    <div class="container">
+      <h2><span class="stage-badge next">Next</span> Planned</h2>
+
+      <div class="grid roadmap-grid">
+
+        <!-- Vectorization -->
+        <article class="card roadmap-item" id="vectorization">
+          <header>
+            <h3>Vectorize input &amp; output data (embeddings)</h3>
+            <span class="tag nlp">NLP</span> <span class="tag ai">AI</span>
+          </header>
+          <p class="why"><strong>Why:</strong> Embeddings let us correlate what you <em>consume</em> (inputs) with what you <em>produce</em> (outputs), enabling similarity search and input→output tracing while treating the mind as a black box.</p>
+          <ul class="plan">
+            <li><strong>Approach:</strong> Local embedding models only (configurable); chunk &amp; embed inputs (visited pages, annotations) and outputs (notes, drafts). Store vectors as properties plus a sidecar ANN index (e.g., FAISS/HNSW). Keep metadata in SQLite/Neo4j.</li>
+            <li><strong>Milestones:</strong> M1 input embeddings MVP; M2 output embeddings MVP; M3 similarity queries (top-k) + correlation report; M4 optional graph edges like <code>:INFLUENCED_BY</code> with score.</li>
+            <li><strong>Definition of Done:</strong> Demo notebook: “show the five inputs most similar to this output,” all local, <em>no cloud calls</em>.</li>
+          </ul>
+          <p class="contrib"><strong>Contribute:</strong> add config schema; benchmarking notebook; UX copy for “explain the match.”</p>
+        </article>
+
+        <!-- Integrations -->
+        <article class="card roadmap-item" id="integrations">
+          <header>
+            <h3>Platform integrations</h3>
+            <span class="tag ingest">Ingest</span> <span class="tag ecosystem">Ecosystem</span>
+          </header>
+          <p class="why"><strong>Why:</strong> Meet users where their data already lives. Start with low-friction paths before OAuth/API complexity.</p>
+          <ul class="plan">
+            <li><strong>YouTube:</strong> MVP via exports (Takeout/watch-history JSON) → title, channel, timestamps, topics/entities; API optional later.</li>
+            <li><strong>Obsidian:</strong> Use the watched folder first (Markdown); optional community plugin later for richer metadata.</li>
+            <li><strong>Google Drive (Docs/Sheets/Slides):</strong> Begin with manual exports to watched folder; consider Drive API once auth UX is clear.</li>
+            <li><strong>X (Twitter):</strong> Start with archive import (user export ZIP); live API integration is a later, optional step.</li>
+            <li><strong>Reddit:</strong> Start with personal data request export; map posts/comments to events with topics/entities.</li>
+            <li><strong>Other:</strong> Add connectors as separate modules in <code>data_sources/</code> to keep Coyote modular.</li>
+          </ul>
+          <p class="contrib"><strong>Contribute:</strong> draft import specs; add sample anonymized exports for tests; write per-source README files.</p>
+        </article>
+
+        <!-- Prompt hardening -->
+        <article class="card roadmap-item" id="prompt-hardening">
+          <header>
+            <h3>Prompt hardening (for optional AI features)</h3>
+            <span class="tag ai">AI</span> <span class="tag security">Security</span>
+          </header>
+          <p class="why"><strong>Why:</strong> If/when users connect local LLMs/agents, we need patterns that resist prompt injection, ensure schema-valid outputs, and never leak private data.</p>
+          <ul class="plan">
+            <li><strong>Approach:</strong> System prompts that describe the local-only policy; JSON schema enforcement; tool/result whitelisting; redaction of sensitive fields before any model call.</li>
+            <li><strong>Milestones:</strong> M1 shared prompt library; M2 JSON-only responses + validators; M3 unit tests with adversarial cases; M4 docs on safe patterns.</li>
+            <li><strong>Definition of Done:</strong> Example flows pass adversarial tests and keep all processing local by default.</li>
+          </ul>
+          <p class="contrib"><strong>Contribute:</strong> add adversarial test cases; propose guardrail patterns; update docs with “secure by default” checklist.</p>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <section id="later">
+    <div class="container">
+      <h2><span class="stage-badge later">Later</span> On the horizon</h2>
+
+      <div class="grid roadmap-grid">
+
+        <!-- Drive API & richer connectors -->
+        <article class="card roadmap-item" id="richer-connectors">
+          <header>
+            <h3>Richer API connectors (Drive, YouTube, Reddit, etc.)</h3>
+            <span class="tag ingest">Ingest</span>
+          </header>
+          <p class="why"><strong>Why:</strong> After proving value with exports and watched folders, full APIs unlock incremental sync and richer metadata.</p>
+          <ul class="plan">
+            <li><strong>Approach:</strong> OAuth flows gated behind clear consent UI; incremental sync; back-off &amp; quotas; robust error handling.</li>
+            <li><strong>Definition of Done:</strong> Reliable sync for at least one major provider with offline cache and resumable progress.</li>
+          </ul>
+        </article>
+
+        <!-- Embedding-driven UI -->
+        <article class="card roadmap-item" id="embedding-ui">
+          <header>
+            <h3>Embedding-driven “Explain my week” views</h3>
+            <span class="tag ai">AI</span> <span class="tag ui">UI</span>
+          </header>
+          <p class="why"><strong>Why:</strong> Turn similarity/search into digestible insights: clusters, shifts in topics, and input→output narratives.</p>
+          <ul class="plan">
+            <li><strong>Approach:</strong> Lightweight, local summaries over top-K items; privacy-first annotations; export to Markdown.</li>
+            <li><strong>Definition of Done:</strong> One screen and one export that a user can run weekly without config.</li>
+          </ul>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <section id="contributing">
+    <div class="container">
+      <h2>Contributing</h2>
+      <p>
+        We keep issues labeled by component (<code>component:nlp</code>, <code>component:ingest</code>, <code>component:graph</code>, <code>component:ui</code>, <code>docs</code>)
+        and difficulty (<code>good first issue</code>, <code>help wanted</code>). Start with docs or tests, then pick a scoped module in <code>data_sources/</code> or the NLP pipeline.
+      </p>
+      <ul class="bullets">
+        <li><strong>Definition of Done:</strong> tests passing, docs updated, reproducible steps, privacy notes included.</li>
+        <li><strong>Ethos:</strong> local-first, no phoning home, transparency over black boxes.</li>
+      </ul>
+    </div>
+  </section>
+  <footer class="container" style="margin-block:3rem 2rem;color:#6b7280;font-size:.9rem">
+    GPLv3 • Docs CC-BY • Coyote is local-first and privacy-first.
+  </footer>
+</body>
+</html>
