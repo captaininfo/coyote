@@ -40,8 +40,11 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / f'coyote_ui_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
 
 # Configure logging with both file and console output
+# Use COYOTE_LOG_LEVEL env var (default: INFO) to control verbosity
+_log_level_name = os.environ.get("COYOTE_LOG_LEVEL", "INFO").upper()
+_log_level = getattr(logging, _log_level_name, logging.INFO)
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=_log_level,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.FileHandler(LOG_FILE),
@@ -51,9 +54,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info(f"Logging to file: {LOG_FILE}")
 
-app = Flask(__name__, 
+app = Flask(__name__,
            template_folder=str(template_dir),
            static_folder=str(static_dir))
+
+# Limit request size (16MB default - generous for local-first tool)
+app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('COYOTE_MAX_REQUEST_MB', '16')) * 1024 * 1024
+
+@app.errorhandler(413)
+def handle_request_too_large(e):
+    """Return JSON error for requests exceeding MAX_CONTENT_LENGTH."""
+    return jsonify({'status': 'error', 'message': 'Request too large'}), 413
+
+def _validate_string_input(value: str, max_length: int = 50000, field_name: str = "input") -> str:
+    """Validate and truncate string input."""
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+    if len(value) > max_length:
+        logger.warning(f"{field_name} truncated from {len(value)} to {max_length} chars")
+        return value[:max_length]
+    return value
 
 try:
     from shared.nl2cypher import prompt_text, schema_for_prompts

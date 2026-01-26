@@ -16,7 +16,8 @@ services:
     environment:
       - NEO4J_AUTH=${NEO4J_USERNAME-neo4j}/${NEO4J_PASSWORD-password}
       - NEO4J_PLUGINS=["apoc"]
-      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      # Restrict APOC to only procedures Coyote uses (apoc.meta.schema, apoc.convert.fromJsonList)
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.meta.*,apoc.convert.*
     volumes:
       - ${NEO4J_DATA_DIR-./volumes/neo4j}:/data
     healthcheck:
