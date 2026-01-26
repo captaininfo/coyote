@@ -1,2 +1,5 @@
-Flask>=3.0
-requests>=2.31
+# Coyote UI Server Dependencies
+# Pinned for reproducibility
+
+Flask==3.0.2
+requests==2.32.3
