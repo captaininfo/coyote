@@ -113,6 +113,8 @@ cypher_prompt = ChatPromptTemplate.from_template(CUSTOM_PROMPT)\
 cypher_gen = cypher_prompt | llm | StrOutputParser()
 USE_LC_NL2CYPHER = os.getenv("USE_LC_NL2CYPHER", "0") == "1"
 if USE_LC_NL2CYPHER:
+    logger.warning("USE_LC_NL2CYPHER=1: Using LangChain GraphCypherQAChain with allow_dangerous_requests=True. "
+                   "This bypasses read-only Cypher validation. Only use in trusted environments.")
     cypher_chain = GraphCypherQAChain.from_llm(
         llm=llm,
         graph=neo4j_graph,

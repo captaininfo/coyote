@@ -701,9 +701,9 @@ def _apply_creds_inside_core(uri_container: str, user: str, pwd: str) -> bool:
         return False
     py = f"""
 from coyote.utils.config_manager import store_setting
-store_setting('neo4j_uri', '{uri_container}', encrypt=False)
-store_setting('neo4j_username', '{user}', encrypt=False)
-store_setting('neo4j_password', '{pwd}', encrypt=True)
+store_setting('neo4j_uri', {json.dumps(uri_container)}, encrypt=False)
+store_setting('neo4j_username', {json.dumps(user)}, encrypt=False)
+store_setting('neo4j_password', {json.dumps(pwd)}, encrypt=True)
 print('saved')
 """
     try:
@@ -1242,7 +1242,7 @@ if __name__ == '__main__':
     logger.info("Checking for orphaned containers...")
     try:
         run_compose_command(['ps', '--format', 'json'], timeout=5)
-    except:
-        pass
+    except Exception as e:
+        logger.debug("Pre-startup container check skipped: %s", e)
     
     app.run(host='0.0.0.0', port=8080, debug=True)
