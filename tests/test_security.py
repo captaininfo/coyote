@@ -62,6 +62,21 @@ class TestIsReadOnly:
     def test_blocks_db_index_calls(self):
         assert is_read_only("CALL db.index.fulltext.createNodeIndex('idx', ['Node'], ['prop'])") is False
 
+    def test_blocks_alter(self):
+        assert is_read_only("ALTER DATABASE neo4j SET ACCESS READ ONLY") is False
+
+    def test_blocks_alter_case_insensitive(self):
+        assert is_read_only("alter user foo SET PASSWORD 'bar'") is False
+
+    def test_blocks_grant(self):
+        assert is_read_only("GRANT ROLE admin TO user1") is False
+
+    def test_blocks_revoke(self):
+        assert is_read_only("REVOKE ROLE admin FROM user1") is False
+
+    def test_blocks_apoc_trigger(self):
+        assert is_read_only("CALL apoc.trigger.add('myTrigger', 'RETURN 1', {})") is False
+
     # --- Should ALLOW these (return True) ---
 
     def test_allows_simple_match_return(self):
@@ -149,3 +164,18 @@ class TestLooksLikeCypher:
 
     def test_case_insensitive(self):
         assert looks_like_cypher("match (n) return n") is True
+
+
+class TestSharedFileSync:
+    """Ensure shared/nl2cypher.py and images/agent/app/shared/nl2cypher.py stay in sync."""
+
+    def test_nl2cypher_copies_are_identical(self):
+        root = Path(__file__).parent.parent
+        canonical = root / "shared" / "nl2cypher.py"
+        agent_copy = root / "images" / "agent" / "app" / "shared" / "nl2cypher.py"
+        assert canonical.exists(), f"Canonical file missing: {canonical}"
+        assert agent_copy.exists(), f"Agent copy missing: {agent_copy}"
+        assert canonical.read_text() == agent_copy.read_text(), (
+            "shared/nl2cypher.py and images/agent/app/shared/nl2cypher.py have diverged. "
+            "Edit the canonical copy (shared/nl2cypher.py) and run: make sync-shared"
+        )

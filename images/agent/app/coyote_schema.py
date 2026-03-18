@@ -1,4 +1,5 @@
 from neo4j import GraphDatabase
+import json
 import logging
 
 log = logging.getLogger("coyote.agent")
@@ -10,4 +11,4 @@ def get_schema(uri:str, user:str, pwd:str) -> str:
         # APOC call is simplest
         res = s.run("CALL apoc.meta.schema() YIELD value RETURN value").single()
     driver.close()
-    return str(res["value"])
+    return json.dumps(res["value"], indent=2, default=str)

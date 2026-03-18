@@ -1,6 +1,6 @@
-# Dockerfile
+# Dockerfile for Coyote Core
+# Build context should be images/core/core_analysis/
 
-# Use Python 3.11-slim as the base image
 FROM python:3.11-slim-bullseye
 
 # Set environment variables
@@ -15,19 +15,21 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements file and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
+# Copy requirements first for better layer caching
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt \
     && pip install --no-cache-dir \
        https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl \
     && python -m spacy validate
 
+# Copy the coyote package
+COPY coyote/ /app/coyote/
 
-# Copy the rest of the application code
-COPY . .
+# Create data directories
+RUN mkdir -p /app/data/logs
 
-# Expose necessary ports
+# Expose Flask port
 EXPOSE 5000
 
-# Define the entry point
+# Run the server
 CMD ["python", "-m", "coyote.coyote_server"]

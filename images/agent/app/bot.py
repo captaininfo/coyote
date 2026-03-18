@@ -31,6 +31,7 @@ from shared.nl2cypher import (
     strip_fences_or_json,
     looks_like_cypher,
 )
+from shared.time_utils import days_from_text
 
 load_dotenv(".env")
 
@@ -298,24 +299,6 @@ _WRITE_BLOCKLIST = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP)\b
 def _is_read_only(cy: str) -> bool:
     return is_read_only(cy)
 
-def _days_from_text(text: str) -> int:
-    t = text.lower()
-    # numeric: past 3 days / past 2 weeks / last 6 months
-    m = re.search(r"(past|last)\s+(\d+)\s+(day|week|month|year)s?", t)
-    if m:
-        n = int(m.group(2))
-        unit = m.group(3)
-        return {"day": 1, "week": 7, "month": 30, "year": 365}[unit] * n
-    # common phrases
-    if "today" in t: return 1
-    if "yesterday" in t: return 2
-    if "this week" in t or "past week" in t: return 7
-    if "last week" in t: return 7
-    if "this month" in t or "past month" in t: return 30
-    if "last month" in t: return 30
-    if "this year" in t or "past year" in t: return 365
-    return 7  # sensible default
-
 def _extract_topic(text: str) -> str | None:
     # quoted topic first: "llms", 'graph theory'
     m = re.search(r"['\"]([^'\"]{3,})['\"]", text)
@@ -362,7 +345,7 @@ def _format_rows(rows: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 def _run_canned(question: str) -> str:
-    days = _days_from_text(question)
+    days = days_from_text(question)
     topic = _extract_topic(question)
     want_count = any(w in question.lower() for w in ["how many", "count", "number of"])
 

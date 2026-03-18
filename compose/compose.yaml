@@ -59,9 +59,12 @@ services:
               #capabilities: [gpu]
 
   coyote_app:
-    # Build the local app image from the source in ../../Coyote_v2 and tag it as coyote:latest
-    # Once Coyote is launched, pull the published image from ghcr.io/captaininfo/coyote:latest
-    image: ghcr.io/captaininfo/coyote-core:latest
+    # Local dev build from images/core/core_analysis/
+    # For production: replace with image: ghcr.io/captaininfo/coyote-core:latest
+    build:
+      context: ../images/core/core_analysis
+      dockerfile: ../Dockerfile
+    image: coyote-core:local
     profiles: ["core"]
     ports:
       - "${COYOTE_PORT-5000}:5000"
@@ -71,6 +74,8 @@ services:
       - NEO4J_USERNAME=${NEO4J_USERNAME-neo4j}
       - NEO4J_PASSWORD=${NEO4J_PASSWORD-password}
       - COYOTE_DATA_DIR=/app/data
+      - COYOTE_LOG_LEVEL=${COYOTE_LOG_LEVEL-INFO}
+      - FLASK_DEBUG=${FLASK_DEBUG-0}
     volumes:
       - ${COYOTE_USER_DATA-./volumes/coyote}:/app/data
     healthcheck:
@@ -85,11 +90,11 @@ services:
 
   bot:
     # Image built from images/agent/bot.Dockerfile and published to GHCR
-    image: ${BOT_IMAGE-ghcr.io/captaininfo/coyote-bot:0.4.0}
-    # For devs: comment the image line above and re-enable this block:
-    # build:
-    #   context: ../images/agent
-    #   dockerfile: bot.Dockerfile
+    # For production: uncomment the image line and comment the build block:
+    # image: ${BOT_IMAGE-ghcr.io/captaininfo/coyote-bot:0.4.0}
+    build:
+      context: ../images/agent
+      dockerfile: bot.Dockerfile
     profiles: ["agent"]
     ports:
       - "${BOT_PORT-8501}:8501"

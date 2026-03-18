@@ -30,6 +30,7 @@ from shared.nl2cypher import (
     prompt_text,
     schema_for_prompts
 )
+from shared.time_utils import days_from_text
 
 log = logging.getLogger("coyote.agent")
 
@@ -114,7 +115,8 @@ def load_llm(llm_name: str, logger=BaseLogger(), config={}):
 def configure_llm_only_chain(llm):
     # LLM only response
     template = """
-    You are a helpful assistant that helps a support agent with answering programming questions.
+    You are a personal research assistant for the Coyote learning system.
+    You help users reflect on their browsing and learning activity.
     If you don't know the answer, just say that you don't know, you must not make up an answer.
     """
     system_message_prompt = SystemMessagePromptTemplate.from_template(template)
@@ -159,17 +161,20 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
         HumanMessagePromptTemplate.from_template(general_user_template),
     ])
 
-    # TEST: Verify prompt template works
-    log.info("🧪 Testing prompt template expansion...")
+    # Verify prompt template works
     try:
-        test_expansion = qa_prompt.format_messages(
-            summaries="TEST CONTEXT HERE",
-            question="test question"
-        )
-        log.info("✅ Prompt template expands correctly")
-        log.debug("Template system message preview: %s", str(test_expansion[0])[:200])
+        qa_prompt.format_messages(summaries="TEST", question="test")
+        log.debug("Prompt template validated")
     except Exception as e:
-        log.error("❌ Prompt template expansion FAILED: %s", e)
+        log.error("Prompt template expansion failed: %s", e)
+
+    # Tier labels for transparency — prepended to context so the LLM knows the source
+    TIER_LABELS = {
+        "1-topics": "[Source: Topic/keyword match from your browsing data]",
+        "1-searches": "[Source: Your recent search history]",
+        "2-cypher": "[Source: Analytical query over your browsing data]",
+        "3-fallback": "[Source: Recent browsing activity (no specific match found)]",
+    }
 
     graph = Neo4jGraph(
         url=embeddings_store_url, username=username, password=password, refresh_schema=False
@@ -198,49 +203,20 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
         "couple","few","several","many","dozen"
     }
 
-    def _days_from_text(text: str) -> int:
-        """Extract time window from natural language with spelled number support"""
-        t = (text or "").lower()
-        
-        # Map spelled numbers to digits
-        num_words = {
-            "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-            "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-            "couple": 2, "few": 3
-        }
-        
-        # Try numeric pattern: "past 3 days"
-        m = re.search(r"(past|last)\s+(\d+)\s+(day|week|month|year)s?", t)
-        if m:
-            n = int(m.group(2))
-            unit = m.group(3)
-            return {"day": 1, "week": 7, "month": 30, "year": 365}[unit] * n
-        
-        # Try spelled-out numbers: "past three weeks"
-        for word, num in num_words.items():
-            m = re.search(rf"(past|last)\s+{word}\s+(day|week|month|year)s?", t)
-            if m:
-                unit = m.group(2)
-                return {"day": 1, "week": 7, "month": 30, "year": 365}[unit] * num
-        
-        # Common phrases
-        if "today" in t: return 1
-        if "yesterday" in t: return 2
-        if "this week" in t or "past week" in t: return 7
-        if "last week" in t: return 14
-        if "this month" in t or "past month" in t: return 30
-        if "last month" in t: return 30
-        if "this year" in t or "past year" in t: return 365
-        
-        return 90  # default
-
     def _terms(q: str) -> list[str]:
         """Extract search terms, filtering stop words"""
         quoted = re.findall(r'[""](.+?)[""]', (q or "").lower())
         if quoted:
             return [t.strip() for t in quoted if len(t.strip()) >= 3][:6]
         words = re.findall(r"[a-z0-9\-]{3,}", (q or "").lower())
-        return [w for w in words if w not in STOP][:6]
+        filtered = [w for w in words if w not in STOP]
+        # Expand hyphenated terms: "vibe-coding" also yields "vibe coding"
+        expanded = []
+        for w in filtered:
+            expanded.append(w)
+            if "-" in w:
+                expanded.append(w.replace("-", " "))
+        return expanded[:6]
 
     def _should_try_cypher(question: str) -> bool:
         """Detect if question needs Cypher generation (analytical queries)"""
@@ -284,7 +260,8 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
     WHERE size(terms) = 0 OR any(term IN terms WHERE
              any(t IN top_topics WHERE t.label CONTAINS term)
           OR toLower(coalesce(w.title,''))   CONTAINS term
-          OR toLower(coalesce(w.summary,'')) CONTAINS term)
+          OR toLower(coalesce(w.summary,'')) CONTAINS term
+          OR toLower(coalesce(w.url,''))     CONTAINS term)
     WITH w, top_topics,
          CASE WHEN size(top_topics) > 0
               THEN ' | topics: ' + reduce(s = '', t IN top_topics |
@@ -470,120 +447,70 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
             log.exception("TIER 3 (fallback) failed")
             return "∅"
 
-    def _build_context_hybrid(q: str) -> str:
+    def _build_context_hybrid(q: str) -> tuple[str, str]:
         """
-        Hybrid context builder with intelligent 3-tier fallback:
-        TIER 1: Topic-based GraphRAG (fast, works for most queries)
-        TIER 2: LLM-generated Cypher (for analytical queries)
-        TIER 3: Time-filtered list (for generic "show all" queries)
+        Hybrid context builder with intelligent 3-tier fallback.
+        Returns (context_str, tier_key) so callers know the source quality.
         """
-        days = _days_from_text(q)
+        days = days_from_text(q)
         terms = _terms(q)
 
-        log.info("📅 Parsed: days=%d, terms=%s", days, terms)
-        
+        log.info("Parsed query: days=%d, terms=%s", days, terms)
+
         # If user asks about searches, show recent searches first
         if re.search(r"\bsearch(ed|es|ing)?\b", q.lower()):
             ok, c = _try_tier1_searches(days)
             if ok:
-                log.debug("HYBRID: answered via TIER-1 (searches)")
-                return c
+                log.debug("Answered via TIER-1 (searches)")
+                return (c, "1-searches")
 
         # TIER 1: Try topic/term-based GraphRAG first (fastest)
         success, context = _try_tier1_graphrag(days, terms)
         if success:
-            log.debug("HYBRID: answered via TIER‑1")
+            log.info("TIER 1 context: %d chars", len(context))
+            return (context, "1-topics")
 
-            # 🚨 CRITICAL LOGGING - SEE WHAT WE'RE RETURNING
-            log.info("="*70)
-            log.info("📦 CONTEXT BEING RETURNED FROM _build_context_hybrid:")
-            log.info("   Length: %d characters", len(context))
-            log.info("   First 1000 chars:")
-            log.info("-"*70)
-            log.info("%s", context[:1000])
-            if len(context) > 1000:
-                log.info("   ... [%d more characters omitted]", len(context) - 1000)
-            log.info("="*70)
-
-            return context
-                
-        # If Tier-1 errored, do not lie with "∅": fall back to Tier-3
+        # If Tier-1 errored, fall back to Tier-3
         if success is None:
-            log.debug("HYBRID: Tier-1 errored; falling back to Tier-3")
-            return _try_tier3_fallback(days)
+            log.debug("Tier-1 errored; falling back to Tier-3")
+            return (_try_tier3_fallback(days), "3-fallback")
 
-        # If we had specific search terms, this was a topic query that genuinely found nothing
+        # Specific search terms found nothing
         if terms:
-            log.debug("TIER 1 found nothing for specific terms=%s; returning ∅", terms)
-            return "∅"
-        
+            log.debug("TIER 1 found nothing for terms=%s", terms)
+            return ("∅", "1-topics")
+
         # No search terms extracted. Check if this is an analytical query.
         if _should_try_cypher(q):
-            # TIER 2: Try Cypher generation for analytical/aggregate queries
             success, context = _try_tier2_cypher(q, days)
             if success:
-                log.info("📦 CONTEXT from TIER 2: length=%d", len(context))
-                return context
-            # Cypher failed, continue to TIER 3
-        
+                log.info("TIER 2 context: %d chars", len(context))
+                return (context, "2-cypher")
+
         # TIER 3: Fall back to time-filtered list
         fallback_context = _try_tier3_fallback(days)
-        log.info("📦 CONTEXT from TIER 3: length=%d", len(fallback_context))
-        return fallback_context
+        log.info("TIER 3 context: %d chars", len(fallback_context))
+        return (fallback_context, "3-fallback")
 
     # Build the chain
-    log.info("🔧 Constructing RAG chain...")
+    def _context_with_tier(q: str) -> str:
+        ctx, tier_key = _build_context_hybrid(q)
+        label = TIER_LABELS.get(tier_key, "")
+        return f"{label}\n\n{ctx}" if label else ctx
 
-    summaries_fn = RunnableLambda(lambda q: _build_context_hybrid(q))
+    summaries_fn = RunnableLambda(_context_with_tier)
 
-    # Add debug wrapper to see what's being passed
-    def debug_passthrough(x):
-        log.info("="*70)
-        log.info("🔍 INPUTS TO PARALLEL CHAIN:")
-        log.info("   Type: %s", type(x))
-        log.info("   Value: %s", str(x)[:200])
-        log.info("="*70)
-        return x
-    
-    debug_fn = RunnableLambda(debug_passthrough)
-    
-    # Add debug wrapper to see parallel outputs
-    def debug_parallel_output(d: dict):
-        log.info("="*70)
-        log.info("🔍 OUTPUT FROM PARALLEL CHAIN (going to prompt):")
-        for key, value in d.items():
-            value_str = str(value)
-            log.info("   %s: %s", key, value_str[:500])
-            if len(value_str) > 500:
-                log.info("      ... [+%d more chars]", len(value_str) - 500)
-        log.info("="*70)
-        return d
-    
-    debug_parallel_fn = RunnableLambda(debug_parallel_output)
-
-    # Construct chain with debug points
     chain = (
-        debug_fn  # Debug input
-        | RunnableParallel({
+        RunnableParallel({
             "summaries": summaries_fn,
             "question": RunnablePassthrough(),
         })
-        | debug_parallel_fn  # Debug parallel output
         | qa_prompt
         | llm
         | StrOutputParser()
     )
 
-    log.info("✅ RAG chain constructed")
-    
-    # TEST the chain immediately
-    log.info("🧪 Testing RAG chain with sample input...")
-    try:
-        test_result = chain.invoke("test question")
-        log.info("✅ Chain test successful, output: %s", str(test_result)[:100])
-    except Exception as e:
-        log.error("❌ Chain test FAILED: %s", e, exc_info=True)
-    
+    log.info("RAG chain constructed")
     return chain
 
 

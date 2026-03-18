@@ -1,0 +1,20 @@
+.PHONY: sync-shared test build-agent build-core build-all
+
+# Copy canonical shared modules into agent build context
+sync-shared:
+	cp shared/nl2cypher.py images/agent/app/shared/nl2cypher.py
+	@echo "Synced shared/nl2cypher.py -> images/agent/app/shared/nl2cypher.py"
+
+test:
+	python -m pytest tests/ -v
+
+# Sync before building agent image
+build-agent: sync-shared
+	cd compose && docker compose --profile core --profile agent --profile llm build bot
+
+# Rebuild core image
+build-core:
+	cd compose && docker compose --profile core build coyote_app
+
+# Rebuild both
+build-all: build-agent build-core

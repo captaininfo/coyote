@@ -106,7 +106,7 @@ def prompt_text(mode: Literal["table","graph"]="table") -> str:
 def schema_for_prompts(schema: str | None) -> str:
     return schema or SCHEMA_MIN
 
-_WRITE_BLOCKLIST = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP|LOAD\s+CSV|CALL\s+dbms\.|CALL\s+db\.index\.|apoc\.load)\b", re.I)
+_WRITE_BLOCKLIST = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP|ALTER|GRANT|REVOKE|LOAD\s+CSV|CALL\s+dbms\.|CALL\s+db\.index\.|apoc\.load|apoc\.trigger)\b", re.I)
 
 def is_read_only(cypher: str) -> bool:
     return not _WRITE_BLOCKLIST.search(" ".join((cypher or "").split()))
