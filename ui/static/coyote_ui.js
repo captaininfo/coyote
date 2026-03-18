@@ -705,7 +705,12 @@ function wireHypothesisConfig() {
 (() => {
   let cy = null;
   let inited = false;
-  const DEFAULTS = { seedLimit: 60, nodeLimit: 120, relLimit: 240 };
+  const DEFAULTS = { seedLimit: 30, nodeLimit: 80, relLimit: 160 };
+  const LAYOUT_OPTS = {
+    name: 'cose', animate: false, fit: true, padding: 30,
+    nodeRepulsion: () => 8000, idealEdgeLength: () => 80,
+    edgeElasticity: () => 100, gravity: 0.6
+  };
 
   const CANNED = [
     // id, label, description, cypher
@@ -724,7 +729,7 @@ CALL {
 }
 WITH collect(n) AS seeds
 UNWIND seeds AS s
-OPTIONAL MATCH (s)-[r]-(m)
+OPTIONAL MATCH (s)-[r]-(m) WHERE NOT m:WikiDataOntology
 WITH collect(DISTINCT s) AS sN, collect(DISTINCT m) AS mN, collect(DISTINCT r) AS rs
 WITH sN + mN AS nodes, rs AS rels
 RETURN
@@ -743,7 +748,7 @@ CALL {
 }
 WITH collect(w) AS ws
 UNWIND ws AS w
-OPTIONAL MATCH (w)-[r]-(m)
+OPTIONAL MATCH (w)-[r]-(m) WHERE NOT m:WikiDataOntology
 RETURN
   [x IN collect(DISTINCT w) + collect(DISTINCT m) | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes,
   [x IN collect(DISTINCT r) | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels
@@ -849,7 +854,7 @@ RETURN
         { selector: '.SearchTerms', style: {'background-color':'#9b59b6'} },
         { selector: '.WikiDataOntology', style: {'background-color':'#e74c3c'} }
       ],
-      layout: { name: 'cose', animate: false }
+      layout: LAYOUT_OPTS
     });
 
     // Basic UX
@@ -909,7 +914,7 @@ RETURN
       if (data.status !== 'success') throw new Error(data.message || 'Unknown error');
       cy.elements().remove();
       cy.add(toElements(data));
-      cy.layout({ name: 'cose', animate:false }).run();
+      cy.layout(LAYOUT_OPTS).run();
       setStatus(`Loaded ${data.counts?.nodes || cy.nodes().length} nodes / ${data.counts?.rels || cy.edges().length} relationships.`, 'success');
     } catch (e) {
       console.error(e);
@@ -938,7 +943,7 @@ RETURN
       if (data.status !== 'success') throw new Error(data.message || data.error || 'Query failed');
       cy.elements().remove();
       cy.add(toElements(data));
-      cy.layout({ name: 'cose', animate:false }).run();
+      cy.layout(LAYOUT_OPTS).run();
       setStatus(`Query OK — ${data.counts?.nodes || cy.nodes().length} nodes / ${data.counts?.rels || cy.edges().length} edges.`, 'success');
     } catch (e) {
       console.error(e);
@@ -965,7 +970,7 @@ RETURN
       if (data.status !== 'success') throw new Error(data.message || data.error || 'NL→Cypher failed');
       cy.elements().remove();
       cy.add(toElements(data));
-      cy.layout({ name: 'cose', animate:false }).run();
+      cy.layout(LAYOUT_OPTS).run();
       setStatus(`Answer loaded — ${data.counts?.nodes || cy.nodes().length} nodes / ${data.counts?.rels || cy.edges().length} edges.`, 'success');
     } catch (e) {
       console.error(e);
