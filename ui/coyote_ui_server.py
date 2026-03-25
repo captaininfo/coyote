@@ -828,6 +828,28 @@ def api_insights_new_topics():
         logger.exception("/api/insights/new-topics failed")
         return jsonify({"ok": False, "message": str(e)}), 500
 
+# --- ADD: /api/insights/searches -----------------------------------------------
+@app.route('/api/insights/searches', methods=['GET'])
+def api_insights_searches():
+    """Recent search terms with frequency counts."""
+    try:
+        days  = int(flask_request.args.get('days', '7'))
+        limit = int(flask_request.args.get('limit', '12'))
+        cypher = """
+        MATCH (p:Purpose)-[:INITIATES_SEARCH]->(s:SearchTerms)
+        WHERE p.timestamp IS NOT NULL
+          AND datetime(p.timestamp) >= datetime() - duration({days: $days})
+        RETURN s.text AS term, count(*) AS frequency,
+               toString(date(max(datetime(p.timestamp)))) AS last_used
+        ORDER BY frequency DESC, last_used DESC
+        LIMIT $limit
+        """
+        rows = _run_values_http(cypher, {"days": days, "limit": limit})
+        return jsonify({"ok": True, "data": rows})
+    except Exception as e:
+        logger.exception("/api/insights/searches failed")
+        return jsonify({"ok": False, "message": str(e)}), 500
+
 # --- ADD: /api/insights/sensemaking-rate --------------------------------------
 @app.route('/api/insights/sensemaking-rate', methods=['GET'])
 def api_insights_sensemaking_rate():

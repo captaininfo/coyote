@@ -2,7 +2,7 @@
 // Dependencies: Chart.js (window.Chart), D3 v7 (window.d3), coyoteRunCypher (from coyote_ui.js)
 
 (() => {
-  let newTopicsChart = null;
+  let searchesChart = null;
   let sensemakingChart = null;
   let rhythmsDrawn = false;
 
@@ -14,33 +14,33 @@
   function $(sel) { return document.querySelector(sel); }
 
   window.__insightsResize = (i) => {
-  if (i === 0 && newTopicsChart) newTopicsChart.resize();
+  if (i === 0 && searchesChart) searchesChart.resize();
   if (i === 1 && sensemakingChart) sensemakingChart.resize();
 };
 
-  // 1) New Topics This Week (bar)
-  async function renderNewTopics() {
+  // 1) What You Searched For (bar)
+  async function renderSearches() {
     const el = $('#newTopicsChart');
     if (!el) return;
-    const res = await getJSON('/api/insights/new-topics?days=7&limit=12');
+    const res = await getJSON('/api/insights/searches?days=7&limit=12');
     if (!res.ok) return showEmpty('#ntw-empty', true);
     const rows = res.data || [];
     if (!rows.length) return showEmpty('#ntw-empty', true);
 
     showEmpty('#ntw-empty', false);
-    $('#ntw-meta').textContent = `${rows.length} topics · last 7 days`;
+    $('#ntw-meta').textContent = `${rows.length} searches · last 7 days`;
 
-    const labels = rows.map(r => r.topic);
-    const interactions = rows.map(r => r.interactions || 0);
+    const labels = rows.map(r => r.term);
+    const freqs = rows.map(r => r.frequency || 0);
 
-    if (newTopicsChart) newTopicsChart.destroy();
-    newTopicsChart = new Chart(el.getContext('2d'), {
+    if (searchesChart) searchesChart.destroy();
+    searchesChart = new Chart(el.getContext('2d'), {
       type: 'bar',
       data: {
         labels,
         datasets: [{
-          label: 'New topics (interactions)',
-          data: interactions
+          label: 'Searches',
+          data: freqs
         }]
       },
       options: {
@@ -49,26 +49,25 @@
         onClick: (_, elements) => {
           if (!elements?.length) return;
           const i = elements[0].index;
-          const topic = labels[i];
-          // Deep link into Browse: pages about topic (last 30 days)
+          const term = labels[i];
           const cypher = `
-MATCH (t:WikiDataOntology)
-WHERE toLower(t.label) = toLower($label)
-MATCH (w:Webpage)-[:HAS_TOPIC]->(t)
-WHERE w.timestamp IS NOT NULL AND datetime(w.timestamp) >= datetime() - duration({days:30})
-OPTIONAL MATCH (w)-[r]-(m)
+MATCH (p:Purpose)-[:INITIATES_SEARCH]->(s:SearchTerms)
+WHERE toLower(s.text) CONTAINS toLower($term)
+  AND p.timestamp IS NOT NULL
+OPTIONAL MATCH (p)-[r:GENERATES_SERP]->(w:Webpage)
+WITH collect(DISTINCT p) + collect(DISTINCT s) + collect(DISTINCT w) AS allNodes,
+     collect(DISTINCT r) AS rs
 RETURN
-  [x IN collect(DISTINCT w) + collect(DISTINCT m) | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes,
-  [x IN collect(DISTINCT r) | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels
+  [x IN allNodes | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes,
+  [x IN rs | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels
 `;
           if (typeof window.switchSection === 'function') window.switchSection('browse');
-          // ensure the graph module booted
-          setTimeout(() => window.coyoteRunCypher && window.coyoteRunCypher(cypher, { label: topic }), 250);
+          setTimeout(() => window.coyoteRunCypher && window.coyoteRunCypher(cypher, { term }), 250);
         },
         plugins: {
           legend: { display: false },
           tooltip: { callbacks: {
-            label: ctx => `${ctx.parsed.y} interactions` }
+            label: ctx => `${ctx.parsed.y} searches` }
           }
         },
         scales: { y: { beginAtZero: true } }
@@ -181,7 +180,7 @@ RETURN
   // Carousel hook from HTML: 0->new topics, 1->sensemaking, 2->rhythms
   async function renderInsightsSlide(index) {
     try {
-      if (index === 0) await renderNewTopics();
+      if (index === 0) await renderSearches();
       else if (index === 1) await renderSensemaking();
       else if (index === 2) await renderRhythms();
     } catch (e) { console.error('renderInsightsSlide error', e); }
