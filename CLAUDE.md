@@ -32,6 +32,28 @@ Coyote is a local-first, privacy-first heutagogical learning tool. It transforms
 
 Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, "")` = error
 
+### UI Architecture (wireframe_v2.html)
+**File:** `ui/templates/wireframe_v2.html` (active redesign; not yet routed — `coyote_ui_server.py` still renders `coyote_wireframe.html`)
+
+**Layout:** Two-zone flex column
+- Sky zone (flex: 1): content stage. Active feature owns this space.
+- Ground zone (padding-bottom: calc(476/3000 * 100%)): desert horizon strip.
+
+**SVG assets** (all in `ui/static/images/`):
+- Sky zone uses CSS `linear-gradient` (replaced `blue-sky_background.svg` to eliminate subpixel gaps)
+- `desert-ground_background.svg` — inlined as `#desert-layer` in ground zone
+- `coyote-avatar_background.svg` — inlined as `#avatar-layer`, absolute at bottom: 0; left: 2vw
+
+**Sky content areas** (only one `.active` at a time):
+`sky-overview` (default/Knowledge Graph), `sky-insights`, `sky-chat`,
+`sky-neo4j`, `sky-setup`, `sky-configure`, `sky-integrations`, `sky-status`
+
+**In-context ground controls:** `ctx-overview` (Knowledge Graph chip row) only.
+Naming convention: `ctx-{feature}` where feature = `sky-*` ID minus `sky-`.
+
+**Navigation:** Slide-out drawer only. Closes on selection, dims sky on open.
+**NL input:** `<textarea>` with auto-resize JS and Enter-to-submit handler.
+
 ## Key Files
 | File | Purpose |
 |------|---------|

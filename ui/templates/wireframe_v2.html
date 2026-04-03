@@ -58,9 +58,7 @@
     .sky {
       flex: 1;
       position: relative;
-      background-image: url('../static/images/blue-sky_background.svg');
-      background-size: cover;
-      background-position: center bottom;
+      background: linear-gradient(to bottom, #0a1628 0%, #0d2240 30%, #1a3a5c 65%, #4e7391 100%);
       overflow: hidden;
       transition: opacity 0.35s ease;
     }
@@ -78,6 +76,7 @@
       z-index: 2;
     }
     .sky-content.active { display: flex; }
+    #sky-overview { padding: 0; }
     .sky-content .placeholder-label {
       font-size: 1.2rem;
       color: var(--text-secondary);
@@ -118,6 +117,35 @@
       color: var(--accent-warm);
       border-color: var(--chip-hover-border);
       background: var(--chip-hover-bg);
+    }
+    .chip.active {
+      background: var(--chip-hover-bg);
+      border-color: var(--accent-warm);
+      color: var(--accent-warm);
+    }
+
+    /* Graph Canvas */
+    #graphCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      text-align: left;
+    }
+    #graphCanvas canvas {
+      background: transparent !important;
+    }
+
+    /* Graph Status */
+    #cg-status {
+      position: absolute;
+      bottom: 48px;
+      left: 1rem;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      z-index: 4;
+      pointer-events: none;
     }
 
     /* --- Ground Zone --- */
@@ -333,7 +361,8 @@
     <!-- ===== Sky Zone ===== -->
     <div class="sky" id="sky">
       <div class="sky-content active" id="sky-overview">
-        <span class="placeholder-label">[ Knowledge Graph — live graph renders here ]</span>
+        <div id="graphCanvas"></div>
+        <span id="cg-status"></span>
       </div>
       <div class="sky-content" id="sky-insights">
         <span class="placeholder-label">Learning Insights</span>
@@ -360,11 +389,11 @@
       <!-- In-Context Controls -->
       <div class="in-context-controls">
         <div class="chip-row active" id="ctx-overview">
-          <span class="chip">Recent Activity</span>
-          <span class="chip">Topic Clusters</span>
-          <span class="chip">Search History</span>
-          <span class="chip">Deep Connections</span>
-          <span class="chip">This Week</span>
+          <span class="chip active" data-query="recent_activity">Recent Activity</span>
+          <span class="chip" data-query="topic_cloud">Top Topics</span>
+          <span class="chip" data-query="annotations_recent">Recent Annotations</span>
+          <span class="chip" data-query="purposes_to_search">Purposes &amp; Searches</span>
+          <span class="chip" data-query="latest_webpages_30d">Last 30 Days</span>
         </div>
       </div>
     </div>
@@ -778,15 +807,17 @@
     <div class="drawer-nav-item" data-target="sky-status">System Status</div>
   </nav>
 
+  <script src="../static/vendor/cytoscape.min.js"></script>
   <script>
+    // ============== Drawer & Feature Switching ==============
     (function () {
-      const drawer = document.getElementById('drawer');
-      const toggle = document.getElementById('drawer-toggle');
-      const overlay = document.getElementById('drawer-overlay');
-      const sky = document.getElementById('sky');
-      const navItems = drawer.querySelectorAll('.drawer-nav-item');
-      const skyPanels = document.querySelectorAll('.sky-content');
-      const chipRows = document.querySelectorAll('.chip-row');
+      var drawer = document.getElementById('drawer');
+      var toggle = document.getElementById('drawer-toggle');
+      var overlay = document.getElementById('drawer-overlay');
+      var sky = document.getElementById('sky');
+      var navItems = drawer.querySelectorAll('.drawer-nav-item');
+      var skyPanels = document.querySelectorAll('.sky-content');
+      var chipRows = document.querySelectorAll('.chip-row');
 
       function openDrawer() {
         drawer.classList.add('open');
@@ -831,6 +862,11 @@
           var ctx = document.getElementById(ctxId);
           if (ctx) ctx.classList.add('active');
 
+          // Resize graph when returning to overview
+          if (target === 'sky-overview' && window._coyoteResizeGraph) {
+            requestAnimationFrame(window._coyoteResizeGraph);
+          }
+
           closeDrawer();
         });
       });
@@ -846,9 +882,241 @@
       ta.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
-          // submit logic wired in Phase 2+
+          if (window._coyoteAskNL) window._coyoteAskNL();
         }
       });
+
+      // Submit button click
+      document.getElementById('nl-submit-btn').addEventListener('click', function () {
+        if (window._coyoteAskNL) window._coyoteAskNL();
+      });
+    })();
+
+    // ============== Knowledge Graph (Cytoscape) ==============
+    (function () {
+      var cy = null;
+      var inited = false;
+      var DEFAULTS = { seedLimit: 30, nodeLimit: 80, relLimit: 160 };
+      var LAYOUT_OPTS = {
+        name: 'cose', animate: false, fit: true, padding: 30,
+        nodeRepulsion: function () { return 8000; },
+        idealEdgeLength: function () { return 80; },
+        edgeElasticity: function () { return 100; },
+        gravity: 0.6
+      };
+
+      var CANNED = [
+        {
+          id: 'recent_activity',
+          label: 'Recent Activity',
+          cypher: 'CALL { MATCH (n) WHERE (n:Webpage OR n:Annotation OR n:Purpose OR n:SearchTerms) AND n.timestamp IS NOT NULL RETURN n ORDER BY datetime(n.timestamp) DESC LIMIT $seedLimit } WITH collect(n) AS seeds UNWIND seeds AS s OPTIONAL MATCH (s)-[r]-(m) WHERE NOT m:WikiDataOntology WITH collect(DISTINCT s) AS sN, collect(DISTINCT m) AS mN, collect(DISTINCT r) AS rs WITH sN + mN AS nodes, rs AS rels RETURN [x IN nodes | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes, [x IN rels | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels'
+        },
+        {
+          id: 'latest_webpages_30d',
+          label: 'Last 30 Days',
+          cypher: 'CALL { MATCH (w:Webpage) WHERE w.timestamp IS NOT NULL AND datetime(w.timestamp) >= datetime() - duration({days:30}) RETURN w ORDER BY datetime(w.timestamp) DESC LIMIT $seedLimit } WITH collect(w) AS ws UNWIND ws AS w OPTIONAL MATCH (w)-[r]-(m) WHERE NOT m:WikiDataOntology RETURN [x IN collect(DISTINCT w) + collect(DISTINCT m) | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes, [x IN collect(DISTINCT r) | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels'
+        },
+        {
+          id: 'topic_cloud',
+          label: 'Top Topics',
+          cypher: 'CALL { MATCH (w:Webpage)-[:HAS_TOPIC]->(t:WikiDataOntology) WHERE w.timestamp IS NOT NULL AND datetime(w.timestamp) >= datetime() - duration({days:30}) RETURN t, count(*) AS c ORDER BY c DESC LIMIT $seedLimit } WITH collect(t) AS ts UNWIND ts AS t OPTIONAL MATCH (t)<-[r:HAS_TOPIC]-(n) RETURN [x IN collect(DISTINCT t) + collect(DISTINCT n) | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes, [x IN collect(DISTINCT r) | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels'
+        },
+        {
+          id: 'annotations_recent',
+          label: 'Recent Annotations',
+          cypher: 'CALL { MATCH (a:Annotation) WHERE a.timestamp IS NOT NULL RETURN a ORDER BY datetime(a.timestamp) DESC LIMIT $seedLimit } WITH collect(a) AS as UNWIND as AS a OPTIONAL MATCH (w:Webpage)-[r:HAS_ANNOTATION]->(a) RETURN [x IN collect(DISTINCT a) + collect(DISTINCT w) | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes, [x IN collect(DISTINCT r) | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels'
+        },
+        {
+          id: 'purposes_to_search',
+          label: 'Purposes & Searches',
+          cypher: 'MATCH (p:Purpose)-[r:INITIATES_SEARCH]->(s:SearchTerms) WHERE p.timestamp IS NOT NULL AND datetime(p.timestamp) >= datetime() - duration({days:30}) RETURN [x IN collect(DISTINCT p) + collect(DISTINCT s) | {id:id(x), labels:labels(x), props:properties(x)}] AS nodes, [x IN collect(DISTINCT r) | {id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}] AS rels'
+        }
+      ];
+
+      function setStatus(msg, kind) {
+        var el = document.getElementById('cg-status');
+        if (!el) return;
+        var colors = {
+          info: '#a0a8b0',
+          success: '#3a6a9a',
+          warn: '#e8a040',
+          error: '#e74c3c'
+        };
+        el.style.color = colors[kind] || colors.info;
+        el.textContent = msg;
+      }
+
+      function ensureCy() {
+        if (cy) return;
+        var el = document.getElementById('graphCanvas');
+        if (!el) return;
+        cy = cytoscape({
+          container: el,
+          style: [
+            { selector: 'node',
+              style: {
+                'content': 'data(label)',
+                'font-size': 10,
+                'background-color': '#4A90E2',
+                'color': '#1b1f23',
+                'text-outline-color': '#ffffff',
+                'text-outline-width': 2,
+                'text-valign': 'center',
+                'text-halign': 'center',
+                'width': 'mapData(size, 10, 60, 20, 50)',
+                'height': 'mapData(size, 10, 60, 20, 50)'
+            }},
+            { selector: 'edge',
+              style: {
+                'width': 1.5,
+                'line-color': '#bdc3c7',
+                'target-arrow-shape': 'triangle',
+                'target-arrow-color': '#bdc3c7',
+                'curve-style': 'bezier'
+            }},
+            { selector: '.Webpage', style: {'background-color':'#4A90E2'} },
+            { selector: '.Annotation', style: {'background-color':'#27ae60'} },
+            { selector: '.Purpose', style: {'background-color':'#f39c12'} },
+            { selector: '.SearchTerms', style: {'background-color':'#9b59b6'} },
+            { selector: '.WikiDataOntology', style: {'background-color':'#e74c3c'} }
+          ],
+          layout: LAYOUT_OPTS
+        });
+
+        cy.on('tap', 'node', function (e) {
+          var d = e.target.data();
+          setStatus((d.labels && d.labels[0] || 'Node') + ' — ' + (d.title || d.text || d.url || d.label || d.id));
+        });
+        window.addEventListener('resize', function () { if (cy) cy.resize(); });
+      }
+
+      function toElements(payload) {
+        if (!payload) return [];
+        if (Array.isArray(payload)) return payload;
+        var outs = [];
+        (payload.nodes || []).forEach(function (n) {
+          var id = 'n' + n.id;
+          var p = n.props || {};
+          var display = p.title || p.annotation_text || p.text || p.url || p.label || '#' + n.id;
+          outs.push({
+            group: 'nodes',
+            data: {
+              id: id,
+              label: display,
+              labels: n.labels || [],
+              size: Math.min(60, Math.max(10, (display ? display.length : 10))),
+              title: p.title, text: p.text, url: p.url
+            },
+            classes: (n.labels || []).join(' ')
+          });
+        });
+        (payload.rels || payload.edges || []).forEach(function (r) {
+          outs.push({
+            group: 'edges',
+            data: {
+              id: 'e' + r.id,
+              source: 'n' + r.s,
+              target: 'n' + r.t,
+              label: r.type
+            }
+          });
+        });
+        return outs;
+      }
+
+      function fetchJSON(url, opts) {
+        return fetch(url, opts).then(function (resp) { return resp.json(); });
+      }
+
+      function cannedById(id) {
+        return CANNED.find(function (q) { return q.id === id; });
+      }
+
+      function isOverviewActive() {
+        var panel = document.getElementById('sky-overview');
+        return panel && panel.classList.contains('active');
+      }
+
+      function runCypher(cypher, params) {
+        ensureCy();
+        if (!cy) return Promise.resolve();
+        setStatus('Running query…');
+        return fetchJSON('/api/graph/run', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ cypher: cypher, params: { seedLimit: DEFAULTS.seedLimit, ...(params || {}) } })
+        }).then(function (data) {
+          if (data.status !== 'success') throw new Error(data.message || data.error || 'Query failed');
+          cy.elements().remove();
+          cy.add(toElements(data));
+          cy.layout(LAYOUT_OPTS).run();
+          cy.resize(); cy.fit(null, 30);
+          setStatus('Query OK — ' + (data.counts && data.counts.nodes || cy.nodes().length) + ' nodes / ' + (data.counts && data.counts.rels || cy.edges().length) + ' edges.', 'success');
+        }).catch(function (e) {
+          console.error(e);
+          setStatus('Query error: ' + e.message, 'error');
+        });
+      }
+
+      function askNL() {
+        if (!isOverviewActive()) return;
+        var ta = document.getElementById('nl-input');
+        var txt = (ta.value || '').trim();
+        if (!txt) return setStatus('Type a natural-language question first.');
+        setStatus('Translating with LLM → Cypher and running…');
+        fetchJSON('/api/graph/run', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ nl: txt })
+        }).then(function (data) {
+          if (data.status === 'unavailable') {
+            return setStatus(data.message || 'LLM unavailable. Start the LLM service or use a chip query.', 'warn');
+          }
+          if (data.status !== 'success') throw new Error(data.message || data.error || 'NL→Cypher failed');
+          ensureCy();
+          cy.elements().remove();
+          cy.add(toElements(data));
+          cy.layout(LAYOUT_OPTS).run();
+          cy.resize(); cy.fit(null, 30);
+          setStatus('Answer loaded — ' + (data.counts && data.counts.nodes || cy.nodes().length) + ' nodes / ' + (data.counts && data.counts.rels || cy.edges().length) + ' edges.', 'success');
+        }).catch(function (e) {
+          console.error(e);
+          setStatus('NL query error: ' + e.message, 'error');
+        });
+      }
+
+      // Expose for drawer/NL wiring
+      window._coyoteAskNL = askNL;
+      window._coyoteResizeGraph = function () {
+        if (cy) { cy.resize(); cy.fit(); }
+      };
+      window.coyoteRunCypher = runCypher;
+
+      // Chip click handlers
+      document.querySelectorAll('#ctx-overview .chip').forEach(function (chip) {
+        chip.addEventListener('click', function () {
+          var qid = this.getAttribute('data-query');
+          var q = cannedById(qid);
+          if (!q) return;
+          // Toggle active chip
+          document.querySelectorAll('#ctx-overview .chip').forEach(function (c) {
+            c.classList.remove('active');
+          });
+          this.classList.add('active');
+          runCypher(q.cypher);
+        });
+      });
+
+      // Boot: default load with Recent Activity
+      if (!inited) {
+        inited = true;
+        requestAnimationFrame(function () {
+          ensureCy();
+          if (cy) cy.resize();
+          var defaultQ = cannedById('recent_activity');
+          if (defaultQ) runCypher(defaultQ.cypher);
+        });
+      }
     })();
   </script>
 </body>

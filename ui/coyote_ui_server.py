@@ -231,6 +231,12 @@ def index():
     logger.debug("Serving main UI page")
     return render_template('coyote_wireframe.html')
 
+# Phase 3 debug route — remove at Phase 5 cutover
+@app.route('/wireframe')
+def wireframe_v2():
+    logger.info("wireframe_v2 debug route accessed")
+    return render_template('wireframe_v2.html')
+
 @app.route('/extension_heartbeat', methods=['POST'])
 def extension_heartbeat():
     """Accept heartbeats from the browser extension"""
