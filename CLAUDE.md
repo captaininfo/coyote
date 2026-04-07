@@ -33,26 +33,28 @@ Coyote is a local-first, privacy-first heutagogical learning tool. It transforms
 Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, "")` = error
 
 ### UI Architecture (wireframe_v2.html)
-**File:** `ui/templates/wireframe_v2.html` (active redesign; not yet routed — `coyote_ui_server.py` still renders `coyote_wireframe.html`)
+**Status:** Phase 4 complete. **Phase 5 next:** route `/` to `wireframe_v2.html`, retire `coyote_wireframe.html`.
+**File:** `ui/templates/wireframe_v2.html` (debug route at `/wireframe`; `/` still serves old wireframe)
 
 **Layout:** Two-zone flex column
 - Sky zone (flex: 1): content stage. Active feature owns this space.
 - Ground zone (padding-bottom: calc(476/3000 * 100%)): desert horizon strip.
+- Sky background: CSS `linear-gradient` (replaced SVG to fix subpixel gaps)
+- Ground/avatar: inlined SVGs (`#desert-layer`, `#avatar-layer`)
 
-**SVG assets** (all in `ui/static/images/`):
-- Sky zone uses CSS `linear-gradient` (replaced `blue-sky_background.svg` to eliminate subpixel gaps)
-- `desert-ground_background.svg` — inlined as `#desert-layer` in ground zone
-- `coyote-avatar_background.svg` — inlined as `#avatar-layer`, absolute at bottom: 0; left: 2vw
+**Sky panels** (one `.active` at a time — all complete, no stubs):
+`sky-overview` (Cytoscape graph + 5 chip queries + NL input),
+`sky-insights` (post-MVP stub), `sky-chat` (Streamlit iframe, lazy-loaded),
+`sky-neo4j` (link to :7474), `sky-setup` (static guide),
+`sky-configure` (Neo4j form), `sky-integrations` (Hypothesis form),
+`sky-status` (live polling + Docker buttons)
 
-**Sky content areas** (only one `.active` at a time):
-`sky-overview` (default/Knowledge Graph), `sky-insights`, `sky-chat`,
-`sky-neo4j`, `sky-setup`, `sky-configure`, `sky-integrations`, `sky-status`
+**Navigation:** Slide-out drawer. `ctx-overview` chip row for graph queries.
+`window.switchSection(name)` shim maps old names (`browse`→`sky-overview`, etc.).
 
-**In-context ground controls:** `ctx-overview` (Knowledge Graph chip row) only.
-Naming convention: `ctx-{feature}` where feature = `sky-*` ID minus `sky-`.
-
-**Navigation:** Slide-out drawer only. Closes on selection, dims sky on open.
-**NL input:** `<textarea>` with auto-resize JS and Enter-to-submit handler.
+**Deferred to Phase 5:** button handlers for `btnNeoTest`, `btnNeoSave`,
+`btnHypTest`, `btnHypSave`, `btnHypFetch` (port `wireConfigHandlers()` from `coyote_ui.js`).
+CSS extraction to separate file also deferred.
 
 ## Key Files
 | File | Purpose |
