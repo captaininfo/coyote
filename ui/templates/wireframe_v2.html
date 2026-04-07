@@ -353,6 +353,306 @@
       background: var(--drawer-divider);
       margin: 1rem 0;
     }
+
+    /* ===== sky-neo4j ===== */
+    .neo4j-link-panel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+    .neo4j-link-panel .placeholder-label { margin-bottom: 0.5rem; }
+    .neo4j-link {
+      display: inline-block;
+      padding: 12px 28px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--ground-dark);
+      background: linear-gradient(135deg, var(--accent-warm), var(--accent-amber));
+      border-radius: 8px;
+      text-decoration: none;
+      letter-spacing: 0.02em;
+      transition: background 0.2s ease, transform 0.1s ease;
+    }
+    .neo4j-link:hover {
+      background: linear-gradient(135deg, var(--accent-amber), var(--accent-hover));
+    }
+    .neo4j-link:active { transform: scale(0.97); }
+
+    /* ===== sky-status ===== */
+    #sky-status {
+      overflow-y: auto;
+      padding: 2rem;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      text-align: left;
+    }
+    .status-panel { max-width: 720px; margin: 0 auto; width: 100%; }
+    .status-panel h2 {
+      font-size: 1.2rem;
+      color: var(--text-primary);
+      margin-bottom: 1.2rem;
+      letter-spacing: 0.03em;
+    }
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .status-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 1rem 0.5rem;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 8px;
+    }
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .status-icon { font-size: 1.1rem; }
+    .status-online { color: #4caf50; }
+    .status-offline { color: var(--text-muted); }
+    .status-label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      text-align: center;
+      line-height: 1.3;
+    }
+    .status-section {
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 8px;
+      padding: 1.2rem;
+      margin-bottom: 1.2rem;
+    }
+    .status-section-header {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--accent-warm);
+      margin-bottom: 1rem;
+      letter-spacing: 0.02em;
+    }
+    .docker-btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-bottom: 0.8rem;
+    }
+    .docker-btn-row:last-child { margin-bottom: 0; }
+    .btn-status {
+      padding: 8px 16px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+      transition: opacity 0.15s ease, transform 0.1s ease;
+      font-family: inherit;
+    }
+    .btn-status:hover { opacity: 0.85; }
+    .btn-status:active { transform: scale(0.97); }
+    .btn-status:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-status-primary {
+      color: var(--ground-dark);
+      background: var(--accent-warm);
+    }
+    .btn-status-success {
+      color: var(--ground-dark);
+      background: #4caf50;
+    }
+    .btn-status-danger {
+      color: var(--text-primary);
+      background: #8b2020;
+    }
+    .btn-status-warning {
+      color: var(--ground-dark);
+      background: #c87d1a;
+    }
+    #status-summary {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-top: 0.8rem;
+      min-height: 1.2em;
+    }
+
+    /* ===== sky-chat ===== */
+    #sky-chat {
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      padding: 0;
+    }
+    .chat-panel {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: 100%;
+    }
+    .chat-panel-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1.25rem;
+      background: var(--input-bg);
+      border-bottom: 1px solid var(--input-border);
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      flex-shrink: 0;
+    }
+    #chat-health {
+      font-size: 0.8rem;
+      font-weight: 400;
+    }
+    .chat-frame-holder {
+      flex: 1;
+      position: relative;
+      min-height: 0;
+    }
+    #chat-placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+    }
+
+    /* ===== Scrollable content panels ===== */
+    #sky-setup, #sky-configure, #sky-integrations {
+      overflow-y: auto;
+      padding: 2rem;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      text-align: left;
+    }
+    .content-panel { max-width: 720px; margin: 0 auto; width: 100%; }
+    .content-panel h2 {
+      font-size: 1.2rem;
+      color: var(--text-primary);
+      margin-bottom: 1.2rem;
+      letter-spacing: 0.03em;
+    }
+
+    /* ===== sky-insights stub ===== */
+    .insights-stub {
+      max-width: 480px;
+      text-align: center;
+      padding: 2rem;
+    }
+    .insights-stub h2 {
+      font-size: 1.1rem;
+      color: var(--text-primary);
+      margin-bottom: 0.8rem;
+    }
+    .insights-stub p {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      margin-bottom: 1rem;
+    }
+    .insights-stub .coming-label {
+      display: inline-block;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      border: 1px solid var(--input-border);
+      border-radius: 12px;
+      padding: 3px 12px;
+      letter-spacing: 0.04em;
+    }
+
+    /* ===== Form inputs (v2) ===== */
+    .form-input-v2 {
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+    .form-input-v2:focus {
+      outline: none;
+      border-color: var(--input-focus);
+    }
+    .form-group-v2 { margin-bottom: 0.9rem; }
+    .form-label-v2 {
+      display: block;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      margin-bottom: 0.3rem;
+    }
+
+    /* ===== Setup steps ===== */
+    .setup-step { margin-bottom: 1.5rem; }
+    .setup-step h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 0.4rem;
+    }
+    .setup-step p {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      margin-bottom: 0.4rem;
+    }
+    .setup-step a { color: var(--accent-warm); }
+    .setup-step a:hover { color: var(--accent-hover); }
+
+    /* ===== Integration cards ===== */
+    .integration-card {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.8rem 0;
+      border-bottom: 1px solid var(--drawer-divider);
+    }
+    .integration-card:last-child { border-bottom: none; }
+    .integration-card h4 {
+      font-size: 0.9rem;
+      color: var(--text-primary);
+      margin-bottom: 0.2rem;
+    }
+    .integration-card p {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      margin: 0;
+    }
+    .integration-badge {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      border: 1px solid var(--input-border);
+      border-radius: 10px;
+      padding: 2px 8px;
+      margin-left: auto;
+      white-space: nowrap;
+    }
+
+    /* ===== Hypothesis setup steps ===== */
+    .hyp-steps {
+      background: rgba(10, 22, 40, 0.5);
+      padding: 0.8rem 1rem;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+    .hyp-steps a { color: var(--accent-warm); }
+    .hyp-steps a:hover { color: var(--accent-hover); }
   </style>
 </head>
 <body>
@@ -365,25 +665,234 @@
         <span id="cg-status"></span>
       </div>
       <div class="sky-content" id="sky-insights">
-        <span class="placeholder-label">Learning Insights</span>
+        <div class="insights-stub">
+          <h2>Learning Insights</h2>
+          <p>This panel will visualize your learning patterns: search term frequency, sensemaking rate over time, and browsing rhythms by hour of day.</p>
+          <span class="coming-label">Coming post-MVP</span>
+        </div>
       </div>
       <div class="sky-content" id="sky-chat">
-        <span class="placeholder-label">Chat with Coyote</span>
+        <div class="chat-panel">
+          <div class="chat-panel-header">
+            <span>Chat with Coyote</span>
+            <small id="chat-health"></small>
+          </div>
+          <div class="chat-frame-holder" id="chat-frame-holder">
+            <iframe id="botFrame" title="Coyote Assistant"
+                    style="border:0; width:100%; height:100%; display:none;"></iframe>
+            <div id="chat-placeholder">
+              <em>Starting assistant&hellip;</em>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="sky-content" id="sky-neo4j">
-        <span class="placeholder-label">Open Neo4j Browser</span>
+        <div class="neo4j-link-panel">
+          <span class="placeholder-label">Neo4j Browser</span>
+          <a class="neo4j-link" href="http://localhost:7474" target="_blank" rel="noopener">Open Neo4j Browser</a>
+          <span class="placeholder-label" style="font-size:0.8rem;">Opens in a new tab at localhost:7474</span>
+        </div>
       </div>
       <div class="sky-content" id="sky-setup">
-        <span class="placeholder-label">Setup Guide</span>
+        <div class="content-panel">
+          <h2>Setup Guide</h2>
+
+          <div class="status-section">
+            <div class="status-section-header">Detailed Setup Instructions</div>
+            <p style="font-size:0.88rem; color:var(--text-secondary); margin-bottom:0.8rem;">For screenshots, OS-specific notes, and troubleshooting, open the full guide:</p>
+            <a class="btn-status btn-status-primary" href="../static/detailed_setup.html" target="_blank" rel="noopener" style="text-decoration:none; display:inline-block;">Open Detailed Setup Instructions</a>
+          </div>
+
+          <div class="status-section">
+            <div class="status-section-header">Quick Start</div>
+
+            <div class="setup-step">
+              <h3>1. Configure Neo4j Database</h3>
+              <p>Navigate to the Configure tab. Enter unique authentication credentials for Neo4j (username and password) so Coyote can communicate with Neo4j securely.</p>
+              <button class="btn-status btn-status-primary" onclick="window.switchSection('configure')">Open Configure</button>
+            </div>
+
+            <div class="setup-step">
+              <h3>2. Start Core Services (Coyote Core + Neo4j)</h3>
+              <p>Navigate to the System Status tab. Click "Start Core Services" under Docker Management.</p>
+              <button class="btn-status btn-status-primary" onclick="window.switchSection('status')">Open System Status</button>
+            </div>
+
+            <div class="setup-step">
+              <h3>3. Run Coyote's Browser Extension</h3>
+              <p>Coyote's extension is not an official Firefox extension, so you must run it as a temporary add-on.</p>
+              <p>Open a new Firefox tab and navigate to: <a href="about:debugging#/runtime/this-firefox" target="_blank">about:debugging#/runtime/this-firefox</a></p>
+              <p>Click "Load Temporary Add-on..." and select <code style="color:var(--accent-warm);">coyote_0.4/extension/manifest.json</code></p>
+              <p><strong>Coyote is now ready to record your web-browsing data.</strong></p>
+            </div>
+
+            <div class="setup-step">
+              <h3>4. (Optional) Connect Hypothes.is</h3>
+              <p>Hypothes.is is a social web-annotation tool.</p>
+              <p>Log in at <a href="https://hypothes.is/login" target="_blank">hypothes.is/login</a>, then copy your API token from <a href="https://hypothes.is/account/developer" target="_blank">hypothes.is/account/developer</a>.</p>
+              <p>Open the Integrations tab, enter your credentials, then click "Test Connection" and "Save." Clicking "Fetch Data" will retrieve your annotations (the first fetch may take some time).</p>
+              <button class="btn-status btn-status-primary" onclick="window.switchSection('integrations')">Open Integrations</button>
+            </div>
+
+            <div class="setup-step">
+              <h3>5. (Optional) Start All Services</h3>
+              <p>Starts all Docker services: Coyote Core + Neo4j + Ollama + Coyote Agent. The Chat Assistant requires all services running.</p>
+              <button class="btn-status btn-status-primary" onclick="window.switchSection('status')">Open System Status</button>
+            </div>
+
+            <div class="setup-step">
+              <h3>6. Start a search to record your data</h3>
+              <p>Navigate to the Knowledge Graph tab, then use the natural language input to begin exploring your data.</p>
+              <button class="btn-status btn-status-primary" onclick="window.switchSection('browse')">Open Knowledge Graph</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="sky-content" id="sky-configure">
-        <span class="placeholder-label">Configure</span>
+        <div class="content-panel">
+          <h2>Configure Coyote</h2>
+
+          <div class="status-section">
+            <div class="status-section-header">Neo4j Database</div>
+            <div class="form-group-v2">
+              <label class="form-label-v2" for="neoUri">Neo4j URI</label>
+              <input id="neoUri" type="text" class="form-input-v2" value="bolt://localhost:7687">
+            </div>
+            <div class="form-group-v2">
+              <label class="form-label-v2" for="neoUser">Username</label>
+              <input id="neoUser" type="text" class="form-input-v2" placeholder="neo4j">
+            </div>
+            <div class="form-group-v2">
+              <label class="form-label-v2" for="neoPass">Password</label>
+              <input id="neoPass" type="password" class="form-input-v2" placeholder="Your secure password">
+            </div>
+            <!-- handlers deferred to Phase 5 -->
+            <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:0.4rem;">
+              <button id="btnNeoTest" class="btn-status btn-status-primary" disabled>Test Connection</button>
+              <button id="btnNeoSave" class="btn-status btn-status-primary" disabled>Save</button>
+            </div>
+          </div>
+
+          <div class="status-section">
+            <div class="status-section-header">Browser Extension</div>
+            <p style="font-size:0.88rem; color:var(--text-secondary); margin-bottom:0.6rem;">The Coyote browser extension captures your web browsing data. See the Setup Guide for installation instructions.</p>
+            <button class="btn-status btn-status-primary" onclick="window.switchSection('setup')">Open Setup Guide</button>
+          </div>
+        </div>
       </div>
       <div class="sky-content" id="sky-integrations">
-        <span class="placeholder-label">Integrations</span>
+        <div class="content-panel">
+          <h2>Integrations</h2>
+
+          <div class="status-section">
+            <div class="status-section-header">Available Integrations</div>
+            <div class="integration-card">
+              <div>
+                <h4>Hypothes.is</h4>
+                <p>Import your web annotations and highlights</p>
+              </div>
+              <span class="integration-badge">Configurable</span>
+            </div>
+            <div class="integration-card">
+              <div>
+                <h4>YouTube</h4>
+                <p>Analyze transcripts from watched videos</p>
+              </div>
+              <span class="integration-badge">Coming Soon</span>
+            </div>
+            <div class="integration-card">
+              <div>
+                <h4>Obsidian</h4>
+                <p>Sync your personal knowledge vault</p>
+              </div>
+              <span class="integration-badge">Coming Soon</span>
+            </div>
+          </div>
+
+          <div class="status-section" id="hypothesis-config">
+            <div class="status-section-header">Hypothes.is Configuration</div>
+            <div class="hyp-steps">
+              <strong>Step 1:</strong> <a href="https://hypothes.is/login" target="_blank">Log in to Hypothes.is</a><br>
+              <strong>Step 2:</strong> <a href="https://hypothes.is/account/developer" target="_blank">Get your API token</a><br>
+              <strong>Step 3:</strong> Enter your credentials below
+            </div>
+            <div class="form-group-v2">
+              <label class="form-label-v2" for="hypUser">Hypothes.is Username</label>
+              <input id="hypUser" type="text" class="form-input-v2" placeholder="Your Hypothes.is username" autocomplete="username">
+            </div>
+            <div class="form-group-v2">
+              <label class="form-label-v2" for="hypToken">API Token</label>
+              <input id="hypToken" type="password" class="form-input-v2" placeholder="Paste your API token here" autocomplete="off">
+            </div>
+            <!-- handlers deferred to Phase 5 -->
+            <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:0.4rem;">
+              <button id="btnHypTest" class="btn-status btn-status-primary" disabled>Test Connection</button>
+              <button id="btnHypSave" class="btn-status btn-status-primary" disabled>Save</button>
+              <button id="btnHypFetch" class="btn-status btn-status-success" disabled>Fetch Data</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="sky-content" id="sky-status">
-        <span class="placeholder-label">System Status</span>
+        <div class="status-panel">
+          <h2>System Status</h2>
+
+          <div class="status-grid">
+            <div class="status-item">
+              <div data-component="neo4j_database" class="status-indicator status-offline">
+                <span class="status-icon" aria-hidden="true">&#x2717;</span>
+                <span class="status-text">Offline</span>
+              </div>
+              <span class="status-label">Neo4j Database</span>
+            </div>
+            <div class="status-item">
+              <div data-component="coyote_core" class="status-indicator status-offline">
+                <span class="status-icon" aria-hidden="true">&#x2717;</span>
+                <span class="status-text">Offline</span>
+              </div>
+              <span class="status-label">Coyote Core</span>
+            </div>
+            <div class="status-item">
+              <div data-component="coyote_agent_bot" class="status-indicator status-offline">
+                <span class="status-icon" aria-hidden="true">&#x2717;</span>
+                <span class="status-text">Offline</span>
+              </div>
+              <span class="status-label">Coyote Agent/Bot</span>
+            </div>
+            <div class="status-item">
+              <div data-component="ollama_llm" class="status-indicator status-offline">
+                <span class="status-icon" aria-hidden="true">&#x2717;</span>
+                <span class="status-text">Offline</span>
+              </div>
+              <span class="status-label">Ollama/LLM</span>
+            </div>
+            <div class="status-item">
+              <div data-component="browser_extension" class="status-indicator status-offline">
+                <span class="status-icon" aria-hidden="true">&#x2717;</span>
+                <span class="status-text">Offline</span>
+              </div>
+              <span class="status-label">Browser Extension</span>
+            </div>
+          </div>
+
+          <div id="system-warnings" style="display:none;"></div>
+
+          <div class="status-section">
+            <div class="status-section-header">Docker Management</div>
+            <div class="docker-btn-row">
+              <button class="btn-status btn-status-primary" id="btnStartCore">Start Core Services</button>
+              <button class="btn-status btn-status-primary" id="btnStartLLM">Start LLM Service</button>
+              <button class="btn-status btn-status-success" id="btnStartAllServices">Start All Services</button>
+            </div>
+            <div class="docker-btn-row">
+              <button class="btn-status btn-status-danger" id="btnStopAllServices">Stop All Services</button>
+              <button class="btn-status btn-status-warning" id="btnRestartServices">Restart Services</button>
+              <button class="btn-status btn-status-danger" id="btnForceCleanup">Force Cleanup (Emergency)</button>
+            </div>
+          </div>
+
+          <div id="status-summary"></div>
+        </div>
       </div>
 
       <!-- In-Context Controls -->
@@ -867,6 +1376,18 @@
             requestAnimationFrame(window._coyoteResizeGraph);
           }
 
+          // Gate status polling on panel visibility
+          if (target === 'sky-status') {
+            if (window._startStatusPolling) window._startStatusPolling();
+          } else {
+            if (window._stopStatusPolling) window._stopStatusPolling();
+          }
+
+          // Load chat assistant on first navigation to sky-chat
+          if (target === 'sky-chat') {
+            if (window._loadChatAssistant) window._loadChatAssistant();
+          }
+
           closeDrawer();
         });
       });
@@ -1117,6 +1638,246 @@
           if (defaultQ) runCypher(defaultQ.cypher);
         });
       }
+    })();
+
+    // ============== switchSection shim ==============
+    window.switchSection = function(sectionName) {
+      var map = {
+        'browse':        'sky-overview',
+        'status':        'sky-status',
+        'chat':          'sky-chat',
+        'setup':         'sky-setup',
+        'configure':     'sky-configure',
+        'integrations':  'sky-integrations'
+      };
+      var target = map[sectionName] || ('sky-' + sectionName);
+      var item = document.querySelector('#drawer [data-target="' + target + '"]');
+      if (item) item.click();
+    };
+
+    // ============== System Status ==============
+    (function () {
+      var STATUS_ICONS = { online: '\u2713', offline: '\u2717', unknown: '?' };
+      var pollInterval = null;
+
+      var SERVICE_MAP = {
+        'coyote-database-1':    'neo4j_database',
+        'coyote-coyote_app-1':  'coyote_core',
+        'coyote-llm-1':         'ollama_llm',
+        'coyote-bot-1':         'coyote_agent_bot',
+        'database':             'neo4j_database',
+        'coyote_app':           'coyote_core',
+        'llm':                  'ollama_llm',
+        'bot':                  'coyote_agent_bot'
+      };
+
+      var ALL_COMPONENTS = ['neo4j_database', 'coyote_core', 'ollama_llm', 'coyote_agent_bot'];
+
+      function setSummary(msg) {
+        var el = document.getElementById('status-summary');
+        if (el) el.textContent = msg;
+      }
+
+      function updateStatusDisplay(services) {
+        // Reset all to offline
+        ALL_COMPONENTS.forEach(function (comp) {
+          var el = document.querySelector('[data-component="' + comp + '"]');
+          if (el) {
+            el.className = 'status-indicator status-offline';
+            el.innerHTML =
+              '<span class="status-icon" aria-hidden="true">' + STATUS_ICONS.offline + '</span>' +
+              '<span class="status-text">Offline</span>';
+            el.setAttribute('aria-label', comp.replace(/_/g, ' ') + ': Offline');
+          }
+        });
+
+        var runningCount = 0;
+        services.forEach(function (service) {
+          var name = service.Name || service.Service || '';
+          var comp = SERVICE_MAP[name];
+          if (!comp) return;
+          var el = document.querySelector('[data-component="' + comp + '"]');
+          if (!el) return;
+
+          var isRunning = service.State === 'running' ||
+            (service.Status && service.Status.indexOf('Up') !== -1);
+
+          if (isRunning) runningCount++;
+
+          var text = isRunning ? 'Online' : 'Offline';
+          var icon = isRunning ? STATUS_ICONS.online : STATUS_ICONS.offline;
+          var cls  = isRunning ? 'status-online' : 'status-offline';
+
+          el.className = 'status-indicator ' + cls;
+          el.innerHTML =
+            '<span class="status-icon" aria-hidden="true">' + icon + '</span>' +
+            '<span class="status-text">' + text + '</span>';
+          el.setAttribute('aria-label', comp.replace(/_/g, ' ') + ': ' + text);
+        });
+
+        setSummary(runningCount + ' of ' + Math.max(services.length, ALL_COMPONENTS.length) + ' services running');
+      }
+
+      function updateExtensionStatus(isActive) {
+        var el = document.querySelector('[data-component="browser_extension"]');
+        if (!el) return;
+        var text = isActive ? 'Online' : 'Offline';
+        var icon = isActive ? STATUS_ICONS.online : STATUS_ICONS.offline;
+        var cls  = isActive ? 'status-online' : 'status-offline';
+
+        el.className = 'status-indicator ' + cls;
+        el.innerHTML =
+          '<span class="status-icon" aria-hidden="true">' + icon + '</span>' +
+          '<span class="status-text">' + text + '</span>';
+        el.setAttribute('aria-label', 'Browser Extension: ' + text);
+      }
+
+      function checkStatus() {
+        fetch('/api/status').then(function (r) { return r.json(); }).then(function (data) {
+          if (data.status === 'success') {
+            updateStatusDisplay(data.services || []);
+          } else {
+            updateStatusDisplay([]);
+          }
+        }).catch(function () {
+          updateStatusDisplay([]);
+        });
+      }
+
+      function checkExtensionStatus() {
+        fetch('/extension_status').then(function (r) { return r.json(); }).then(function (data) {
+          updateExtensionStatus(!!data.active);
+        }).catch(function () {
+          updateExtensionStatus(false);
+        });
+      }
+
+      // Docker action helpers
+      function dockerAction(endpoint, label, method) {
+        setSummary(label + '...');
+        var opts = { method: method || 'POST', headers: { 'Content-Type': 'application/json' } };
+        return fetch(endpoint, opts).then(function (r) { return r.json(); }).then(function (data) {
+          var ok = data.status === 'success';
+          setSummary(ok ? (data.message || label + ' succeeded') : ('Error: ' + (data.message || 'unknown')));
+          if (!ok && data.stderr) console.error(label + ' stderr:', data.stderr);
+          setTimeout(checkStatus, 2000);
+          return data;
+        }).catch(function (err) {
+          console.error(label + ' failed:', err);
+          setSummary('Error: ' + err.message);
+          setTimeout(checkStatus, 2000);
+        });
+      }
+
+      function startCoreServices()  { return dockerAction('/api/start-core', 'Starting core services'); }
+      function startLLMServices()   { return dockerAction('/api/start-llm',  'Starting LLM services'); }
+      function startAllServices()   { return dockerAction('/api/start-all',  'Starting all services'); }
+      function stopAllServices()    { return dockerAction('/api/stop',       'Stopping all services'); }
+      function forceCleanup()       { return dockerAction('/api/force-cleanup', 'Force cleanup'); }
+
+      function restartServices() {
+        setSummary('Restarting services...');
+        stopAllServices().then(function () {
+          setTimeout(startAllServices, 3000);
+        });
+      }
+
+      function setupStatusButtons() {
+        var wire = function (id, fn) {
+          var btn = document.getElementById(id);
+          if (btn) btn.addEventListener('click', fn);
+        };
+        wire('btnStartCore',       startCoreServices);
+        wire('btnStartLLM',        startLLMServices);
+        wire('btnStartAllServices', startAllServices);
+        wire('btnStopAllServices',  stopAllServices);
+        wire('btnRestartServices',  restartServices);
+        wire('btnForceCleanup',     forceCleanup);
+      }
+
+      // Polling — gated on sky-status visibility
+      window._startStatusPolling = function () {
+        if (pollInterval) return;
+        checkStatus();
+        checkExtensionStatus();
+        pollInterval = setInterval(function () {
+          checkStatus();
+          checkExtensionStatus();
+        }, 5000);
+      };
+
+      window._stopStatusPolling = function () {
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
+      };
+
+      // Wire buttons on load
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupStatusButtons);
+      } else {
+        setupStatusButtons();
+      }
+    })();
+
+    // ============== Chat with Coyote ==============
+    (function () {
+      var chatInited = false;
+
+      function loadChatAssistant() {
+        if (chatInited) return;
+
+        var frame  = document.getElementById('botFrame');
+        var ph     = document.getElementById('chat-placeholder');
+        var health = document.getElementById('chat-health');
+        if (!frame || !ph || !health) return;
+
+        health.textContent = '';
+
+        fetch('/api/health-check/bot').then(function (r) {
+          return r.json();
+        }).then(function (st) {
+          var botOk = !!st.running;
+          health.textContent = botOk ? '\u00b7 Online' : '\u00b7 Offline';
+          health.style.color = botOk ? '#4caf50' : 'var(--text-muted)';
+
+          if (!botOk) {
+            ph.innerHTML =
+              '<div style="text-align:center; padding:20px;">' +
+              '<p style="margin-bottom:10px; color:var(--text-secondary);">Assistant is offline.</p>' +
+              '<button class="btn-status btn-status-primary" ' +
+              'onclick="window.switchSection(\'status\')">Open System Status</button>' +
+              '</div>';
+            frame.style.display = 'none';
+            return;
+          }
+
+          return fetch('/api/bot-url').then(function (r) {
+            return r.json();
+          }).then(function (info) {
+            frame.src = info.url || 'http://localhost:8501/?embed=true';
+            frame.onload = function () {
+              ph.style.display = 'none';
+              frame.style.display = 'block';
+              chatInited = true;
+            };
+          });
+        }).catch(function (e) {
+          console.error('Chat load error:', e);
+          health.textContent = '\u00b7 Unknown';
+          health.style.color = 'var(--text-muted)';
+          ph.innerHTML =
+            '<div style="text-align:center; padding:20px;">' +
+            '<p style="margin-bottom:10px; color:var(--text-secondary);">Could not load assistant.</p>' +
+            '<button class="btn-status btn-status-primary" ' +
+            'onclick="window.switchSection(\'status\')">Troubleshoot</button>' +
+            '</div>';
+          frame.style.display = 'none';
+        });
+      }
+
+      window._loadChatAssistant = loadChatAssistant;
     })();
   </script>
 </body>
