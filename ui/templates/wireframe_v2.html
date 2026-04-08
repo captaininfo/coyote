@@ -478,6 +478,27 @@
       color: var(--ground-dark);
       background: #c87d1a;
     }
+    /* Persistent credential status line */
+    .cred-status {
+      font-size: 0.82rem;
+      margin-bottom: 0.9rem;
+      padding: 3px 0;
+      min-height: 1.2em;
+    }
+    .cred-status.ok      { color: #6dbf7e; }
+    .cred-status.missing { color: var(--text-muted); }
+    .cred-status.loading { color: var(--text-muted); font-style: italic; }
+
+    /* Transient button-action feedback */
+    .config-msg {
+      font-size: 0.82rem;
+      margin-top: 0.5rem;
+      min-height: 1.2em;
+    }
+    .config-msg.ok      { color: #6dbf7e; }
+    .config-msg.error   { color: #e57373; }
+    .config-msg.warning { color: var(--accent-amber); }
+
     #status-summary {
       font-size: 0.85rem;
       color: var(--text-secondary);
@@ -754,9 +775,10 @@
 
           <div class="status-section">
             <div class="status-section-header">Neo4j Database</div>
+            <div id="neoCredStatus" class="cred-status loading">Checking…</div>
             <div class="form-group-v2">
               <label class="form-label-v2" for="neoUri">Neo4j URI</label>
-              <input id="neoUri" type="text" class="form-input-v2" value="bolt://localhost:7687">
+              <input id="neoUri" type="text" class="form-input-v2" placeholder="bolt://localhost:7687">
             </div>
             <div class="form-group-v2">
               <label class="form-label-v2" for="neoUser">Username</label>
@@ -766,11 +788,11 @@
               <label class="form-label-v2" for="neoPass">Password</label>
               <input id="neoPass" type="password" class="form-input-v2" placeholder="Your secure password">
             </div>
-            <!-- handlers deferred to Phase 5 -->
             <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:0.4rem;">
-              <button id="btnNeoTest" class="btn-status btn-status-primary" disabled>Test Connection</button>
-              <button id="btnNeoSave" class="btn-status btn-status-primary" disabled>Save</button>
+              <button id="btnNeoTest" class="btn-status btn-status-primary">Test Connection</button>
+              <button id="btnNeoSave" class="btn-status btn-status-primary">Save</button>
             </div>
+            <div id="neoConfigMsg" class="config-msg"></div>
           </div>
 
           <div class="status-section">
@@ -811,6 +833,7 @@
 
           <div class="status-section" id="hypothesis-config">
             <div class="status-section-header">Hypothes.is Configuration</div>
+            <div id="hypCredStatus" class="cred-status loading">Checking…</div>
             <div class="hyp-steps">
               <strong>Step 1:</strong> <a href="https://hypothes.is/login" target="_blank">Log in to Hypothes.is</a><br>
               <strong>Step 2:</strong> <a href="https://hypothes.is/account/developer" target="_blank">Get your API token</a><br>
@@ -824,12 +847,12 @@
               <label class="form-label-v2" for="hypToken">API Token</label>
               <input id="hypToken" type="password" class="form-input-v2" placeholder="Paste your API token here" autocomplete="off">
             </div>
-            <!-- handlers deferred to Phase 5 -->
             <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:0.4rem;">
-              <button id="btnHypTest" class="btn-status btn-status-primary" disabled>Test Connection</button>
-              <button id="btnHypSave" class="btn-status btn-status-primary" disabled>Save</button>
-              <button id="btnHypFetch" class="btn-status btn-status-success" disabled>Fetch Data</button>
+              <button id="btnHypTest" class="btn-status btn-status-primary">Test Connection</button>
+              <button id="btnHypSave" class="btn-status btn-status-primary">Save</button>
+              <button id="btnHypFetch" class="btn-status btn-status-success">Fetch Data</button>
             </div>
+            <div id="hypConfigMsg" class="config-msg"></div>
           </div>
         </div>
       </div>
@@ -1388,6 +1411,11 @@
             if (window._loadChatAssistant) window._loadChatAssistant();
           }
 
+          // Refresh credential status when entering config panels
+          if (target === 'sky-configure' || target === 'sky-integrations') {
+            if (window._fetchConfigStatus) window._fetchConfigStatus();
+          }
+
           closeDrawer();
         });
       });
@@ -1878,6 +1906,245 @@
       }
 
       window._loadChatAssistant = loadChatAssistant;
+    })();
+
+    // ============== Config Handler Wiring ==============
+    (function () {
+      var msgTimers = {};
+
+      function showConfigMsg(id, msg, type) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = msg;
+        el.className = 'config-msg' + (type ? ' ' + type : '');
+        if (msgTimers[id]) clearTimeout(msgTimers[id]);
+        msgTimers[id] = setTimeout(function () {
+          el.textContent = '';
+          el.className = 'config-msg';
+        }, 8000);
+      }
+
+      function prefill(inputId, value) {
+        var el = document.getElementById(inputId);
+        if (!el) return;
+        if (el.value === '' || el.value === (el.dataset.prefilled || '')) {
+          el.value = value;
+        }
+        el.dataset.prefilled = value;
+      }
+
+      function fetchConfigStatus() {
+        var neoStatus = document.getElementById('neoCredStatus');
+        var hypStatus = document.getElementById('hypCredStatus');
+
+        fetch('/api/config/status').then(function (r) {
+          return r.json();
+        }).then(function (data) {
+          // Neo4j credential status
+          if (neoStatus) {
+            if (data.neo4j.configured) {
+              neoStatus.textContent = '\u2713 Credentials saved';
+              neoStatus.className = 'cred-status ok';
+            } else {
+              neoStatus.textContent = '\u25CB No credentials configured';
+              neoStatus.className = 'cred-status missing';
+            }
+          }
+
+          // Pre-populate Neo4j fields (without overwriting user edits)
+          prefill('neoUri', data.neo4j.uri);
+          prefill('neoUser', data.neo4j.username);
+
+          // Hypothesis credential status
+          if (hypStatus) {
+            if (data.hypothesis.configured) {
+              var uname = (data.hypothesis.username || '').trim();
+              hypStatus.textContent = uname
+                ? '\u2713 Saved \u00b7 ' + uname
+                : '\u2713 Credentials saved';
+              hypStatus.className = 'cred-status ok';
+            } else {
+              hypStatus.textContent = '\u25CB No credentials configured';
+              hypStatus.className = 'cred-status missing';
+            }
+          }
+        }).catch(function () {
+          if (neoStatus) {
+            neoStatus.textContent = '\u25CB Status unavailable';
+            neoStatus.className = 'cred-status missing';
+          }
+          if (hypStatus) {
+            hypStatus.textContent = '\u25CB Status unavailable';
+            hypStatus.className = 'cred-status missing';
+          }
+        });
+      }
+
+      // Neo4j config handlers
+      function wireNeo4jConfig() {
+        var btnTest = document.getElementById('btnNeoTest');
+        var btnSave = document.getElementById('btnNeoSave');
+
+        if (btnTest) btnTest.addEventListener('click', function () {
+          var user = (document.getElementById('neoUser') || {}).value;
+          var pass = (document.getElementById('neoPass') || {}).value;
+          user = (user || '').trim();
+          pass = (pass || '').trim();
+          if (!user || !pass) {
+            showConfigMsg('neoConfigMsg', 'Enter username and password first.', 'warning');
+            return;
+          }
+          btnTest.disabled = true;
+          fetch('/api/config/test-neo4j', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: user, pass: pass })
+          }).then(function (r) {
+            return r.json();
+          }).then(function (data) {
+            if (data.ok) {
+              showConfigMsg('neoConfigMsg', 'Neo4j connection succeeded.', 'ok');
+            } else {
+              showConfigMsg('neoConfigMsg', data.message || 'Neo4j test failed.', 'error');
+            }
+          }).catch(function (e) {
+            showConfigMsg('neoConfigMsg', 'Neo4j test failed: ' + e.message, 'error');
+          }).finally(function () {
+            btnTest.disabled = false;
+          });
+        });
+
+        if (btnSave) btnSave.addEventListener('click', function () {
+          var uri  = ((document.getElementById('neoUri') || {}).value || '').trim() || 'bolt://localhost:7687';
+          var user = ((document.getElementById('neoUser') || {}).value || '').trim();
+          var pass = ((document.getElementById('neoPass') || {}).value || '').trim();
+          if (!user || !pass) {
+            showConfigMsg('neoConfigMsg', 'Enter username and password first.', 'warning');
+            return;
+          }
+          btnSave.disabled = true;
+          fetch('/api/config/save-neo4j', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uri: uri, user: user, pass: pass })
+          }).then(function (r) {
+            return r.json();
+          }).then(function (data) {
+            if (data.ok) {
+              showConfigMsg('neoConfigMsg', data.message || 'Saved.', 'ok');
+              fetchConfigStatus();
+            } else {
+              showConfigMsg('neoConfigMsg', data.message || 'Failed to save.', 'error');
+            }
+          }).catch(function (e) {
+            showConfigMsg('neoConfigMsg', 'Failed to save: ' + e.message, 'error');
+          }).finally(function () {
+            btnSave.disabled = false;
+          });
+        });
+      }
+
+      // Hypothesis config handlers
+      function wireHypothesisConfig() {
+        var elUser  = document.getElementById('hypUser');
+        var elToken = document.getElementById('hypToken');
+        var btnTest = document.getElementById('btnHypTest');
+        var btnSave = document.getElementById('btnHypSave');
+        var btnFetch = document.getElementById('btnHypFetch');
+
+        function readCreds() {
+          return {
+            username: ((elUser || {}).value || '').trim(),
+            token:    ((elToken || {}).value || '').trim()
+          };
+        }
+
+        if (btnTest) btnTest.addEventListener('click', function () {
+          var creds = readCreds();
+          if (!creds.token) {
+            showConfigMsg('hypConfigMsg', 'Paste your Hypothes.is API token first.', 'warning');
+            return;
+          }
+          btnTest.disabled = true;
+          fetch('/api/integrations/hypothesis/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: creds.username, token: creds.token })
+          }).then(function (r) {
+            return r.json();
+          }).then(function (data) {
+            if (data.ok) {
+              var who = data.userid ? ' (' + data.userid + ')' : '';
+              showConfigMsg('hypConfigMsg', 'Hypothes.is OK' + who, 'ok');
+            } else {
+              showConfigMsg('hypConfigMsg', data.message || 'Hypothes.is test failed.', 'error');
+            }
+          }).catch(function (e) {
+            showConfigMsg('hypConfigMsg', 'Hypothes.is test failed: ' + e.message, 'error');
+          }).finally(function () {
+            btnTest.disabled = false;
+          });
+        });
+
+        if (btnSave) btnSave.addEventListener('click', function () {
+          var creds = readCreds();
+          if (!creds.username || !creds.token) {
+            showConfigMsg('hypConfigMsg', 'Enter username and token first.', 'warning');
+            return;
+          }
+          btnSave.disabled = true;
+          fetch('/api/integrations/hypothesis/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: creds.username, token: creds.token })
+          }).then(function (r) {
+            return r.json();
+          }).then(function (data) {
+            if (data.ok) {
+              showConfigMsg('hypConfigMsg', data.message || 'Saved credentials.', 'ok');
+              fetchConfigStatus();
+            } else {
+              showConfigMsg('hypConfigMsg', data.message || 'Failed to save credentials.', 'error');
+            }
+          }).catch(function (e) {
+            showConfigMsg('hypConfigMsg', 'Failed to save: ' + e.message, 'error');
+          }).finally(function () {
+            btnSave.disabled = false;
+          });
+        });
+
+        if (btnFetch) btnFetch.addEventListener('click', function () {
+          btnFetch.disabled = true;
+          showConfigMsg('hypConfigMsg', 'Starting Hypothes.is fetch\u2026', '');
+          fetch('/api/integrations/hypothesis/fetch', { method: 'POST' }).then(function (r) {
+            return r.json();
+          }).then(function (data) {
+            if (data.ok) {
+              var msg = data.message || (data.forwarded ? 'Fetch started in Coyote Core.' : 'Fetch requested.');
+              showConfigMsg('hypConfigMsg', msg, 'ok');
+            } else {
+              showConfigMsg('hypConfigMsg', data.message || 'Fetch failed.', 'error');
+            }
+          }).catch(function (e) {
+            showConfigMsg('hypConfigMsg', 'Fetch failed: ' + e.message, 'error');
+          }).finally(function () {
+            btnFetch.disabled = false;
+          });
+        });
+      }
+
+      function init() {
+        wireNeo4jConfig();
+        wireHypothesisConfig();
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+
+      window._fetchConfigStatus = fetchConfigStatus;
     })();
   </script>
 </body>
