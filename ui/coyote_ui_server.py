@@ -227,15 +227,17 @@ def before_first_request():
 
 @app.route('/')
 def index():
-    """Serve the main UI"""
+    """Serve the main UI (wireframe_v2.html — Phase 5b cutover)"""
     logger.debug("Serving main UI page")
-    return render_template('coyote_wireframe.html')
-
-# Phase 3 debug route — remove at Phase 5 cutover
-@app.route('/wireframe')
-def wireframe_v2():
-    logger.info("wireframe_v2 debug route accessed")
     return render_template('wireframe_v2.html')
+
+# Legacy fallback — coyote_wireframe.html accessible at /legacy
+# until wireframe_v2.html is confirmed stable in production.
+# Remove this route once stability is confirmed post-MVP.
+@app.route('/legacy')
+def legacy_ui():
+    logger.info("Legacy UI route accessed")
+    return render_template('coyote_wireframe.html')
 
 @app.route('/extension_heartbeat', methods=['POST'])
 def extension_heartbeat():
@@ -780,6 +782,25 @@ def api_config_save_neo4j():
     except Exception as e:
         logger.exception("save-neo4j failed")
         return jsonify({"ok": False, "message": f"Failed to save: {e}"}), 500
+
+@app.route('/api/config/status', methods=['GET'])
+def api_config_status():
+    """Return saved credential state. Never exposes secret values."""
+    env = _parse_env_file()
+    neo4j_configured = bool(env.get('NEO4J_PASSWORD', '').strip())
+    hyp_configured = bool(env.get('HYPOTHESIS_TOKEN', '').strip())
+    return jsonify({
+        'neo4j': {
+            'configured': neo4j_configured,
+            'uri': env.get('COYOTE_NEO4J_URI_HOST',
+                           env.get('NEO4J_URI', 'bolt://localhost:7687')),
+            'username': env.get('NEO4J_USERNAME', 'neo4j')
+        },
+        'hypothesis': {
+            'configured': hyp_configured,
+            'username': env.get('HYPOTHESIS_USERNAME', '')
+        }
+    })
 
 # --- ADD: generic values runner (keeps _run_cypher_http intact) ----------------
 def _run_values_http(statement: str, parameters: dict | None = None, timeout=6.0):

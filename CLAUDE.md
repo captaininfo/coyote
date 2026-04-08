@@ -33,8 +33,8 @@ Coyote is a local-first, privacy-first heutagogical learning tool. It transforms
 Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, "")` = error
 
 ### UI Architecture (wireframe_v2.html)
-**Status:** Phase 4 complete. **Phase 5 next:** route `/` to `wireframe_v2.html`, retire `coyote_wireframe.html`.
-**File:** `ui/templates/wireframe_v2.html` (debug route at `/wireframe`; `/` still serves old wireframe)
+**Status:** Phase 5 complete. Post-MVP: remove `/legacy` route and delete `coyote_wireframe.html` once stability is confirmed.
+**File:** `ui/templates/wireframe_v2.html` (served at `/`). Legacy fallback: `coyote_wireframe.html` at `/legacy` — do not delete yet.
 
 **Layout:** Two-zone flex column
 - Sky zone (flex: 1): content stage. Active feature owns this space.
@@ -52,9 +52,7 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 **Navigation:** Slide-out drawer. `ctx-overview` chip row for graph queries.
 `window.switchSection(name)` shim maps old names (`browse`→`sky-overview`, etc.).
 
-**Deferred to Phase 5:** button handlers for `btnNeoTest`, `btnNeoSave`,
-`btnHypTest`, `btnHypSave`, `btnHypFetch` (port `wireConfigHandlers()` from `coyote_ui.js`).
-CSS extraction to separate file also deferred.
+**Deferred post-MVP:** CSS extraction to separate file.
 
 ## Key Files
 | File | Purpose |
