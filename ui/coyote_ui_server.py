@@ -28,6 +28,7 @@ from shared.nl2cypher import (
     prompt_text, schema_for_prompts, SCHEMA_MIN,
     strip_fences_or_json,  # also used in bot.py
     looks_like_cypher,     # reuse the same heuristic
+    is_read_only,
 )
 
 # Configure paths
@@ -92,7 +93,7 @@ except Exception as e:
 ALLOWED_LABELS = {
     "Webpage", "Annotation", "Purpose", "SearchTerms", "WikiDataOntology"
 }
-ALLOWED_REL_TYPES = {"HAS_TOPIC", "INITIATES_SEARCH", "HAS_ANNOTATION", "LINKS_TO"}
+ALLOWED_REL_TYPES = {"HAS_TOPIC", "INITIATES_SEARCH", "HAS_ANNOTATION", "LINKS_TO", "INITIATES", "GENERATES_SERP"}
 ALLOWED_PROPS = {
     # Webpage
     "event_id","url","title","summary","timestamp","isSERP","dataSource","entities","topics","active_seconds",
@@ -964,6 +965,16 @@ RETURN
         return jsonify({"status":"error","message":str(e)}), 500
 
 
+def _validate_and_execute(cypher: str, nl: str, params: dict) -> dict:
+    """Guards + execute pipeline. Raises ValueError or RuntimeError on failure."""
+    _sanitize_readonly(cypher)
+    if nl and not _has_nodes_rels_return(cypher):
+        raise ValueError("Shape guard: NL→Cypher must RETURN both `nodes` and `rels` for visualization.")
+    _schema_gate(cypher)
+    _explain_http(cypher, params)
+    return _run_cypher_http(cypher, params)
+
+
 @app.route('/api/graph/run', methods=['POST'])
 def graph_run():
     payload = flask_request.get_json(silent=True) or {}
@@ -973,23 +984,35 @@ def graph_run():
     if nl and not cypher:
         gen, diag = _nl_to_cypher(nl)
         if not gen:
-            # Surface a helpful reason to the UI
             return jsonify({"status":"unavailable","message": diag or "LLM could not translate NL→Cypher"}), 200
         cypher = gen
     if not cypher:
         return jsonify({"status":"error","message":"No query provided"}), 400
+
+    retried = False
     try:
-        _sanitize_readonly(cypher)
-        # 1) If this came from NL→Cypher, enforce the visual return shape up front.
-        if nl and not _has_nodes_rels_return(cypher):
-            raise ValueError("Shape guard: NL→Cypher must RETURN both `nodes` and `rels` for visualization.")
-        # 2) Schema gate: block unknown labels/rels/props and any Q/A leftovers.
-        _schema_gate(cypher)
-        # 3) Preflight with EXPLAIN so Neo4j's error text can flow back verbatim.
-        _explain_http(cypher, params)
-        row = _run_cypher_http(cypher, params)
+        try:
+            row = _validate_and_execute(cypher, nl, params)
+        except (ValueError, RuntimeError) as first_err:
+            if not nl:
+                raise  # manual Cypher — no retry
+            # Single retry with error correction for NL-generated queries
+            logger.info("NL→Cypher attempt 1 failed (%s): %s", type(first_err).__name__, str(first_err)[:200])
+            logger.info("NL→Cypher attempt 1 Cypher: %s", cypher[:300])
+            gen2, diag2 = _nl_to_cypher(nl, prior_error=str(first_err))
+            if not gen2:
+                raise  # retry generation failed — surface original error
+            logger.info("NL→Cypher attempt 2 Cypher: %s", gen2)
+            row = _validate_and_execute(gen2, nl, params)
+            cypher = gen2
+            retried = True
+            logger.info("NL→Cypher attempt 2 succeeded")
+
         counts = _to_cytoscape_counts(row if isinstance(row, dict) else {"nodes":[],"rels":[]})
-        return jsonify({"status":"success", **row, "counts": counts})
+        result = {"status":"success", **row, "counts": counts}
+        if retried:
+            result["retried"] = True
+        return jsonify(result)
     except ValueError as ve:
         return jsonify({"status":"error","message":str(ve)}), 400
     except Exception as e:
@@ -1188,10 +1211,7 @@ def _schema_gate(cypher: str):
     return True
 
 def _sanitize_readonly(cypher:str):
-    # very simple write-guard (MVP). Reject write keywords.
-    banned = ['create ', 'merge ', 'delete ', 'remove ', 'set ', 'call dbms.', 'call db.index.', 'load csv', 'apoc.load']
-    low = ' '.join(cypher.lower().split())
-    if any(k in low for k in banned):
+    if not is_read_only(cypher):
         raise ValueError("Write/DDL operations are not allowed from the UI.")
     return cypher
 
@@ -1200,13 +1220,14 @@ def _to_cytoscape_counts(payload):
     rels  = payload.get('rels')  if isinstance(payload, dict) else []
     return {'nodes': len(nodes or []), 'rels': len(rels or [])}
 
-def _nl_to_cypher(nl_question:str) -> tuple[str|None, str|None]:
-    """NL→Cypher via local Ollama. Returns (cypher, error_message)."""
+def _nl_to_cypher(nl_question:str, prior_error:str|None=None) -> tuple[str|None, str|None]:
+    """NL→Cypher via local Ollama. Returns (cypher, error_message).
+    If prior_error is set, appends a correction signal to the prompt (retry path)."""
     env = _parse_env_file()
     port = env.get('OLLAMA_PORT','11434')
-    model = env.get('LLM','mistral:7b-instruct')
+    model = env.get('LLM','qwen2.5-coder:3b')
     url = f"http://localhost:{port}/api/generate"
-    
+
     using_fallback = False
     try:
         schema = schema_for_prompts(None)
@@ -1244,20 +1265,25 @@ Output STRICT JSON: {{"cypher":"<query>"}}
 
 USER QUESTION: {nl_question}
 """
-    
-    logger.info(f"Prompt source: {'FALLBACK' if using_fallback else 'IMPORTED'}")
+
+    if prior_error:
+        err_truncated = prior_error[:200]
+        prompt += f'\n\nCORRECTION REQUIRED: Your previous Cypher attempt failed with this error: "{err_truncated}". Do not repeat this pattern. Generate a corrected query.'
+
+    logger.info(f"Prompt source: {'FALLBACK' if using_fallback else 'IMPORTED'}{' (RETRY)' if prior_error else ''}")
     logger.debug(f"Prompt preview: {prompt[:500]}...")
     
     payload = json.dumps({
         "model": model,
         "prompt": prompt,
         "stream": False,
+        "keep_alive": "10m",
         "options": {"temperature": 0, "num_predict": 256}
     }).encode("utf-8")
     
     try:
         req = urllib.request.Request(url, data=payload, method="POST", headers={"Content-Type":"application/json"})
-        timeout_s = float(os.environ.get("OLLAMA_TIMEOUT", "120"))
+        timeout_s = float(os.environ.get("OLLAMA_TIMEOUT", "90"))
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             out = json.loads(resp.read().decode('utf-8'))
         
@@ -1273,7 +1299,7 @@ USER QUESTION: {nl_question}
             blob = json.loads(text[start:end+1])
             cypher = blob.get('cypher','').strip()
             if cypher:
-                logger.info("NL→Cypher SUCCESS: %s → %s", nl_question, cypher[:200])
+                logger.info("NL→Cypher SUCCESS: %s → %s", nl_question, cypher)
                 return cypher, None
 
         # Next, strip code fences

@@ -14,7 +14,7 @@ Coyote is a local-first, privacy-first heutagogical learning tool. It transforms
 | Service | Port | Purpose |
 |---------|------|---------|
 | neo4j | 7474, 7687 | Graph DB (Neo4j 5.26, APOC restricted) |
-| ollama | 11434 | Local LLM (mistral:7b-instruct) |
+| ollama | 11434 | Local LLM (qwen2.5-coder:3b) |
 | coyote_app | 5000 | Flask Core API + NLP pipeline |
 | bot | 8501 | Streamlit chat + GraphRAG |
 | ui_server | 8080 | Flask Docker orchestration UI (not in compose) |
@@ -24,6 +24,7 @@ Coyote is a local-first, privacy-first heutagogical learning tool. It transforms
 ### Neo4j Graph Model
 **Nodes:** `Webpage`, `Annotation`, `Purpose`, `SearchTerms`, `WikiDataOntology`
 **Relationships:** `INITIATES_SEARCH`, `INITIATES`, `GENERATES_SERP`, `LINKS_TO`, `HAS_ANNOTATION`, `HAS_TOPIC`
+**Timestamps:** Stored as ISO 8601 strings, not native datetime. Use `datetime(node.timestamp)` wrapper for all comparisons.
 
 ### GraphRAG 3-Tier Fallback (chains.py)
 - **TIER 1**: Parameterized Cypher (CY_TOPICS_SAFE, CY_TEXT_SAFE, CY_SEARCHES_SAFE) via `$params` + `apoc.convert.fromJsonList`
@@ -81,7 +82,7 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 |----------|---------|---------|
 | COYOTE_LOG_LEVEL | INFO | Logging verbosity |
 | USE_LC_NL2CYPHER | 0 | Dangerous LangChain mode (keep off) |
-| LLM | mistral:7b-instruct | Ollama model name |
+| LLM | qwen2.5-coder:3b | Ollama model name |
 | FLASK_DEBUG | 0 | Flask debug mode |
 
 ### Things NOT To Do
@@ -103,6 +104,8 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 - f-strings OK in logs; user input must go through `json.dumps()`
 - `shared/nl2cypher.py` is canonical; run `make sync-shared` after editing to update agent copy
 - Time parsing via `shared.time_utils.days_from_text()` (default 90d)
+- NL→Cypher pipeline: `graph_run()` → `_validate_and_execute()` (guards + Neo4j exec) with single-retry for NL queries; on failure, re-calls `_nl_to_cypher(prior_error=...)` with truncated error as `CORRECTION REQUIRED:` suffix
+- `PROMPT_GRAPH` rules: no unprompted time filters (rule 2), `datetime()` wrapper required (rule 3), two labeled worked examples
 
 ## Testing
 ```bash

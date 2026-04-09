@@ -361,9 +361,10 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
             import os
             
             llm_for_cypher = OllamaLLM(
-                model=os.getenv("LLM", "mistral:7b-instruct"),
+                model=os.getenv("LLM", "qwen2.5-coder:3b"),
                 base_url=os.getenv("OLLAMA_BASE_URL", "http://llm:11434"),
-                temperature=0
+                temperature=0,
+                num_predict=256,
             )
             
             raw_response = llm_for_cypher.invoke(full_prompt)

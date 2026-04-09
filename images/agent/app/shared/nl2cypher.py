@@ -9,10 +9,10 @@ from typing import Literal
 # dynamic one where available.
 SCHEMA_MIN = """
 Node Labels and Properties:
-(:Webpage {{event_id, url, title, summary, timestamp, isSERP, dataSource, entities, topics}})
-(:Annotation {{annotation_id, annotation_text, highlighted_text, timestamp, url, webpage_title, entities, topics}})
-(:Purpose {{event_id, text, timestamp, dataSource, topics, entities}})
-(:SearchTerms {{event_id, text, relevance, timestamp, dataSource, topics, entities}})
+(:Webpage {{event_id, url, title, summary, timestamp (ISO 8601 string), isSERP, dataSource, entities, topics}})
+(:Annotation {{annotation_id, annotation_text, highlighted_text, timestamp (ISO 8601 string), url, webpage_title, entities, topics}})
+(:Purpose {{event_id, text, timestamp (ISO 8601 string), dataSource, topics, entities}})
+(:SearchTerms {{event_id, text, relevance, timestamp (ISO 8601 string), dataSource, topics, entities}})
 (:WikiDataOntology {{uri, label}})
 
 Relationships:
@@ -22,6 +22,8 @@ Relationships:
 (:Purpose)-[:INITIATES_SEARCH]->(:SearchTerms)
 (:Webpage)-[:HAS_ANNOTATION]->(:Annotation)
 (:Webpage)-[:LINKS_TO]->(:Webpage)
+(:Purpose)-[:INITIATES]->(:Webpage)
+(:Purpose)-[:GENERATES_SERP]->(:Webpage)
 """
 
 PROMPT_TABLE = """You are an expert Neo4j/Cypher query assistant for the Coyote personal learning system.
@@ -53,48 +55,36 @@ PROMPT_GRAPH = """You translate user questions into ONE read-only Cypher query o
 SCHEMA:
 {schema}
 
-CRITICAL RULES:
-1. Use ONLY the listed labels/properties/relationships
-2. For date filtering: datetime(node.timestamp) >= datetime() - duration({{days: N}})
-3. For "today" comparisons: date(datetime(node.timestamp)) = date()
-4. ALWAYS use this EXACT pattern for the RETURN statement:
+RULES:
+1. Use ONLY the listed labels/properties/relationships.
+2. Do NOT add date/time filters unless the user explicitly mentions time (e.g. "recent", "last week", "today", "past month").
+3. When the user requests a time filter, ALWAYS wrap the property:
+   Correct: datetime(node.timestamp) >= datetime() - duration({{days: N}})
+   WRONG (silently returns nothing): node.timestamp >= datetime() - duration({{days: N}})
+4. Today: date(datetime(node.timestamp)) = date()
+5. ALWAYS use this RETURN pattern — collect matched nodes first, then expand relationships:
 
-MATCH <your pattern>
-WHERE <your filters>
+MATCH <pattern> WHERE <filters>
 WITH collect(DISTINCT <matched_node>) AS matchedNodes
-OPTIONAL MATCH <relationships if needed>
-WITH matchedNodes + collect(DISTINCT <related_node>) AS allNodes, collect(DISTINCT <relationship>) AS allRels
+OPTIONAL MATCH (n)-[r]->() WHERE n IN matchedNodes
+WITH matchedNodes, collect(DISTINCT endNode(r)) AS relatedNodes, collect(DISTINCT r) AS allRels
+WITH matchedNodes + relatedNodes AS allNodes, allRels
 RETURN
   [x IN allNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes,
-  [x IN allRels | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels
+  [x IN allRels  | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels
 
-EXAMPLES:
+If no relationships are needed, use [] AS rels.
 
-Question: "What webpages have I viewed today?"
-{{
-  "cypher": "MATCH (w:Webpage {{isSERP: false}}) WHERE date(datetime(w.timestamp)) = date() WITH collect(DISTINCT w) AS matchedNodes RETURN [x IN matchedNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes, [] AS rels"
-}}
+EXAMPLE 1 — topic query (no time filter):
+Question: "Show me webpages about artificial intelligence"
+{{"cypher": "MATCH (w:Webpage)-[:HAS_TOPIC]->(t:WikiDataOntology) WHERE toLower(t.label) CONTAINS 'artificial intelligence' WITH collect(DISTINCT w) AS matchedNodes OPTIONAL MATCH (n)-[r]->() WHERE n IN matchedNodes WITH matchedNodes, collect(DISTINCT endNode(r)) AS relatedNodes, collect(DISTINCT r) AS allRels WITH matchedNodes + relatedNodes AS allNodes, allRels RETURN [x IN allNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes, [x IN allRels | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels"}}
 
-Question: "Show annotations from the last 7 days"
-{{
-  "cypher": "MATCH (a:Annotation) WHERE datetime(a.timestamp) >= datetime() - duration({{days: 7}}) WITH collect(DISTINCT a) AS matchedNodes OPTIONAL MATCH (w:Webpage)-[r:HAS_ANNOTATION]->(a) WITH matchedNodes + collect(DISTINCT w) AS allNodes, collect(DISTINCT r) AS allRels RETURN [x IN allNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes, [x IN allRels | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels"
-}}
+EXAMPLE 2 — time-filtered query (user asked for "last 7 days"):
+Question: "Show me webpages I visited in the last 7 days"
+{{"cypher": "MATCH (w:Webpage {{isSERP: false}}) WHERE datetime(w.timestamp) >= datetime() - duration({{days: 7}}) WITH collect(DISTINCT w) AS matchedNodes OPTIONAL MATCH (n)-[r]->() WHERE n IN matchedNodes WITH matchedNodes, collect(DISTINCT endNode(r)) AS relatedNodes, collect(DISTINCT r) AS allRels WITH matchedNodes + relatedNodes AS allNodes, allRels RETURN [x IN allNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes, [x IN allRels | {{id:id(x), type:type(x), s:id(startNode(x)), t:id(endNode(x)), props:properties(x)}}] AS rels"}}
 
-Question: "Show me webpages from yesterday"
-{{
-  "cypher": "MATCH (w:Webpage) WHERE date(datetime(w.timestamp)) = date() - duration({{days: 1}}) WITH collect(DISTINCT w) AS matchedNodes RETURN [x IN matchedNodes | {{id:id(x), labels:labels(x), props:properties(x)}}] AS nodes, [] AS rels"
-}}
-
-KEY POINTS:
-- For "today" or specific date comparisons: use date(datetime(node.timestamp)) = date()
-- For time ranges: use datetime(node.timestamp) >= datetime() - duration({{days: N}})
-- First collect your matched nodes with WITH
-- Then optionally get related nodes/relationships  
-- Then combine everything into allNodes and allRels
-- Finally use the list comprehension pattern on those collections
-
-Output STRICT JSON with a single key:
-{{"cypher":"<your query here>"}}
+Output STRICT JSON: {{"cypher":"<query>"}}
+No code fences. No preamble. First character must be {{.
 
 USER QUESTION: {question}
 """
