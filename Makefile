@@ -3,7 +3,8 @@
 # Copy canonical shared modules into agent build context
 sync-shared:
 	cp shared/nl2cypher.py images/agent/app/shared/nl2cypher.py
-	@echo "Synced shared/nl2cypher.py -> images/agent/app/shared/nl2cypher.py"
+	cp shared/embedding_config.py images/agent/app/shared/embedding_config.py
+	@echo "Synced shared/ -> images/agent/app/shared/"
 
 test:
 	python -m pytest tests/ -v

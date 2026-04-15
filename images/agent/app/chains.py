@@ -65,7 +65,7 @@ def load_embedding_model(embedding_model_name: str, logger=BaseLogger(), config=
         logger.info("Embedding: Using Google Generative AI Embeddings")
     else:
         embeddings = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2", cache_folder="/embedding_model"
+            model_name="all-MiniLM-L6-v2"
         )
         dimension = 384
         logger.info("Embedding: Using SentenceTransformer")

@@ -31,21 +31,33 @@ def extract_title_and_question(input_string):
 
 
 def create_vector_index(driver) -> None:
-    """Create vector indexes for Coyote schema nodes.
+    """Create Neo4j vector indexes for Webpage and Annotation embedding
+    properties. Safe to call repeatedly — uses IF NOT EXISTS.
 
-    Coyote uses Webpage and Annotation nodes, not the legacy Question/Answer schema.
+    IMPORTANT: If EMBEDDING_DIMENSION changes, existing indexes must be
+    dropped and recreated. IF NOT EXISTS will not update a malformed index.
+    Run: DROP INDEX webpage_embedding; DROP INDEX annotation_embedding;
+    Then restart the bot to recreate them.
     """
+    from shared.embedding_config import EMBEDDING_MODEL_NAME, EMBEDDING_DIMENSION
     indexes = [
         ("webpage_embedding", "Webpage", "embedding"),
         ("annotation_embedding", "Annotation", "embedding"),
     ]
-    for index_name, label, property_name in indexes:
-        query = f"CREATE VECTOR INDEX {index_name} IF NOT EXISTS FOR (n:{label}) ON n.{property_name}"
+    for index_name, label, prop in indexes:
+        query = (
+            f"CREATE VECTOR INDEX {index_name} IF NOT EXISTS "
+            f"FOR (n:{label}) ON n.{prop} "
+            f"OPTIONS {{indexConfig: {{`vector.dimensions`: {EMBEDDING_DIMENSION}, "
+            f"`vector.similarity_function`: 'cosine'}}}}"
+        )
         try:
             driver.query(query)
+            log.info("Vector index ensured: %s (model=%s, dim=%d)",
+                     index_name, EMBEDDING_MODEL_NAME, EMBEDDING_DIMENSION)
         except Exception as e:
-            # Index may already exist, or embedding property not present yet
-            log.debug("Vector index creation skipped for %s: %s", index_name, e)
+            log.warning("Vector index creation issue for %s: %s",
+                        index_name, e)
 
 
 def create_constraints(driver):

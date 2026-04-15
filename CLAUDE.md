@@ -19,7 +19,7 @@ Coyote is a local-first, privacy-first heutagogical learning tool. It transforms
 | bot | 8501 | Streamlit chat + GraphRAG |
 | ui_server | 8080 | Flask Docker orchestration UI (not in compose) |
 
-**Data Flow**: Browser Extension → SQLite staging → NLP enrichment (spaCy NER, BERTopic/RAKE) → Neo4j graph → GraphRAG → LLM response
+**Data Flow**: Browser Extension → SQLite staging → NLP enrichment (spaCy NER, BERTopic/RAKE, [embedding — Phase B]) → Neo4j graph → GraphRAG ([Tier 0 vector — Phase C] + Tier 1-3) → LLM response
 
 ### Neo4j Graph Model
 **Nodes:** `Webpage`, `Annotation`, `Purpose`, `SearchTerms`, `WikiDataOntology`
@@ -66,6 +66,8 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 | `shared/nl2cypher.py` | Cypher validation (ALSO duplicated at `images/agent/app/shared/`) |
 | `images/core/core_analysis/coyote/utils/initialize_databases.py` | SQLite schema definitions |
 | `images/core/core_analysis/coyote/analysis/nlp/` | NER, BERTopic, RAKE, summarization |
+| `shared/embedding_config.py` | `EMBEDDING_MODEL_NAME`, `EMBEDDING_DIMENSION` constants (Phase A) |
+| `images/core/core_analysis/coyote/coyote_embedder.py` | `embed_text()`, model singleton, lazy import (Phase B) |
 | `tests/test_security.py` | Blocklist unit tests (21 cases) |
 
 ## Security
@@ -84,6 +86,8 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 | USE_LC_NL2CYPHER | 0 | Dangerous LangChain mode (keep off) |
 | LLM | qwen2.5-coder:3b | Ollama model name |
 | FLASK_DEBUG | 0 | Flask debug mode |
+| SENTENCE_TRANSFORMERS_HOME | /opt/embedding_model | Embedding model cache path (both containers) |
+| VECTOR_SIMILARITY_THRESHOLD | 0.65 | Tier 0 cosine similarity cutoff (Phase C) |
 
 ### Things NOT To Do
 - Never expose ports to public internet
@@ -93,7 +97,38 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 - Never enable `USE_LC_NL2CYPHER=1` — bypasses read-only validation entirely
 
 ## Known Issues (Open)
-- Vector indexes created but embeddings never stored or queried
+- Vector embedding rollout in progress (Phase B next). See **Vector Embedding Rollout** below.
+- `images/core/requirements.txt` is an orphan — outside the Dockerfile build context (`images/core/core_analysis/`). The actual file used in builds is `images/core/core_analysis/requirements.txt`. The orphan has diverged (missing `bert-extractive-summarizer`, has a stale `sentence-transformers` edit). Investigate and delete if confirmed unused.
+
+## Vector Embedding Rollout
+
+**Status:** Phase A complete. Phase B next (embedding at ingestion).
+
+### Architectural Invariants (all phases must preserve)
+- `content_role: "input"|"output"` on every embedded node (replaces `isInput` in new CREATEs)
+- `embedding_model: "all-MiniLM-L6-v2"` on every embedded node
+- `embedding_text: <exact string embedded>` on every embedded node
+- Vector indexes: `webpage_embedding`, `annotation_embedding` (384 dims, cosine, per-label)
+- Shared constants: `shared/embedding_config.py` (`EMBEDDING_MODEL_NAME`, `EMBEDDING_DIMENSION`)
+
+### Model / Infrastructure
+- Model: `all-MiniLM-L6-v2` (384-dim, CPU-only, `sentence-transformers==3.3.1`)
+- Pre-downloaded at build time to `/opt/embedding_model`; `ENV SENTENCE_TRANSFORMERS_HOME=/opt/embedding_model`
+- Core uses `SentenceTransformer` directly; Agent uses `HuggingFaceEmbeddings` (LangChain wrapper)
+- No shared volume for model files
+- Node provenance: `embedding_generated_at` (ISO UTC string) on every embedded node — not an invariant but required for observability and future model migration
+
+### Phases
+| Phase | Scope | Gate |
+|-------|-------|------|
+| ~~A~~ | ~~`embedding_config.py`, SQLite migrations, `create_vector_index()` fix, Dockerfile/compose~~ | ~~Vector indexes ONLINE, new columns visible, `sentence-transformers` in Core~~ (done) |
+| B | `coyote_embedder.py`, NLP Steps 20.5/10.5, Neo4j writers | Embedded nodes in Neo4j with all invariant properties |
+| C | Tier 0 (`_try_tier0_vector`) in `chains.py` | Bot logs show TIER 0 hits; `VECTOR_SIMILARITY_THRESHOLD` env var works |
+| D | CLAUDE.md final update | Docs match implementation |
+
+### Fixed in Phase A
+- `create_vector_index()` was silently failing (missing `OPTIONS` clause) — indexes now confirmed ONLINE
+- CLAUDE.md previously stated indexes existed — corrected
 
 ## Development Patterns
 - 3-state returns: `(True=found, False=empty, None=error)`
@@ -116,4 +151,4 @@ make build-agent                  # sync + rebuild bot container
 
 ## Security Roadmap
 **P1**: ~~LangChain 1.0 migration~~ (done — now on langchain-core 1.2.x, langchain-neo4j 0.7.0)
-**P2**: Optional auth, CORS config, rate limiting, vector search activation, extension config UI
+**P2**: Optional auth, CORS config, rate limiting, ~~vector search activation~~ (in progress — see rollout above), extension config UI

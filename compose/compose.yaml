@@ -76,6 +76,7 @@ services:
       - COYOTE_DATA_DIR=/app/data
       - COYOTE_LOG_LEVEL=${COYOTE_LOG_LEVEL-INFO}
       - FLASK_DEBUG=${FLASK_DEBUG-0}
+      - SENTENCE_TRANSFORMERS_HOME=/opt/embedding_model
     volumes:
       - ${COYOTE_USER_DATA-./volumes/coyote}:/app/data
     healthcheck:
@@ -106,10 +107,10 @@ services:
       - LLM=${LLM-qwen2.5-coder:3b}
       - AGENT_LOG_DIR=/app/logs
       - AGENT_LOG_LEVEL=DEBUG
-      - USE_LC_NL2CYPHER=0 
-
+      - USE_LC_NL2CYPHER=0
+      - SENTENCE_TRANSFORMERS_HOME=/opt/embedding_model
+      - VECTOR_SIMILARITY_THRESHOLD=${VECTOR_SIMILARITY_THRESHOLD:-0.65}
     volumes:
-      - ${EMBEDDING_MODEL_DIR-./volumes/embedding_model}:/embedding_model
       - ${AGENT_LOG_DIR-./volumes/agent_logs}:/app/logs
     depends_on:
       # Bot waits for Neo4j *and* the LLM model to be present

@@ -150,6 +150,9 @@ def initialize_coyote_event_data_db() -> None:
         scraped_text      TEXT,
         webpage_summary   TEXT,
         webpage_relevance_score REAL,
+        embedding         TEXT,
+        embedding_text    TEXT,
+        embedding_generated_at TEXT,
         FOREIGN KEY(event_id) REFERENCES Events(event_id) ON DELETE CASCADE
     );
 
@@ -173,6 +176,9 @@ def initialize_coyote_event_data_db() -> None:
         user_account TEXT,
         groups TEXT,
         visibility TEXT,
+        embedding TEXT,
+        embedding_text TEXT,
+        embedding_generated_at TEXT,
         FOREIGN KEY(event_id) REFERENCES Events(event_id) ON DELETE CASCADE
     );
 
