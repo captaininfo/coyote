@@ -36,6 +36,13 @@ from coyote.analysis.nlp.text_bertopic_analysis import (
 )
 from coyote.analysis.nlp.bertopic_analysis import analyze_topics
 from coyote.analysis.relevance_calculator import calculate_relevance
+import json
+from coyote.coyote_embedder import (
+    embed_text,
+    build_webpage_embedding_text,
+    build_annotation_embedding_text,
+    embedding_timestamp,
+)
 
 # Get logger
 logger = logging.getLogger(__name__)
@@ -668,6 +675,35 @@ class CoyoteNLPStateManager:
                     )
                 logger.info(f"Updated Entities table with TF-IDF scores for event_id {event_id}.")
 
+                # Step 20.5: Compute and store embedding
+                # entity_texts already set at Step 16
+                topic_labels = [t[0] for t in detailed_topics] if detailed_topics else []
+
+                emb_text = build_webpage_embedding_text(
+                    title=title or "",
+                    summary=webpage_summary or "",
+                    entity_texts=entity_texts,
+                    topic_labels=topic_labels,
+                )
+                embedding_vector = embed_text(emb_text)
+                ts = embedding_timestamp() if embedding_vector is not None else None
+                embedding_json = json.dumps(embedding_vector) \
+                    if embedding_vector is not None else None
+
+                self.data_cursor.execute(
+                    """UPDATE WebpageLoads
+                       SET embedding=?, embedding_text=?, embedding_generated_at=?
+                       WHERE event_id=?""",
+                    (embedding_json,
+                     emb_text if embedding_vector is not None else None,
+                     ts,
+                     event_id)
+                )
+                logger.info(
+                    "Webpage embedding for event_id %s: stored=%s",
+                    event_id, embedding_vector is not None
+                )
+
                 # Step 21: Commit transaction and update internal EventTracking status
                 self.data_cursor.execute(
                     "UPDATE EventTracking SET status='completed', last_updated=CURRENT_TIMESTAMP WHERE event_id=?",
@@ -987,6 +1023,33 @@ class CoyoteNLPStateManager:
                 logger.info(f"Updated {len(mapped_entities_records)} annotation entities with WikiData URIs for event_id {event_id}.")
             else:
                 logger.warning(f"No mapped annotation entities to update in Entities table for event_id {event_id}.")
+
+            # Step 10.5: Compute and store annotation embedding
+            all_entity_texts = [r[2] for r in entities_records]
+
+            emb_text = build_annotation_embedding_text(
+                annotation_text=annotation_text or "",
+                highlighted_text=highlighted_text or "",
+                entity_texts=all_entity_texts,
+            )
+            embedding_vector = embed_text(emb_text)
+            ts = embedding_timestamp() if embedding_vector is not None else None
+            embedding_json = json.dumps(embedding_vector) \
+                if embedding_vector is not None else None
+
+            self.data_cursor.execute(
+                """UPDATE Annotations
+                   SET embedding=?, embedding_text=?, embedding_generated_at=?
+                   WHERE event_id=?""",
+                (embedding_json,
+                 emb_text if embedding_vector is not None else None,
+                 ts,
+                 event_id)
+            )
+            logger.info(
+                "Annotation embedding for event_id %s: stored=%s",
+                event_id, embedding_vector is not None
+            )
 
             # Step 11: Commit transaction and update internal EventTracking status
             self.data_cursor.execute(

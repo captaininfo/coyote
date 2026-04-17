@@ -9,6 +9,7 @@ import logging
 import sqlite3
 from typing import Any, Dict, Optional, TYPE_CHECKING
 from neo4j import Session, Transaction
+from shared.embedding_config import EMBEDDING_MODEL_NAME
 
 if TYPE_CHECKING:                                   # runtime‑safe
     from coyote.neo4j_integration.coyote_neo4j_state_manager import (
@@ -33,7 +34,8 @@ def process_annotation(
     cursor.execute(
         """
         SELECT annotation_id, url, webpage_title, annotation_text,
-               highlighted_text, user_account, groups, visibility
+               highlighted_text, user_account, groups, visibility,
+               embedding, embedding_text, embedding_generated_at
         FROM   Annotations
         WHERE  event_id = ?
         """,
@@ -53,7 +55,12 @@ def process_annotation(
         user_account,
         group_name,
         visibility,
+        embedding_json,
+        embedding_text_val,
+        embedding_generated_at_val,
     ) = row
+
+    embedding = json.loads(embedding_json) if embedding_json else None
 
     # timestamp (primitive) ───────────────────────────────────────────
     cursor.execute("SELECT timestamp FROM Events WHERE event_id = ?", (event_id,))
@@ -131,7 +138,11 @@ def process_annotation(
         tags: $tags,
         url: $url,
         webpage_title: $webpage_title,
-        isInput: false
+        content_role: "output",
+        embedding: $embedding,
+        embedding_model: $embedding_model,
+        embedding_text: $embedding_text,
+        embedding_generated_at: $embedding_generated_at
     })
     MERGE (w)-[:HAS_ANNOTATION]->(a)
     RETURN id(a) AS annotation_node_id
@@ -151,6 +162,10 @@ def process_annotation(
         "flat_topics": flat_topics,
         "flat_entities": flat_entities,
         "tags": tags_json,
+        "embedding": embedding,
+        "embedding_model": EMBEDDING_MODEL_NAME if embedding is not None else None,
+        "embedding_text": embedding_text_val,
+        "embedding_generated_at": embedding_generated_at_val,
     }
 
     try:

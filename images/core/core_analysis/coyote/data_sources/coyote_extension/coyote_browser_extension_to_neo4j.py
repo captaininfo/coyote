@@ -7,6 +7,7 @@ Module for processing data from the Coyote browser extension and inserting it in
 import logging
 import json  # Added to perform JSON serialization
 from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+from shared.embedding_config import EMBEDDING_MODEL_NAME
 
 from neo4j import Session, Transaction
 import sqlite3
@@ -218,13 +219,16 @@ def process_coyote_browser_extension_data(
                 logger.warning("No event_id found in event_data. Skipping.")
                 return purpose_id, search_terms_id
 
-            # ── NEW: fetch the URL, title, summary from the WebpageLoads table ─────────
+            # ── Fetch URL, title, summary, and embedding data from WebpageLoads ────
             cursor.execute(
                 """
                 SELECT
                     url,
                     webpage_title   AS title,
-                    webpage_summary AS summary
+                    webpage_summary AS summary,
+                    embedding,
+                    embedding_text,
+                    embedding_generated_at
                 FROM WebpageLoads
                 WHERE event_id = ?
                 """,
@@ -233,11 +237,19 @@ def process_coyote_browser_extension_data(
             row = cursor.fetchone()
             if row:
                 url, title, summary = (row[0] or "No URL",
-                                    row[1] or "No Title",
-                                    row[2] or "No Summary")
+                                       row[1] or "No Title",
+                                       row[2] or "No Summary")
+                embedding_json = row[3]
+                embedding_text_val = row[4]
+                embedding_generated_at_val = row[5]
             else:
                 logger.warning("No WebpageLoads row for %s – using defaults", webpage_event_id)
                 url, title, summary = "No URL", "No Title", "No Summary"
+                embedding_json = None
+                embedding_text_val = None
+                embedding_generated_at_val = None
+
+            embedding = json.loads(embedding_json) if embedding_json else None
 
             # Fetch Topics related to Webpage
             cursor.execute(
@@ -296,7 +308,11 @@ def process_coyote_browser_extension_data(
                     entities_json,
                     is_serp,
                     timestamp,
-                    data_source
+                    data_source,
+                    embedding,
+                    EMBEDDING_MODEL_NAME if embedding is not None else None,
+                    embedding_text_val,
+                    embedding_generated_at_val
                 )
             )
             logger.info(f"Webpage node created with ID: {webpage_id}")
@@ -350,7 +366,7 @@ def _create_purpose_and_search_terms(
         entities: $purpose_entities,
         timestamp: $timestamp,
         dataSource: $data_source,
-        isInput: false
+        content_role: "output"
     })
     CREATE (st:SearchTerms {
         event_id: $event_id,
@@ -360,7 +376,7 @@ def _create_purpose_and_search_terms(
         relevance: $search_terms_relevance,
         timestamp: $timestamp,
         dataSource: $data_source,
-        isInput: false
+        content_role: "output"
     })
     CREATE (p)-[:INITIATES_SEARCH]->(st)
     RETURN id(p) AS purpose_id, id(st) AS search_terms_id
@@ -393,7 +409,11 @@ def _create_and_link_webpage(
     entities: str,
     is_serp: bool,
     timestamp: str,
-    data_source: str
+    data_source: str,
+    embedding: Optional[list] = None,
+    embedding_model: Optional[str] = None,
+    embedding_text: Optional[str] = None,
+    embedding_generated_at: Optional[str] = None
 ) -> int:
     """
     Create a Webpage node and link it to the previous node in the Neo4j database.
@@ -423,7 +443,11 @@ def _create_and_link_webpage(
             isSERP: $is_serp,
             timestamp: $timestamp,
             dataSource: $data_source,
-            isInput: true
+            content_role: "input",
+            embedding: $embedding,
+            embedding_model: $embedding_model,
+            embedding_text: $embedding_text,
+            embedding_generated_at: $embedding_generated_at
         })
         RETURN id(w) AS id
         """
@@ -437,7 +461,11 @@ def _create_and_link_webpage(
             entities=entities,
             is_serp=is_serp,
             timestamp=timestamp,
-            data_source=data_source
+            data_source=data_source,
+            embedding=embedding,
+            embedding_model=embedding_model,
+            embedding_text=embedding_text,
+            embedding_generated_at=embedding_generated_at
         ).single()
         return result["id"]
 
@@ -454,7 +482,11 @@ def _create_and_link_webpage(
         isSERP: $is_serp,
         timestamp: $timestamp,
         dataSource: $data_source,
-        isInput: true
+        content_role: "input",
+        embedding: $embedding,
+        embedding_model: $embedding_model,
+        embedding_text: $embedding_text,
+        embedding_generated_at: $embedding_generated_at
     }})
     CREATE (node)-[:{rel_type}]->(w)
     RETURN id(w) AS id
@@ -470,6 +502,10 @@ def _create_and_link_webpage(
         entities=entities,
         is_serp=is_serp,
         timestamp=timestamp,
-        data_source=data_source
+        data_source=data_source,
+        embedding=embedding,
+        embedding_model=embedding_model,
+        embedding_text=embedding_text,
+        embedding_generated_at=embedding_generated_at
     ).single()
     return result["id"]

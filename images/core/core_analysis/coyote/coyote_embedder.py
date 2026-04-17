@@ -1,0 +1,112 @@
+"""
+coyote_embedder.py
+
+Singleton embedding service for Coyote Core.
+Loads all-MiniLM-L6-v2 once at first call; subsequent calls reuse
+the loaded model.
+
+IMPORTANT: Model name defined in shared/embedding_config.py.
+Both this module and chains.py must use the same model.
+Changing the model requires rebuilding both images, recreating
+vector indexes, and re-embedding all nodes. See CLAUDE.md.
+"""
+
+import logging
+from datetime import datetime, timezone
+from typing import Optional
+from shared.embedding_config import EMBEDDING_MODEL_NAME
+
+logger = logging.getLogger(__name__)
+
+_model = None
+_model_load_failed = False
+
+
+def _get_model():
+    global _model, _model_load_failed
+    if _model_load_failed:
+        return None
+    if _model is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            logger.info("Loading embedding model: %s", EMBEDDING_MODEL_NAME)
+            _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+            logger.info("Embedding model loaded.")
+        except Exception:
+            logger.exception(
+                "Failed to load embedding model %s — "
+                "embeddings will be null for this session",
+                EMBEDDING_MODEL_NAME
+            )
+            _model_load_failed = True
+            return None
+    return _model
+
+
+def embed_text(text: str) -> Optional[list]:
+    """
+    Embed a text string. Returns List[float] or None on failure.
+    None is valid — callers treat it as a null embedding.
+    """
+    if not text or not text.strip():
+        logger.debug("embed_text called with empty text; returning None")
+        return None
+    model = _get_model()
+    if model is None:
+        return None
+    try:
+        return model.encode(text, convert_to_numpy=True).tolist()
+    except Exception:
+        logger.exception("embed_text encode failed; returning None")
+        return None
+
+
+def build_webpage_embedding_text(
+    title: str,
+    summary: str,
+    entity_texts: list,
+    topic_labels: list
+) -> str:
+    """
+    Assemble the structured text string for Webpage embedding.
+    Entity NER label types (PERSON, ORG, etc.) are excluded —
+    entity text only.
+    The returned string is stored verbatim as embedding_text on the
+    Neo4j node.
+    """
+    parts = []
+    if title:
+        parts.append(f"Title: {title}")
+    if summary:
+        parts.append(f"Summary: {summary}")
+    if entity_texts:
+        parts.append(f"Entities: {', '.join(entity_texts)}")
+    if topic_labels:
+        parts.append(f"Topics: {', '.join(topic_labels)}")
+    return "\n".join(parts)
+
+
+def build_annotation_embedding_text(
+    annotation_text: str,
+    highlighted_text: str,
+    entity_texts: list
+) -> str:
+    """
+    Assemble the structured text string for Annotation embedding.
+    webpage_title is intentionally excluded.
+    The returned string is stored verbatim as embedding_text on the
+    Neo4j node.
+    """
+    parts = []
+    if annotation_text:
+        parts.append(f"Annotation: {annotation_text.strip()}")
+    if highlighted_text:
+        parts.append(f"Highlighted Text: {highlighted_text.strip()}")
+    if entity_texts:
+        parts.append(f"Entities: {', '.join(entity_texts)}")
+    return "\n".join(parts)
+
+
+def embedding_timestamp() -> str:
+    """Return current UTC time as ISO string for embedding_generated_at."""
+    return datetime.now(timezone.utc).isoformat()

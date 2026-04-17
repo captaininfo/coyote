@@ -41,6 +41,9 @@ RUN python -c "from sentence_transformers import SentenceTransformer; \
 # Copy the coyote package
 COPY coyote/ /app/coyote/
 
+# Copy shared modules (embedding_config.py)
+COPY shared/ /app/shared/
+
 # Create data directories
 RUN mkdir -p /app/data/logs
 

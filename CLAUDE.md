@@ -97,12 +97,13 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 - Never enable `USE_LC_NL2CYPHER=1` — bypasses read-only validation entirely
 
 ## Known Issues (Open)
-- Vector embedding rollout in progress (Phase B next). See **Vector Embedding Rollout** below.
+- **Orphan SearchTerms (blocks Phase C v2)**: every SearchTerms node in the graph has only `HAS_TOPIC → WikiDataOntology` outgoing edges; zero `INITIATES` / `GENERATES_SERP → Webpage` edges exist. The creation logic in `coyote_browser_extension_to_neo4j.py:426-432` is present but relies on `state_manager.last_search_terms_node_id`, which appears not to be preserved between search and subsequent webpage events. Fix requires understanding the full `CoyoteNeo4jStateManager` lifecycle — not a one-line change. Phase C v1 (pure vector) is unaffected.
+- **Scrape effectiveness degradation**: `scrape_webpage.py` returns empty text for a growing share of URLs. Roughly two-thirds of post-Phase-B non-exempt Webpages land in the null-embedding bucket (combined with exempt URLs). Root cause unknown — possibly anti-scraping trends. Future enhancement: add `embedding_skip_reason` property to distinguish "exempt URL" vs. "empty scrape" in Neo4j.
 - `images/core/requirements.txt` is an orphan — outside the Dockerfile build context (`images/core/core_analysis/`). The actual file used in builds is `images/core/core_analysis/requirements.txt`. The orphan has diverged (missing `bert-extractive-summarizer`, has a stale `sentence-transformers` edit). Investigate and delete if confirmed unused.
 
 ## Vector Embedding Rollout
 
-**Status:** Phase A complete. Phase B next (embedding at ingestion).
+**Status:** Phase B verified 2026-04-17 (all four gates passed). Phase C v1 (pure vector Tier 0) is next.
 
 ### Architectural Invariants (all phases must preserve)
 - `content_role: "input"|"output"` on every embedded node (replaces `isInput` in new CREATEs)
@@ -110,6 +111,18 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 - `embedding_text: <exact string embedded>` on every embedded node
 - Vector indexes: `webpage_embedding`, `annotation_embedding` (384 dims, cosine, per-label)
 - Shared constants: `shared/embedding_config.py` (`EMBEDDING_MODEL_NAME`, `EMBEDDING_DIMENSION`)
+
+### Design Vision: Input/Output Separation
+The `content_role` distinction is foundational, not cosmetic. Coyote models the user's mind as a black box by embedding two separate corpora:
+- **Input embeddings** (`content_role: "input"`): resources the user consumed — Webpage nodes today, anything the user read/watched/visited
+- **Output embeddings** (`content_role: "output"`): the user's intellectual products — Annotation nodes today, future Document nodes
+
+Three future capabilities depend on keeping these corpora distinct:
+1. **Source inference** — given an output, find inputs that likely informed it via cross-corpus similarity within a relevant time window
+2. **Perspective divergence** — quantify where a user's writing diverges from the sources they consumed on the same topic
+3. **Longitudinal conceptual modeling** — compare output embeddings across time to track concept evolution, correlated with shifts in inputs
+
+**Design rule for Phase C v2 and beyond:** preserve role labels when assembling LLM context. Do not merge top-K hits from `webpage_embedding` and `annotation_embedding` into an unlabeled blob — downstream reasoning must distinguish consumed content from produced content.
 
 ### Model / Infrastructure
 - Model: `all-MiniLM-L6-v2` (384-dim, CPU-only, `sentence-transformers==3.3.1`)
@@ -122,13 +135,24 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 | Phase | Scope | Gate |
 |-------|-------|------|
 | ~~A~~ | ~~`embedding_config.py`, SQLite migrations, `create_vector_index()` fix, Dockerfile/compose~~ | ~~Vector indexes ONLINE, new columns visible, `sentence-transformers` in Core~~ (done) |
-| B | `coyote_embedder.py`, NLP Steps 20.5/10.5, Neo4j writers | Embedded nodes in Neo4j with all invariant properties |
-| C | Tier 0 (`_try_tier0_vector`) in `chains.py` | Bot logs show TIER 0 hits; `VECTOR_SIMILARITY_THRESHOLD` env var works |
+| ~~B~~ | ~~`coyote_embedder.py`, NLP Steps 20.5/10.5, Neo4j writers, Core `shared/` sync~~ | ~~Embedded nodes in Neo4j with all invariant properties~~ (done 2026-04-17, Gates 1-4 all passed) |
+| C v1 | Tier 0 (`_try_tier0_vector`) in `chains.py` — **pure vector** retrieval, no relationship traversal | Bot logs show TIER 0 hits; `VECTOR_SIMILARITY_THRESHOLD` env var works |
+| Orphan fix | Restore `INITIATES` / `GENERATES_SERP` SearchTerms→Webpage edges (see Known Issues). Risky — touches same file as Phase B; read full `CoyoteNeo4jStateManager` before editing. | `MATCH (st:SearchTerms)-[r]->(w:Webpage) RETURN count(r)` > 0 for new sessions |
+| C v2 | Context expansion from vector hits via 1-hop traversal; **must preserve input/output role labels** in LLM context | LLM context blocks assemble input and output nodes with distinct labels |
 | D | CLAUDE.md final update | Docs match implementation |
 
 ### Fixed in Phase A
 - `create_vector_index()` was silently failing (missing `OPTIONS` clause) — indexes now confirmed ONLINE
 - CLAUDE.md previously stated indexes existed — corrected
+
+### Phase B Implementation Details
+- `coyote_embedder.py`: singleton model with `_model_load_failed` sentinel (no retry spam on permanent failure)
+- `shared/embedding_config.py` synced to Core build context via `make sync-shared` (new: `images/core/core_analysis/shared/`)
+- Core Dockerfile updated: `COPY shared/ /app/shared/`
+- NLP manager: Step 20.5 (webpage) after TF-IDF, Step 10.5 (annotation) after WikiData mapping, both before commit
+- Neo4j writers: `isInput` replaced with `content_role` on all new CREATE statements; embedding properties on Webpage and Annotation nodes
+- Exempt URLs (`should_exempt_url`: `google.com/search`, `hypothes.is/account|users|oauth`, `localhost:5000/configure`): embedding columns NULL in SQLite, Neo4j node gets `embedding: null, content_role: "input"` — correct behavior
+- Empty-scrape URLs (non-exempt but `scrape_webpage` returned no text): same null-embedding outcome. Currently indistinguishable from exempt URLs in Neo4j — see Known Issues.
 
 ## Development Patterns
 - 3-state returns: `(True=found, False=empty, None=error)`
@@ -137,7 +161,7 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 - Schema gating via `_schema_gate()` in ui_server
 - All Cypher params via `$param` pattern, never interpolated
 - f-strings OK in logs; user input must go through `json.dumps()`
-- `shared/nl2cypher.py` is canonical; run `make sync-shared` after editing to update agent copy
+- `shared/` is canonical; run `make sync-shared` after editing to update both agent (`images/agent/app/shared/`) and core (`images/core/core_analysis/shared/`) copies
 - Time parsing via `shared.time_utils.days_from_text()` (default 90d)
 - NL→Cypher pipeline: `graph_run()` → `_validate_and_execute()` (guards + Neo4j exec) with single-retry for NL queries; on failure, re-calls `_nl_to_cypher(prior_error=...)` with truncated error as `CORRECTION REQUIRED:` suffix
 - `PROMPT_GRAPH` rules: no unprompted time filters (rule 2), `datetime()` wrapper required (rule 3), two labeled worked examples
@@ -151,4 +175,4 @@ make build-agent                  # sync + rebuild bot container
 
 ## Security Roadmap
 **P1**: ~~LangChain 1.0 migration~~ (done — now on langchain-core 1.2.x, langchain-neo4j 0.7.0)
-**P2**: Optional auth, CORS config, rate limiting, ~~vector search activation~~ (in progress — see rollout above), extension config UI
+**P2**: Optional auth, CORS config, rate limiting, vector search activation (Phase B done, C v1 next), extension config UI
