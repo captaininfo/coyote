@@ -1341,6 +1341,114 @@
 
   <script src="../static/vendor/cytoscape.min.js"></script>
   <script>
+    // ============== Readiness-gated "Open Coyote Search" ==============
+    async function openCoyoteSearch() {
+      try {
+        var readiness = await getReadiness();
+        if (readiness.ready) {
+          window.open('/static/new_tab.html', '_blank');
+          return;
+        }
+        showSetupModal(readiness);
+      } catch (err) {
+        console.error('Open Coyote Search readiness failed:', err);
+        if (typeof window.switchSection === 'function') {
+          window.switchSection('status');
+        }
+      }
+    }
+    window.openCoyoteSearch = openCoyoteSearch;
+
+    async function getReadiness() {
+      var results = await Promise.allSettled([
+        fetch('/api/status'),
+        fetch('/extension_status')
+      ]);
+
+      var services = [];
+      var dockerOk = false;
+      if (results[0].status === 'fulfilled') {
+        var data = await results[0].value.json();
+        dockerOk = (data.status === 'success');
+        services = Array.isArray(data.services) ? data.services : [];
+      }
+
+      var extensionActive = false;
+      if (results[1].status === 'fulfilled') {
+        var ext = await results[1].value.json();
+        extensionActive = !!ext.active;
+      }
+
+      var isUp = function (s) { return s.State === 'running' || ((s.Status || '').indexOf('Up') !== -1); };
+      var byName = function (s) { return (s.Name || s.Service || '').toLowerCase(); };
+
+      var coyoteCoreUp = false;
+      var neo4jUp = false;
+      for (var i = 0; i < services.length; i++) {
+        var n = byName(services[i]);
+        if ((n.indexOf('coyote_app') !== -1 || n.indexOf('coyote-coyote_app-1') !== -1) && isUp(services[i])) coyoteCoreUp = true;
+        if ((n.indexOf('database') !== -1 || n.indexOf('coyote-database-1') !== -1) && isUp(services[i])) neo4jUp = true;
+      }
+
+      return {
+        ready: dockerOk && coyoteCoreUp && neo4jUp && extensionActive,
+        dockerOk: dockerOk, coyoteCoreUp: coyoteCoreUp, neo4jUp: neo4jUp, extensionActive: extensionActive
+      };
+    }
+
+    function showSetupModal(r) {
+      var old = document.getElementById('coyote-setup-modal');
+      if (old) old.remove();
+
+      var missing = [];
+      if (!r.dockerOk) missing.push('Docker is not available');
+      if (r.dockerOk && !r.coyoteCoreUp) missing.push('Coyote Core container is not running');
+      if (r.dockerOk && !r.neo4jUp) missing.push('Neo4j database container is not running');
+      if (!r.extensionActive) missing.push('Browser extension is not active');
+
+      var el = document.createElement('div');
+      el.id = 'coyote-setup-modal';
+      el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px;';
+      el.innerHTML =
+        '<div role="dialog" aria-modal="true" aria-labelledby="coyote-setup-title"' +
+        '     style="background:#fff;max-width:640px;width:100%;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.2);">' +
+        '  <div style="padding:16px 20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;">' +
+        '    <h2 id="coyote-setup-title" style="margin:0;font-size:18px;">Before we open Coyote Search\u2026</h2>' +
+        '    <button aria-label="Close" style="background:none;border:none;font-size:20px;cursor:pointer;">\u2715</button>' +
+        '  </div>' +
+        '  <div style="padding:16px 20px;">' +
+        '    <p>Coyote needs <strong>both</strong> the browser extension and the core Docker services to be running.</p>' +
+        '    <ul style="margin-left:18px;">' + missing.map(function (m) { return '<li>' + m + '</li>'; }).join('') + '</ul>' +
+        '    <p style="margin-top:12px;">What to do next:</p>' +
+        '    <ol style="margin-left:18px;">' +
+        '      <li>Open the <em>System Status</em> tab and click <strong>Start Core</strong> (or <strong>Start Everything</strong>).</li>' +
+        '      <li>If the extension shows "Offline", follow the <em>Setup Guide</em> to load the temporary add-on in Firefox.</li>' +
+        '    </ol>' +
+        '    <p style="font-size:12px;color:#555;margin-top:12px;">Tip: After starting services, the indicators should turn green within ~10s.</p>' +
+        '  </div>' +
+        '  <div style="padding:12px 20px;border-top:1px solid #eee;display:flex;gap:8px;justify-content:flex-end;">' +
+        '    <button id="coyote-setup-open-status" class="btn btn-secondary">Go to Status</button>' +
+        '    <button id="coyote-setup-open-setup"  class="btn btn-secondary">Open Setup Guide</button>' +
+        '    <button id="coyote-setup-retry"       class="btn btn-primary">Retry</button>' +
+        '  </div>' +
+        '</div>';
+
+      el.querySelector('button[aria-label="Close"]').onclick = function () { el.remove(); };
+      el.querySelector('#coyote-setup-open-status').onclick = function () {
+        if (typeof window.switchSection === 'function') window.switchSection('status');
+        el.remove();
+      };
+      el.querySelector('#coyote-setup-open-setup').onclick = function () {
+        if (typeof window.switchSection === 'function') window.switchSection('setup');
+        el.remove();
+      };
+      el.querySelector('#coyote-setup-retry').onclick = async function () {
+        el.remove();
+        await openCoyoteSearch();
+      };
+      document.body.appendChild(el);
+    }
+
     // ============== Drawer & Feature Switching ==============
     (function () {
       var drawer = document.getElementById('drawer');
@@ -1373,6 +1481,12 @@
       });
 
       overlay.addEventListener('click', closeDrawer);
+
+      // "Start Coyote Search" button in drawer
+      document.getElementById('drawer-search-btn').addEventListener('click', function () {
+        closeDrawer();
+        if (window.openCoyoteSearch) window.openCoyoteSearch();
+      });
 
       // Feature switching
       navItems.forEach(function (item) {

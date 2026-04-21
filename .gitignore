@@ -34,3 +34,11 @@ images/**/*.tar
 *.zip
 *.tar
 *.tar.gz
+
+# Superseded / local-only docs
+README2025.md
+
+# UI assets not currently referenced by wireframe_v2
+ui/static/images/coyote_avatar_v1.svg
+ui/static/images/coyote_ui_background_v2.svg
+ui/static/images/coyote_ui_background_v3.svg
