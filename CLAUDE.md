@@ -19,7 +19,7 @@ Coyote is a local-first, privacy-first heutagogical learning tool. It transforms
 | bot | 8501 | Streamlit chat + GraphRAG |
 | ui_server | 8080 | Flask Docker orchestration UI (not in compose) |
 
-**Data Flow**: Browser Extension → SQLite staging → NLP enrichment (spaCy NER, BERTopic/RAKE, [embedding — Phase B]) → Neo4j graph → GraphRAG ([Tier 0 vector — Phase C] + Tier 1-3) → LLM response
+**Data Flow**: Browser Extension → SQLite staging → NLP enrichment (spaCy NER, BERTopic/RAKE, embedding) → Neo4j graph → GraphRAG (Tier 0 vector + Tier 1-3) → LLM response
 
 ### Neo4j Graph Model
 **Nodes:** `Webpage`, `Annotation`, `Purpose`, `SearchTerms`, `WikiDataOntology`
@@ -98,12 +98,14 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 
 ## Known Issues (Open)
 - **Orphan SearchTerms (blocks Phase C v2)**: every SearchTerms node in the graph has only `HAS_TOPIC → WikiDataOntology` outgoing edges; zero `INITIATES` / `GENERATES_SERP → Webpage` edges exist. The creation logic in `coyote_browser_extension_to_neo4j.py:426-432` is present but relies on `state_manager.last_search_terms_node_id`, which appears not to be preserved between search and subsequent webpage events. Fix requires understanding the full `CoyoteNeo4jStateManager` lifecycle — not a one-line change. Phase C v1 (pure vector) is unaffected.
+- **Purpose and SearchTerms not embedded**: Phase B scope excluded these node types. They represent high-value intellectual output (user goals and queries) and should carry `content_role: "output"` embeddings. Target: **Phase B.5** (separate from Phase C v2). Embedding SearchTerms would also partially mitigate the Orphan SearchTerms bug *at query time*, since vector similarity does not depend on the missing `INITIATES`/`GENERATES_SERP` edges. Until B.5 lands, the search-intent branch in `_build_context_hybrid` (chains.py) short-circuits to Tier-1 searches ahead of Tier 0.
+- **Tier 0 default time window**: Tier 0 applies the `days_from_text()` default (90d) when the query has no time signal. Long-range semantic recall (e.g., "what have I read about X ever?") requires a `days_from_text_maybe()` sentinel that distinguishes "user specified" from "default used"; Tier 0 would pass `None` to drop the time filter in that case. Target: post-C-v1 follow-up.
 - **Scrape effectiveness degradation**: `scrape_webpage.py` returns empty text for a growing share of URLs. Roughly two-thirds of post-Phase-B non-exempt Webpages land in the null-embedding bucket (combined with exempt URLs). Root cause unknown — possibly anti-scraping trends. Future enhancement: add `embedding_skip_reason` property to distinguish "exempt URL" vs. "empty scrape" in Neo4j.
 - `images/core/requirements.txt` is an orphan — outside the Dockerfile build context (`images/core/core_analysis/`). The actual file used in builds is `images/core/core_analysis/requirements.txt`. The orphan has diverged (missing `bert-extractive-summarizer`, has a stale `sentence-transformers` edit). Investigate and delete if confirmed unused.
 
 ## Vector Embedding Rollout
 
-**Status:** Phase B verified 2026-04-17 (all four gates passed). Phase C v1 (pure vector Tier 0) is next.
+**Status:** Phase C v1 verified 2026-04-20 (both gates passed). Next candidates: `days_from_text_maybe()` sentinel (low risk, small) or Phase B.5 (embed Purpose/SearchTerms, partially mitigates orphan bug at query time). Orphan fix deferred — required only for Phase C v2, not MVP.
 
 ### Architectural Invariants (all phases must preserve)
 - `content_role: "input"|"output"` on every embedded node (replaces `isInput` in new CREATEs)
@@ -136,7 +138,7 @@ Three future capabilities depend on keeping these corpora distinct:
 |-------|-------|------|
 | ~~A~~ | ~~`embedding_config.py`, SQLite migrations, `create_vector_index()` fix, Dockerfile/compose~~ | ~~Vector indexes ONLINE, new columns visible, `sentence-transformers` in Core~~ (done) |
 | ~~B~~ | ~~`coyote_embedder.py`, NLP Steps 20.5/10.5, Neo4j writers, Core `shared/` sync~~ | ~~Embedded nodes in Neo4j with all invariant properties~~ (done 2026-04-17, Gates 1-4 all passed) |
-| C v1 | Tier 0 (`_try_tier0_vector`) in `chains.py` — **pure vector** retrieval, no relationship traversal | Bot logs show TIER 0 hits; `VECTOR_SIMILARITY_THRESHOLD` env var works |
+| ~~C v1~~ | ~~Tier 0 (`_try_tier0_vector`) in `chains.py` — **pure vector** retrieval, no relationship traversal. Runs after search-intent branch, before Tier 1. Role labels `[input]`/`[output]` embedded in result text.~~ | ~~**Gate**: (1) `TIER 0 context: N chars` logged on topic-match queries, no subsequent `TIER 1 context`. (2) `VECTOR_SIMILARITY_THRESHOLD=0.99` forces fallthrough to Tier 1.~~ (done 2026-04-20, both gates passed) |
 | Orphan fix | Restore `INITIATES` / `GENERATES_SERP` SearchTerms→Webpage edges (see Known Issues). Risky — touches same file as Phase B; read full `CoyoteNeo4jStateManager` before editing. | `MATCH (st:SearchTerms)-[r]->(w:Webpage) RETURN count(r)` > 0 for new sessions |
 | C v2 | Context expansion from vector hits via 1-hop traversal; **must preserve input/output role labels** in LLM context | LLM context blocks assemble input and output nodes with distinct labels |
 | D | CLAUDE.md final update | Docs match implementation |
@@ -175,4 +177,4 @@ make build-agent                  # sync + rebuild bot container
 
 ## Security Roadmap
 **P1**: ~~LangChain 1.0 migration~~ (done — now on langchain-core 1.2.x, langchain-neo4j 0.7.0)
-**P2**: Optional auth, CORS config, rate limiting, vector search activation (Phase B done, C v1 next), extension config UI
+**P2**: Optional auth, CORS config, rate limiting, vector search activation (Phases B + C v1 done; B.5 / orphan fix / C v2 pending), extension config UI

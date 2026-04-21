@@ -132,6 +132,9 @@ def configure_llm_only_chain(llm):
 def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, password):
     """
     Hybrid GraphRAG chain with intelligent fallback:
+    TIER 0: Pure cosine vector search over webpage_embedding and
+            annotation_embedding indexes (Phase C v1). Runs after the
+            search-intent branch, before Tier 1.
     TIER 1: Topic-based term matching (fast)
     TIER 2: LLM-generated Cypher (for analytical queries)
     TIER 3: Time-filtered fallback (for generic queries)
@@ -170,6 +173,7 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
 
     # Tier labels for transparency — prepended to context so the LLM knows the source
     TIER_LABELS = {
+        "0-vector": "[Source: Semantic vector search over your browsing data]",
         "1-topics": "[Source: Topic/keyword match from your browsing data]",
         "1-searches": "[Source: Your recent search history]",
         "2-cypher": "[Source: Analytical query over your browsing data]",
@@ -308,6 +312,76 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
     ORDER BY ts DESC
     LIMIT 12
     """
+
+    # TIER 0: Pure cosine vector search (Phase C v1)
+    CY_VECTOR_WEBPAGES = """
+    CALL db.index.vector.queryNodes('webpage_embedding', $top_k, $query_vector)
+    YIELD node AS w, score
+    WHERE score >= $threshold
+      AND w.timestamp IS NOT NULL
+      AND datetime(w.timestamp) >= datetime() - duration({days: $days})
+    RETURN 'WEBPAGE [input]: ' + coalesce(w.title, w.url, '(no title)') +
+           ' | url: ' + coalesce(w.url, '') +
+           ' | score: ' + toString(round(score * 100) / 100) AS text,
+           score
+    ORDER BY score DESC
+    """
+
+    CY_VECTOR_ANNOTATIONS = """
+    CALL db.index.vector.queryNodes('annotation_embedding', $top_k, $query_vector)
+    YIELD node AS a, score
+    WHERE score >= $threshold
+      AND a.timestamp IS NOT NULL
+      AND datetime(a.timestamp) >= datetime() - duration({days: $days})
+    OPTIONAL MATCH (w:Webpage)-[:HAS_ANNOTATION]->(a)
+    RETURN 'ANNOTATION [output]: ' + coalesce(a.annotation_text, '') +
+           ' | page: ' + coalesce(w.title, '(untitled)') +
+           ' | url: ' + coalesce(w.url, '') +
+           ' | score: ' + toString(round(score * 100) / 100) AS text,
+           score
+    ORDER BY score DESC
+    """
+
+    def _try_tier0_vector(question: str, days: int) -> tuple[bool, str]:
+        """
+        TIER 0: Pure cosine vector search over webpage_embedding and
+        annotation_embedding indexes. No relationship traversal.
+        Returns: (True, ctx) | (False, "") | (None, "") per 3-state convention.
+        Role labels [input]/[output] are embedded in result text to preserve
+        the input/output separation invariant (see CLAUDE.md Design Vision).
+        """
+        try:
+            threshold = float(os.getenv("VECTOR_SIMILARITY_THRESHOLD", "0.65"))
+            try:
+                query_vector = embeddings.embed_query(question)
+            except Exception:
+                log.exception("TIER 0: query embedding failed")
+                return (None, "")
+
+            params = {
+                "query_vector": query_vector,
+                "threshold": threshold,
+                "days": days,
+                "top_k": 10,
+            }
+
+            w_rows = graph.query(CY_VECTOR_WEBPAGES, params) or []
+            a_rows = graph.query(CY_VECTOR_ANNOTATIONS, params) or []
+
+            lines = [r.get("text", "") for r in w_rows] + [r.get("text", "") for r in a_rows]
+            ctx = "\n\n".join(x for x in lines if x)
+
+            if not ctx:
+                log.debug("TIER 0: no vector hits above threshold %.2f (days=%d)", threshold, days)
+                return (False, "")
+
+            log.debug("TIER 0: %d webpage hits, %d annotation hits above threshold %.2f",
+                      len(w_rows), len(a_rows), threshold)
+            return (True, ctx)
+
+        except Exception:
+            log.exception("TIER 0 (vector) failed")
+            return (None, "")
 
     def _try_tier1_searches(days: int) -> tuple[bool, str]:
         rows = graph.query(CY_SEARCHES_SAFE, {"days": days}) or []
@@ -458,12 +532,23 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
 
         log.info("Parsed query: days=%d, terms=%s", days, terms)
 
-        # If user asks about searches, show recent searches first
+        # If user asks about searches, show recent searches first.
+        # Note: SearchTerms/Purpose nodes are not embedded (see CLAUDE.md Known Issues),
+        # so Tier 0 cannot serve this intent — route to Tier-1 searches directly.
         if re.search(r"\bsearch(ed|es|ing)?\b", q.lower()):
             ok, c = _try_tier1_searches(days)
             if ok:
                 log.debug("Answered via TIER-1 (searches)")
                 return (c, "1-searches")
+
+        # TIER 0: Pure vector search (Phase C v1)
+        success, context = _try_tier0_vector(q, days)
+        if success:
+            log.info("TIER 0 context: %d chars", len(context))
+            return (context, "0-vector")
+        if success is None:
+            log.debug("Tier-0 errored; falling through to Tier-1")
+            # fall through — do NOT return here
 
         # TIER 1: Try topic/term-based GraphRAG first (fastest)
         success, context = _try_tier1_graphrag(days, terms)
