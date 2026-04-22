@@ -5,6 +5,7 @@ sync-shared:
 	cp shared/nl2cypher.py images/agent/app/shared/nl2cypher.py
 	cp shared/embedding_config.py images/agent/app/shared/embedding_config.py
 	cp shared/embedding_config.py images/core/core_analysis/shared/embedding_config.py
+	cp shared/time_utils.py images/agent/app/shared/time_utils.py
 	@echo "Synced shared/ -> images/agent/app/shared/ and images/core/core_analysis/shared/"
 
 test:

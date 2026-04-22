@@ -68,7 +68,7 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 | `images/core/core_analysis/coyote/analysis/nlp/` | NER, BERTopic, RAKE, summarization |
 | `shared/embedding_config.py` | `EMBEDDING_MODEL_NAME`, `EMBEDDING_DIMENSION` constants (Phase A) |
 | `images/core/core_analysis/coyote/coyote_embedder.py` | `embed_text()`, model singleton, lazy import (Phase B) |
-| `tests/test_security.py` | Blocklist unit tests (21 cases) |
+| `tests/test_security.py` | Blocklist + sync guard unit tests (44 cases) |
 
 ## Security
 
@@ -99,13 +99,14 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 ## Known Issues (Open)
 - **Orphan SearchTerms (blocks Phase C v2)**: every SearchTerms node in the graph has only `HAS_TOPIC → WikiDataOntology` outgoing edges; zero `INITIATES` / `GENERATES_SERP → Webpage` edges exist. The creation logic in `coyote_browser_extension_to_neo4j.py:426-432` is present but relies on `state_manager.last_search_terms_node_id`, which appears not to be preserved between search and subsequent webpage events. Fix requires understanding the full `CoyoteNeo4jStateManager` lifecycle — not a one-line change. Phase C v1 (pure vector) is unaffected.
 - **Purpose and SearchTerms not embedded**: Phase B scope excluded these node types. They represent high-value intellectual output (user goals and queries) and should carry `content_role: "output"` embeddings. Target: **Phase B.5** (separate from Phase C v2). Embedding SearchTerms would also partially mitigate the Orphan SearchTerms bug *at query time*, since vector similarity does not depend on the missing `INITIATES`/`GENERATES_SERP` edges. Until B.5 lands, the search-intent branch in `_build_context_hybrid` (chains.py) short-circuits to Tier-1 searches ahead of Tier 0.
-- **Tier 0 default time window**: Tier 0 applies the `days_from_text()` default (90d) when the query has no time signal. Long-range semantic recall (e.g., "what have I read about X ever?") requires a `days_from_text_maybe()` sentinel that distinguishes "user specified" from "default used"; Tier 0 would pass `None` to drop the time filter in that case. Target: post-C-v1 follow-up.
 - **Scrape effectiveness degradation**: `scrape_webpage.py` returns empty text for a growing share of URLs. Roughly two-thirds of post-Phase-B non-exempt Webpages land in the null-embedding bucket (combined with exempt URLs). Root cause unknown — possibly anti-scraping trends. Future enhancement: add `embedding_skip_reason` property to distinguish "exempt URL" vs. "empty scrape" in Neo4j.
+- **`"day"`/`"days"` leak through `_terms()` STOP set** (chains.py): temporal units like `"week"`, `"weeks"`, `"month"` are in the stop list but `"day"` / `"days"` are not, so queries like "past 3 days about X" pollute Tier 1 term matching with `"days"`. Harmless when Tier 0 answers first; problematic if Tier 1 is reached. One-line fix in the STOP set.
+- **LLM hallucinates empty-result response despite populated context**: observed during Phase C v1 gate verification (2026-04-21): a Tier 1 query assembled 557 chars of real context, but the LLM answered "I couldn't find anything matching your query in the selected time window." Pre-existing prompt-following issue, not specific to Tier 0. Investigate `PROMPT_RAG` wording and whether the empty-result instruction is over-weighted.
 - `images/core/requirements.txt` is an orphan — outside the Dockerfile build context (`images/core/core_analysis/`). The actual file used in builds is `images/core/core_analysis/requirements.txt`. The orphan has diverged (missing `bert-extractive-summarizer`, has a stale `sentence-transformers` edit). Investigate and delete if confirmed unused.
 
 ## Vector Embedding Rollout
 
-**Status:** Phase C v1 verified 2026-04-20 (both gates passed). Next candidates: `days_from_text_maybe()` sentinel (low risk, small) or Phase B.5 (embed Purpose/SearchTerms, partially mitigates orphan bug at query time). Orphan fix deferred — required only for Phase C v2, not MVP.
+**Status:** Phase C v1 verified 2026-04-20; `days_from_text_maybe()` sentinel shipped 2026-04-21 (Tier 0 drops the time filter when the query has no temporal signal). Next candidate: Phase B.5 (embed Purpose/SearchTerms, partially mitigates orphan bug at query time). Orphan fix deferred — required only for Phase C v2, not MVP.
 
 ### Architectural Invariants (all phases must preserve)
 - `content_role: "input"|"output"` on every embedded node (replaces `isInput` in new CREATEs)
@@ -164,13 +165,13 @@ Three future capabilities depend on keeping these corpora distinct:
 - All Cypher params via `$param` pattern, never interpolated
 - f-strings OK in logs; user input must go through `json.dumps()`
 - `shared/` is canonical; run `make sync-shared` after editing to update both agent (`images/agent/app/shared/`) and core (`images/core/core_analysis/shared/`) copies
-- Time parsing via `shared.time_utils.days_from_text()` (default 90d)
+- Time parsing: `shared.time_utils.days_from_text()` (default 90d) or `days_from_text_maybe()` (returns `Optional[int]`, `None` when no temporal signal — used by Tier 0 to drop the time filter)
 - NL→Cypher pipeline: `graph_run()` → `_validate_and_execute()` (guards + Neo4j exec) with single-retry for NL queries; on failure, re-calls `_nl_to_cypher(prior_error=...)` with truncated error as `CORRECTION REQUIRED:` suffix
 - `PROMPT_GRAPH` rules: no unprompted time filters (rule 2), `datetime()` wrapper required (rule 3), two labeled worked examples
 
 ## Testing
 ```bash
-python -m pytest tests/ -v        # 43 tests (security, sync check)
+python -m pytest tests/ -v        # 57 tests (security, sync check, time parsing)
 make sync-shared                  # sync nl2cypher.py before docker build
 make build-agent                  # sync + rebuild bot container
 ```

@@ -179,3 +179,14 @@ class TestSharedFileSync:
             "shared/nl2cypher.py and images/agent/app/shared/nl2cypher.py have diverged. "
             "Edit the canonical copy (shared/nl2cypher.py) and run: make sync-shared"
         )
+
+    def test_time_utils_copies_are_identical(self):
+        root = Path(__file__).parent.parent
+        canonical = root / "shared" / "time_utils.py"
+        agent_copy = root / "images" / "agent" / "app" / "shared" / "time_utils.py"
+        assert canonical.exists(), f"Canonical file missing: {canonical}"
+        assert agent_copy.exists(), f"Agent copy missing: {agent_copy}"
+        assert canonical.read_text() == agent_copy.read_text(), (
+            "shared/time_utils.py and images/agent/app/shared/time_utils.py have diverged. "
+            "Edit the canonical copy (shared/time_utils.py) and run: make sync-shared"
+        )

@@ -20,7 +20,7 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
 )
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from utils import BaseLogger, extract_title_and_question, format_docs
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from shared.nl2cypher import (
@@ -30,7 +30,7 @@ from shared.nl2cypher import (
     prompt_text,
     schema_for_prompts
 )
-from shared.time_utils import days_from_text
+from shared.time_utils import DEFAULT_DAYS, days_from_text_maybe
 
 log = logging.getLogger("coyote.agent")
 
@@ -314,12 +314,13 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
     """
 
     # TIER 0: Pure cosine vector search (Phase C v1)
+    # $days may be NULL — the predicate short-circuits to drop the time filter.
     CY_VECTOR_WEBPAGES = """
     CALL db.index.vector.queryNodes('webpage_embedding', $top_k, $query_vector)
     YIELD node AS w, score
     WHERE score >= $threshold
       AND w.timestamp IS NOT NULL
-      AND datetime(w.timestamp) >= datetime() - duration({days: $days})
+      AND ($days IS NULL OR datetime(w.timestamp) >= datetime() - duration({days: $days}))
     RETURN 'WEBPAGE [input]: ' + coalesce(w.title, w.url, '(no title)') +
            ' | url: ' + coalesce(w.url, '') +
            ' | score: ' + toString(round(score * 100) / 100) AS text,
@@ -332,7 +333,7 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
     YIELD node AS a, score
     WHERE score >= $threshold
       AND a.timestamp IS NOT NULL
-      AND datetime(a.timestamp) >= datetime() - duration({days: $days})
+      AND ($days IS NULL OR datetime(a.timestamp) >= datetime() - duration({days: $days}))
     OPTIONAL MATCH (w:Webpage)-[:HAS_ANNOTATION]->(a)
     RETURN 'ANNOTATION [output]: ' + coalesce(a.annotation_text, '') +
            ' | page: ' + coalesce(w.title, '(untitled)') +
@@ -342,13 +343,15 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
     ORDER BY score DESC
     """
 
-    def _try_tier0_vector(question: str, days: int) -> tuple[bool, str]:
+    def _try_tier0_vector(question: str, days: Optional[int]) -> tuple[bool, str]:
         """
         TIER 0: Pure cosine vector search over webpage_embedding and
         annotation_embedding indexes. No relationship traversal.
         Returns: (True, ctx) | (False, "") | (None, "") per 3-state convention.
         Role labels [input]/[output] are embedded in result text to preserve
         the input/output separation invariant (see CLAUDE.md Design Vision).
+        ``days`` may be None — the Cypher predicate drops the time filter in
+        that case, enabling long-range recall for queries with no time signal.
         """
         try:
             threshold = float(os.getenv("VECTOR_SIMILARITY_THRESHOLD", "0.65"))
@@ -364,6 +367,7 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
                 "days": days,
                 "top_k": 10,
             }
+            log.debug("TIER 0: days_t0=%s%s", days, " (no time filter)" if days is None else "")
 
             w_rows = graph.query(CY_VECTOR_WEBPAGES, params) or []
             a_rows = graph.query(CY_VECTOR_ANNOTATIONS, params) or []
@@ -372,7 +376,7 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
             ctx = "\n\n".join(x for x in lines if x)
 
             if not ctx:
-                log.debug("TIER 0: no vector hits above threshold %.2f (days=%d)", threshold, days)
+                log.debug("TIER 0: no vector hits above threshold %.2f (days=%s)", threshold, days)
                 return (False, "")
 
             log.debug("TIER 0: %d webpage hits, %d annotation hits above threshold %.2f",
@@ -527,10 +531,12 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
         Hybrid context builder with intelligent 3-tier fallback.
         Returns (context_str, tier_key) so callers know the source quality.
         """
-        days = days_from_text(q)
+        days_maybe = days_from_text_maybe(q)
+        days = DEFAULT_DAYS if days_maybe is None else days_maybe
+        time_source = "default" if days_maybe is None else "parsed"
         terms = _terms(q)
 
-        log.info("Parsed query: days=%d, terms=%s", days, terms)
+        log.info("Parsed query: days=%d (%s), terms=%s", days, time_source, terms)
 
         # If user asks about searches, show recent searches first.
         # Note: SearchTerms/Purpose nodes are not embedded (see CLAUDE.md Known Issues),
@@ -542,7 +548,9 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
                 return (c, "1-searches")
 
         # TIER 0: Pure vector search (Phase C v1)
-        success, context = _try_tier0_vector(q, days)
+        # Pass days_maybe (Optional[int]) so queries with no time signal
+        # get unbounded semantic recall.
+        success, context = _try_tier0_vector(q, days_maybe)
         if success:
             log.info("TIER 0 context: %d chars", len(context))
             return (context, "0-vector")
