@@ -200,8 +200,11 @@ def process_coyote_browser_extension_data(
                 purpose_id, search_terms_id = result
                 logger.debug(f"Created Purpose ID: {purpose_id}, Search Terms ID: {search_terms_id}")
 
-            # Update state manager with the latest SearchTerms node ID
+            # Update state manager with the latest SearchTerms node ID.
+            # Reset last_webpage_node_id so the next webpage attaches to SearchTerms
+            # via GENERATES_SERP/INITIATES instead of LINKS_TO from a prior session.
             state_manager.last_search_terms_node_id = search_terms_id
+            state_manager.last_webpage_node_id = None
             logger.debug(f"Updated state manager with last_search_terms_node_id: {search_terms_id}")
 
 

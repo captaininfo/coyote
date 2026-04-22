@@ -115,7 +115,8 @@ class CoyoteNeo4jStateManager:
             conn = get_state_read_only_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT event_id FROM event_queue WHERE status='nlp_processed' LIMIT ?",
+                "SELECT event_id FROM event_queue WHERE status='nlp_processed' "
+                "ORDER BY created_at ASC LIMIT ?",
                 (limit,)
             )
             rows = cursor.fetchall()

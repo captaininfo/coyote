@@ -225,7 +225,7 @@ class CoyoteNLPStateManager:
         try:
             conn = get_event_data_read_only_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT event_id FROM EventTracking WHERE status='ready_for_nlp'")
+            cursor.execute("SELECT event_id FROM EventTracking WHERE status='ready_for_nlp' ORDER BY id ASC")
             rows = cursor.fetchall()
             conn.close()
             return [r[0] for r in rows] if rows else []
