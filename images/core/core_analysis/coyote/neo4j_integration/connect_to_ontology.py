@@ -12,7 +12,7 @@ import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from neo4j import GraphDatabase, Driver, Session
 from SPARQLWrapper import SPARQLWrapper, JSON
@@ -181,8 +181,26 @@ def batch_query_wikidata(uris: List[str], cache_db_path: Path) -> Dict[str, Any]
 # Neo4j logic
 ################################################################################
 
-def extract_uris_from_node_data(data: Dict[str, Any]) -> List[str]:
-    uris: List[str] = []
+def _coerce_score(raw: Any) -> float:
+    """Best-effort float coercion for per-item scores. Returns 0.0 on failure."""
+    try:
+        if raw is None:
+            return 0.0
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def extract_uris_from_node_data(data: Dict[str, Any]) -> List[Tuple[str, float]]:
+    """
+    Extract (wikidata_uri, score) pairs from a node's NLP-output JSON fields.
+
+    Each item in the source JSON carries its own score (TF-IDF for topics,
+    NER-derived float for entities). Returning per-item pairs replaces the
+    previous broadcast-score behavior, where one scalar score from the first
+    entity was applied to every HAS_TOPIC edge from the node.
+    """
+    pairs: List[Tuple[str, float]] = []
     keys = [
         "entities", "topics", "textTopics",
         "annotationTextEntities", "highlightedTextEntities"
@@ -196,38 +214,28 @@ def extract_uris_from_node_data(data: Dict[str, Any]) -> List[str]:
             continue
 
         for item in items:
-            # pattern 1 – browser‑extension dicts
+            # pattern 1 – browser‑extension dicts (the only shape observed in
+            # current production data; carries per-item score)
             if isinstance(item, dict) and item.get("wikidata_uri"):
-                if item["wikidata_uri"].startswith("http"):
-                    uris.append(item["wikidata_uri"])
+                uri = item["wikidata_uri"]
+                if isinstance(uri, str) and uri.startswith("http"):
+                    pairs.append((uri, _coerce_score(item.get("score"))))
 
-            # pattern 2 – previous two‑element lists, keep it for backward compat
+            # pattern 2 – legacy two‑element lists; no per-item score, default to 0.0
             elif isinstance(item, list) and len(item) == 2:
-                if str(item[1]).startswith("http"):
-                    uris.append(item[1])
+                uri = item[1]
+                if isinstance(uri, str) and uri.startswith("http"):
+                    pairs.append((uri, 0.0))
 
-            # pattern 3 – the original schema using 'uri'‑array
+            # pattern 3 – legacy schema using 'uri'‑array; one shared score per
+            # item dict, applied to all URIs it contains
             elif isinstance(item, dict) and "uri" in item:
-                uris.extend([u for u in item["uri"] if str(u).startswith("http")])
+                shared_score = _coerce_score(item.get("score"))
+                for u in item["uri"]:
+                    if isinstance(u, str) and u.startswith("http"):
+                        pairs.append((u, shared_score))
 
-    return uris
-
-
-def get_score_from_node_data(data: Dict[str, Any]) -> float:
-    """
-    Function that parses 'score' from node data.
-    """
-    import json # I think I can delete this import
-    score = 0.0
-    try:
-        entities = json.loads(data.get('entities', '[]'))
-        for entity in entities:
-            if isinstance(entity, dict) and 'score' in entity:
-                score = float(entity['score'])
-                break
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.error(f"Error parsing score: {e}")
-    return score
+    return pairs
 
 def create_or_link_wikidata_ontology_node(
     session: Session,
@@ -470,16 +478,15 @@ class CoyoteOntologyStateManager:
                 self._update_event_queue_status(event_id, "ontology_processed")
                 return
 
-            # Process all URIs
+            # Process all URIs with per-item scores
             for node_id, data in nodes_data.items():
-                uris = extract_uris_from_node_data(data)
-                if not uris:
+                uri_score_pairs = extract_uris_from_node_data(data)
+                if not uri_score_pairs:
                     logger.info(f"No URIs found for node {node_id}")
                     continue
 
                 timestamp = data.get('timestamp', '')
-                score = get_score_from_node_data(data)
-                for uri in uris:
+                for uri, score in uri_score_pairs:
                     # Query or retrieve from cache
                     from_cache = get_from_cache(uri, self._cache_db_path)
                     if from_cache is None:
