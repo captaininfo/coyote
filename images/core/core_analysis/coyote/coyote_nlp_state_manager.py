@@ -670,7 +670,7 @@ class CoyoteNLPStateManager:
                     # Similarly, if entity terms had underscores, convert them back
                     original_entity = term.replace('_', ' ')
                     self.data_cursor.execute(
-                        "UPDATE Entities SET score=? WHERE event_id=? AND entity=?",
+                        "UPDATE Entities SET score=? WHERE event_id=? AND entity=? COLLATE NOCASE",
                         (tfidf_score, event_id, original_entity)
                     )
                 logger.info(f"Updated Entities table with TF-IDF scores for event_id {event_id}.")
