@@ -88,6 +88,7 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 | FLASK_DEBUG | 0 | Flask debug mode |
 | SENTENCE_TRANSFORMERS_HOME | /opt/embedding_model | Embedding model cache path (both containers) |
 | VECTOR_SIMILARITY_THRESHOLD | 0.65 | Tier 0 cosine similarity cutoff (Phase C) |
+| TFIDF_TOPIC_THRESHOLD | 0.15 | Drop HAS_TOPIC root URIs whose tfidf_score is below this (MVP Session 2) |
 
 ### Things NOT To Do
 - Never expose ports to public internet
@@ -114,7 +115,7 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 **Goal:** harden HAS_TOPIC edge quality before public MVP. Sequenced fixes:
 - ~~**Session 1**~~ (shipped 2026-04-30): per-topic score plumbing in `connect_to_ontology.py`. `extract_uris_from_node_data` now returns `List[Tuple[str, float]]` reading per-item scores from each NLP-output JSON dict; `get_score_from_node_data` deleted (was the broadcast bug); `_process_single_event` iterates `(uri, score)` pairs. Pattern 1 (current production) carries real scores; legacy patterns 2/3 default to 0.0. Verified: distinct scores observed across edges from the same source.
 - ~~**Session 1.5**~~ (shipped 2026-04-30): added `COLLATE NOCASE` to the `UPDATE Entities SET score=...` WHERE clause in Step 20 of `coyote_nlp_state_manager.py`. Entity TF-IDF scores now populate correctly. No backfill (data is expendible). Re-run percentile baseline before Session 2 threshold tuning.
-- **Session 2**: introduce `TFIDF_TOPIC_THRESHOLD` env var (provisional default 0.10, to be re-tuned from post-1.5 percentiles) at the entry of `_process_single_event`'s URI loop. Drops low-importance HAS_TOPIC edges with `logger.debug` for skipped pairs.
+- ~~**Session 2**~~ (shipped 2026-05-06): `TFIDF_TOPIC_THRESHOLD` env var (default `0.15`, ≈p50 of the post-1.5 distribution) applied at the entry of `_process_single_event`'s URI loop. Roots below threshold are skipped along with their entire WikiData ancestor tree. Per-event INFO log records the skip count; per-URI DEBUG log gives the dropped score. Legacy URI Patterns 2/3 default to score 0.0 and are filtered out at any positive threshold (intentional — Pattern 1 is the only shape current production NLP writes).
 - **Fix 1** (independent, small): add `day`, `days`, `hour`, `hours`, `minute`, `minutes`, `ago`, `lately`, `currently` to the `_terms()` STOP set in `chains.py`. One-line addition.
 
 ## Vector Embedding Rollout
@@ -156,6 +157,7 @@ Three future capabilities depend on keeping these corpora distinct:
 | ~~Orphan fix~~ | ~~Restore `INITIATES` / `GENERATES_SERP` SearchTerms→Webpage edges: reset `last_webpage_node_id` on search events; add ORDER BY to poller fetches.~~ | ~~`MATCH (st:SearchTerms)-[r]->(w:Webpage) RETURN count(r)` > 0 for new sessions~~ (done 2026-04-21) |
 | ~~MVP Session 1~~ | ~~Per-topic score plumbing in `connect_to_ontology.py`: `extract_uris_from_node_data` returns `List[Tuple[str, float]]`; delete `get_score_from_node_data` broadcast bug.~~ | ~~A single Webpage with multiple root entities shows distinct `tfidf_score` values across its HAS_TOPIC edges (verified: 41 distinct scores across 215 edges from one source).~~ (done 2026-04-30) |
 | ~~MVP Session 1.5~~ | ~~`COLLATE NOCASE` on Step 20's `UPDATE Entities SET score=...` WHERE clause in `coyote_nlp_state_manager.py`.~~ | ~~`SELECT count(*) FROM Entities WHERE score > 0.0` returns >0 after processing one new event (was 0 across all historical data pre-fix).~~ (done 2026-04-30) |
+| ~~MVP Session 2~~ | ~~`TFIDF_TOPIC_THRESHOLD` env var (default 0.15) applied at the URI loop entry in `connect_to_ontology._process_single_event`. Drops root URIs with score below threshold and skips their full WikiData ancestor tree.~~ | ~~Post-deploy edge counts: HAS_TOPIC creation rate per webpage drops materially vs pre-Session-2 baseline; per-event INFO log records skip count.~~ (done 2026-05-06) |
 | C v2 | Context expansion from vector hits via 1-hop traversal; **must preserve input/output role labels** in LLM context | LLM context blocks assemble input and output nodes with distinct labels |
 | D | CLAUDE.md final update | Docs match implementation |
 

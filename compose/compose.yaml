@@ -77,6 +77,7 @@ services:
       - COYOTE_LOG_LEVEL=${COYOTE_LOG_LEVEL-INFO}
       - FLASK_DEBUG=${FLASK_DEBUG-0}
       - SENTENCE_TRANSFORMERS_HOME=/opt/embedding_model
+      - TFIDF_TOPIC_THRESHOLD=${TFIDF_TOPIC_THRESHOLD:-0.15}
     volumes:
       - ${COYOTE_USER_DATA-./volumes/coyote}:/app/data
     healthcheck:

@@ -8,6 +8,7 @@ runs the ontology-connection logic, and updates events to "ontology_processed".
 
 import json
 import logging
+import os
 import sqlite3
 import time
 from datetime import datetime
@@ -32,6 +33,25 @@ TOP_LEVEL_URI = "http://www.wikidata.org/entity/Q35120" # Top-level 'entity' nod
 CACHE_EXPIRATION_DAYS = 7
 POLL_INTERVAL_SECONDS = 60  # how often poll_and_process_ontology checks for "neo4j_done" events
 EVENTS_BATCH_SIZE = 5      # how many events to handle per cycle
+
+# HAS_TOPIC edges with tfidf_score below this threshold are dropped at the
+# root level of _process_single_event's URI loop. The whole recursive
+# WikiData ancestor tree for a dropped root is also skipped (descendants
+# inherit the root's score). Legacy URI patterns 2 and 3 default to score
+# 0.0 in extract_uris_from_node_data, so any positive threshold drops them
+# entirely; that is intentional — Pattern 1 is the only shape current
+# production NLP writes.
+def _read_threshold_env() -> float:
+    raw = os.environ.get("TFIDF_TOPIC_THRESHOLD", "0.15")
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid TFIDF_TOPIC_THRESHOLD=%r; falling back to 0.15", raw
+        )
+        return 0.15
+
+TFIDF_TOPIC_THRESHOLD = _read_threshold_env()
 
 ################################################################################
 # Caching logic
@@ -486,7 +506,15 @@ class CoyoteOntologyStateManager:
                     continue
 
                 timestamp = data.get('timestamp', '')
+                skipped_below_threshold = 0
                 for uri, score in uri_score_pairs:
+                    if score < TFIDF_TOPIC_THRESHOLD:
+                        skipped_below_threshold += 1
+                        logger.debug(
+                            "Skipping low-importance topic uri=%s score=%.4f < threshold=%.3f",
+                            uri, score, TFIDF_TOPIC_THRESHOLD,
+                        )
+                        continue
                     # Query or retrieve from cache
                     from_cache = get_from_cache(uri, self._cache_db_path)
                     if from_cache is None:
@@ -494,6 +522,12 @@ class CoyoteOntologyStateManager:
                         from_cache = batch_query_wikidata([uri], self._cache_db_path).get(uri, [])
                     create_or_link_wikidata_ontology_node(
                         session, node_id, uri, from_cache, timestamp, score, 1, visited_uris=[uri], cache_db_path=self._cache_db_path
+                    )
+                if skipped_below_threshold:
+                    logger.info(
+                        "Threshold %.3f filtered %d/%d URIs for node %s",
+                        TFIDF_TOPIC_THRESHOLD, skipped_below_threshold,
+                        len(uri_score_pairs), node_id,
                     )
 
             # Once finished linking all nodes, set the event to "ontology_processed"
