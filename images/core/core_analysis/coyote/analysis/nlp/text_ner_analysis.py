@@ -11,9 +11,12 @@ from typing import List, Dict, Tuple, Any
 import spacy
 from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
-from SPARQLWrapper import SPARQLWrapper, JSON
 
 from coyote.analysis.nlp.ner import extract_entities
+from coyote.analysis.nlp.text_bertopic_analysis import (
+    _INVISIBLE_CHARS,
+    query_wikidata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,38 +71,6 @@ def extract_entities(text: str) -> List[Tuple[str, str]]:
         return []
 
 
-def query_wikidata(term: str) -> List[Tuple[str, str]]:
-    """
-    Query WikiData for a given term.
-
-    Args:
-        term (str): The term to query.
-
-    Returns:
-        List[Tuple[str, str]]: A list of tuples containing the item label and item URI.
-    """
-    try:
-        sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
-        query = f"""
-        SELECT ?item ?itemLabel WHERE {{
-            ?item ?label "{term}"@en.
-            FILTER (STRSTARTS(STR(?item), "http://www.wikidata.org/entity/Q"))
-            SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
-        }}
-        LIMIT 1
-        """
-        sparql.setQuery(query)
-        sparql.setReturnFormat(JSON)
-        results = sparql.query().convert()
-        return [
-            (result['itemLabel']['value'], result['item']['value'])
-            for result in results['results']['bindings']
-        ]
-    except Exception as e:
-        logger.error(f"Error querying WikiData for term '{term}': {e}")
-        return []
-
-
 def replace_named_entities_in_text(text: str, entities_mapped: Dict[str, Dict[str, Any]]) -> str:
     """
     Replace entities in text with underscores for multi-word entities.
@@ -128,6 +99,8 @@ def map_ner_to_wikidata(entities: List[str]) -> Dict[str, Dict[str, Any]]:
     try:
         mapped_entities = {}
         for entity in entities:
+            if not entity or not entity.strip(_INVISIBLE_CHARS):
+                continue
             wikidata_result = query_wikidata(entity)
             if wikidata_result:
                 wikidata_label, wikidata_uri = wikidata_result[0]

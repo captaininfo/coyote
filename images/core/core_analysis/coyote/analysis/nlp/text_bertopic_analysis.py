@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 BACKOFF     = (1.0, 3.0)   # seconds
 
+# Whitespace + invisible Unicode that scrapers can leak into topic strings.
+# str.strip() alone does not handle these (soft hyphen / ZW chars are not
+# Python whitespace). An all-invisible token resolves to wrong Q-items
+# (e.g., U+00AD -> Q257834 "soft hyphen"), creating ghost HAS_TOPIC edges.
+_INVISIBLE_CHARS = " \t\n\r\u00ad\u200b\u200c\u200d\ufeff"
+
 
 def _escape_sparql_literal(raw: str) -> str:
     """
@@ -90,7 +96,7 @@ def query_wikidata(term: str) -> List[Tuple[str, str]]:
         """)
         sparql.setReturnFormat(JSON)
 
-        results = sparql.query().convert()
+        results = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 results = sparql.query().convert()
@@ -135,9 +141,11 @@ def map_topics_to_wikidata(topics: List[str]) -> Dict[str, Dict[str, str]]:
     try:
         mapped_topics = {}
         for topic in topics:
+            if not topic or not topic.strip(_INVISIBLE_CHARS):
+                continue
             wikidata_result = query_wikidata(topic)
             if wikidata_result:
-                label, uri = wikidata_result[0]  
+                label, uri = wikidata_result[0]
                 mapped_topics[topic] = {'uri': uri, 'label': label}
         logger.debug(f"Mapped Topics to WikiData: {mapped_topics}")
         return mapped_topics
