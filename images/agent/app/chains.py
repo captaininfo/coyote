@@ -193,7 +193,8 @@ def configure_qa_rag_chain(llm, embeddings, embeddings_store_url, username, pass
         # Core stop words
         "the","a","an","and","or","what","which","have","i","about","in","of","on","for",
         "to","this","that","past","last","week","weeks","month","months","year","years",
-        "today","yesterday","recent","recently","my","me","did","do","from","with",
+        "day","days","hour","hours","minute","minutes",
+        "today","yesterday","recent","recently","ago","lately","currently","my","me","did","do","from","with",
         
         # Structural/meta terms
         "webpage","webpages","page","pages","article","articles","site","sites","website","websites",
