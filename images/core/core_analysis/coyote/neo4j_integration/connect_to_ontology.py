@@ -28,11 +28,27 @@ from coyote.utils.config_manager import (
 logger = logging.getLogger(__name__)
 
 # Adjust these if needed
-MAX_RECURSION_DEPTH = 5 # Limit recursion depth in WikiData's ontology hierarchy
+MAX_RECURSION_DEPTH = 3 # Limit recursion depth in WikiData's ontology hierarchy (Session 3: 5 -> 3)
 TOP_LEVEL_URI = "http://www.wikidata.org/entity/Q35120" # Top-level 'entity' node in WikiData ontology
 CACHE_EXPIRATION_DAYS = 7
 POLL_INTERVAL_SECONDS = 60  # how often poll_and_process_ontology checks for "neo4j_done" events
 EVENTS_BATCH_SIZE = 5      # how many events to handle per cycle
+
+# Wikimedia infrastructure Q-items. P31 (instance-of) traversal can leak these
+# even after P910 is removed (e.g., a non-category entity whose instance-of is
+# a Wikimedia meta-class). Filter at cache-write time so they never persist
+# and never get traversed. See Session 3 (MVP).
+WIKIMEDIA_META_QIDS = frozenset({
+    "Q4167836",   # Wikimedia category
+    "Q15184295",  # Wikimedia administration category
+    "Q4167410",   # Wikimedia disambiguation page
+    "Q14204246",  # Wikimedia project page
+    "Q11266439",  # Wikimedia template
+    "Q13406463",  # Wikimedia list article
+})
+WIKIMEDIA_META_URIS = frozenset(
+    f"http://www.wikidata.org/entity/{q}" for q in WIKIMEDIA_META_QIDS
+)
 
 # HAS_TOPIC edges with tfidf_score below this threshold are dropped at the
 # root level of _process_single_event's URI loop. The whole recursive
@@ -143,14 +159,14 @@ def batch_query_wikidata(uris: List[str], cache_db_path: Path) -> Dict[str, Any]
         for i in range(0, len(uncached_uris), BATCH_SIZE):
             batch_uris = uncached_uris[i:i+BATCH_SIZE]
             uris_str = ' '.join(f"wd:{uri.split('/')[-1]}" for uri in batch_uris)
+            # Session 3: P910 ("topic's main category") removed. P910 was the
+            # gateway to "Category:X" parents and the Wikimedia-meta cascade
+            # (Wikimedia category / Wikimedia administration category etc.)
+            # that dominated the ancestor traversal noise.
             query = f"""
             SELECT ?item ?parent ?parentLabel ?relationship
             WHERE {{
                 VALUES ?item {{ {uris_str} }}
-                OPTIONAL {{
-                    ?item wdt:P910 ?parent .
-                    BIND("topic's main category" AS ?relationship)
-                }}
                 OPTIONAL {{
                     ?item wdt:P460 ?parent .
                     BIND("said to be the same as" AS ?relationship)
@@ -187,8 +203,14 @@ def batch_query_wikidata(uris: List[str], cache_db_path: Path) -> Dict[str, Any]
                         "relationship": result.get("relationship", {}).get("value", "")
                     }
                     results_dict.setdefault(item_uri, []).append(parent_data)
+                # Session 3: filter Wikimedia meta-class parents pre-cache so
+                # the junk never persists and never gets traversed.
                 for uri in batch_uris:
-                    data_to_cache = results_dict.get(uri, [])
+                    raw_parents = results_dict.get(uri, [])
+                    data_to_cache = [
+                        p for p in raw_parents
+                        if p.get("parent") not in WIKIMEDIA_META_URIS
+                    ]
                     save_to_cache(uri, data_to_cache, cache_db_path)
                     cached_data[uri] = data_to_cache
                 time.sleep(1)  # Throttle for courtesy
