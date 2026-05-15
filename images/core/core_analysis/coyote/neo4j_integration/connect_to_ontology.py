@@ -10,13 +10,15 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.error import HTTPError
 
 from neo4j import GraphDatabase, Driver, Session
-from SPARQLWrapper import SPARQLWrapper, JSON
+from SPARQLWrapper import SPARQLWrapper, JSON, SPARQLExceptions
 
 from coyote.utils.config_manager import (
     get_setting,
@@ -26,6 +28,109 @@ from coyote.utils.config_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+# --- WikiData circuit breaker -------------------------------------------------
+# Trips on 403/429 from query.wikidata.org. Once tripped, batch_query_wikidata()
+# short-circuits without making SPARQL calls until the cooldown expires.
+# A failed probe in the half_open state immediately re-trips.
+#
+# This is a separate breaker instance from the one in
+# text_bertopic_analysis.py. Both target the same endpoint from the same client
+# IP and will typically trip near-simultaneously when WDQS rate-limits. Sharing
+# state across modules would be cleaner; unification is a post-MVP follow-up.
+#
+# Bail semantics: when the breaker trips mid-batch, URIs from the failed
+# batch and any later batches are absent from the returned dict. Callers
+# (`_process_single_event` line ~544, `create_or_link_wikidata_ontology_node`
+# line ~321) use `.get(uri, [])` and treat the missing URI as "no parents."
+# This is intentional — better to skip than extend the WDQS ban — but it
+# means a breaker-bail is indistinguishable from "URI legitimately has no
+# parents." Cross-reference with `WikiData circuit breaker tripped` log lines
+# to recover. See CLAUDE.md "WikiData-throttled events not tagged in Neo4j."
+_BREAKER_FAILURE_THRESHOLD = int(os.environ.get("WIKIDATA_BREAKER_THRESHOLD", "1"))
+_BREAKER_COOLDOWN_SECONDS  = int(os.environ.get("WIKIDATA_BREAKER_COOLDOWN", "1800"))
+_BREAKER_RETRY_AFTER_CAP   = 3600  # bound server-supplied cooldowns
+
+_BREAKER_STATE: str = "closed"  # "closed" | "open" | "half_open"
+_BREAKER_CONSECUTIVE_FAILURES: int = 0
+_BREAKER_OPEN_UNTIL: Optional[datetime] = None
+_BREAKER_LOCK = threading.Lock()
+
+
+def _breaker_check_state() -> str:
+    """Return effective state; transitions open→half_open if cooldown expired."""
+    global _BREAKER_STATE
+    with _BREAKER_LOCK:
+        if _BREAKER_STATE == "open" and _BREAKER_OPEN_UNTIL is not None:
+            if datetime.utcnow() >= _BREAKER_OPEN_UNTIL:
+                _BREAKER_STATE = "half_open"
+                logger.info("WikiData circuit breaker (ontology): open → half_open")
+        return _BREAKER_STATE
+
+
+def _breaker_record_success() -> None:
+    """Reset to closed; logs recovery if breaker had been open/half_open."""
+    global _BREAKER_STATE, _BREAKER_CONSECUTIVE_FAILURES, _BREAKER_OPEN_UNTIL
+    with _BREAKER_LOCK:
+        prev = _BREAKER_STATE
+        _BREAKER_STATE = "closed"
+        _BREAKER_CONSECUTIVE_FAILURES = 0
+        _BREAKER_OPEN_UNTIL = None
+        if prev != "closed":
+            logger.info("WikiData circuit breaker (ontology): %s → closed (recovered)", prev)
+
+
+def _breaker_record_failure(retry_after_seconds: Optional[int] = None) -> None:
+    """Increment failure counter; trip if threshold reached. Half-open probe
+    failure re-trips immediately regardless of threshold."""
+    global _BREAKER_STATE, _BREAKER_CONSECUTIVE_FAILURES, _BREAKER_OPEN_UNTIL
+    with _BREAKER_LOCK:
+        cooldown = retry_after_seconds if retry_after_seconds else _BREAKER_COOLDOWN_SECONDS
+        cooldown = min(cooldown, _BREAKER_RETRY_AFTER_CAP)
+        if _BREAKER_STATE == "half_open":
+            _BREAKER_STATE = "open"
+            _BREAKER_OPEN_UNTIL = datetime.utcnow() + timedelta(seconds=cooldown)
+            logger.warning(
+                "WikiData circuit breaker (ontology) re-tripped from half_open, cooldown=%ds",
+                cooldown,
+            )
+            return
+        _BREAKER_CONSECUTIVE_FAILURES += 1
+        if _BREAKER_CONSECUTIVE_FAILURES >= _BREAKER_FAILURE_THRESHOLD:
+            _BREAKER_STATE = "open"
+            _BREAKER_OPEN_UNTIL = datetime.utcnow() + timedelta(seconds=cooldown)
+            logger.warning(
+                "WikiData circuit breaker (ontology) tripped: %d consecutive failure(s), cooldown=%ds",
+                _BREAKER_CONSECUTIVE_FAILURES, cooldown,
+            )
+
+
+def _breaker_reset_for_tests() -> None:
+    """Test-only: reset module state. Do not call from production code."""
+    global _BREAKER_STATE, _BREAKER_CONSECUTIVE_FAILURES, _BREAKER_OPEN_UNTIL
+    with _BREAKER_LOCK:
+        _BREAKER_STATE = "closed"
+        _BREAKER_CONSECUTIVE_FAILURES = 0
+        _BREAKER_OPEN_UNTIL = None
+
+
+def _parse_retry_after(headers) -> Optional[int]:
+    """Parse Retry-After HTTP header. Integer-seconds form only; HTTP-date
+    form returns None (caller falls back to default cooldown)."""
+    if headers is None:
+        return None
+    try:
+        value = headers.get("Retry-After")
+    except (AttributeError, TypeError):
+        return None
+    if not value:
+        return None
+    try:
+        seconds = int(value)
+    except (ValueError, TypeError):
+        return None
+    return seconds if seconds >= 0 else None
+# -----------------------------------------------------------------------------
 
 # Adjust these if needed
 MAX_RECURSION_DEPTH = 3 # Limit recursion depth in WikiData's ontology hierarchy (Session 3: 5 -> 3)
@@ -139,83 +244,143 @@ def save_to_cache(uri: str, data: Any, cache_db_path: Path) -> None:
 def batch_query_wikidata(uris: List[str], cache_db_path: Path) -> Dict[str, Any]:
     """
     Queries WikiData for a batch of URIs and caches the results.
+
+    Breaker: if open, this returns immediately with whatever was already
+    cached. URIs not yet queried are absent from the returned dict; callers
+    use `.get(uri, [])` and proceed with empty parent lists. See module-top
+    breaker block for full bail semantics.
+
+    Caching policy on failure:
+      - 403/429: do NOT cache. Breaker handles suppression for cooldown.
+      - 5xx (EndPointInternalError): do NOT cache. Retry on next event.
+      - Other exceptions: do NOT cache. Logged for diagnosis.
+      - Success with empty bindings for a URI: cache `[]` (legitimate
+        "no parents" state, prevents redundant re-queries).
     """
     unique_uris = list(set(uris))
     cached_data: Dict[str, Any] = {}
     uncached_uris: List[str] = []
 
-    # Check cache
+    # Check cache. NOTE: `is not None` — an empty list cached as "no parents"
+    # is a valid cache hit and must not be re-queried.
     for uri in unique_uris:
         data = get_from_cache(uri, cache_db_path)
-        if data:
+        if data is not None:
             logger.info(f"Cache hit for URI {uri}")
             cached_data[uri] = data
         else:
             uncached_uris.append(uri)
 
-    # Query for uncached URIs
-    if uncached_uris:
-        BATCH_SIZE = 50
-        for i in range(0, len(uncached_uris), BATCH_SIZE):
-            batch_uris = uncached_uris[i:i+BATCH_SIZE]
-            uris_str = ' '.join(f"wd:{uri.split('/')[-1]}" for uri in batch_uris)
-            # Session 3: P910 ("topic's main category") removed. P910 was the
-            # gateway to "Category:X" parents and the Wikimedia-meta cascade
-            # (Wikimedia category / Wikimedia administration category etc.)
-            # that dominated the ancestor traversal noise.
-            query = f"""
-            SELECT ?item ?parent ?parentLabel ?relationship
-            WHERE {{
-                VALUES ?item {{ {uris_str} }}
-                OPTIONAL {{
-                    ?item wdt:P460 ?parent .
-                    BIND("said to be the same as" AS ?relationship)
-                }}
-                OPTIONAL {{
-                    ?item wdt:P279 ?parent .
-                    BIND("subclass of" AS ?relationship)
-                }}
-                OPTIONAL {{
-                    ?item wdt:P31 ?parent .
-                    BIND("instance of" AS ?relationship)
-                }}
-                OPTIONAL {{
-                    ?item wdt:P361 ?parent .
-                    BIND("part of" AS ?relationship)
-                }}
-                SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
-            }}
-            """
-            from SPARQLWrapper import SPARQLWrapper, JSON
-            sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
-            sparql.setQuery(query)
-            sparql.setReturnFormat(JSON)
+    if not uncached_uris:
+        return cached_data
 
-            try:
-                logger.info(f"Querying WikiData for batch of {len(batch_uris)} URIs.")
-                results = sparql.query().convert()
-                results_dict: Dict[str, List[Dict[str, str]]] = {}
-                for result in results["results"]["bindings"]:
-                    item_uri = result["item"]["value"]
-                    parent_data = {
-                        "parent": result.get("parent", {}).get("value", ""),
-                        "parentLabel": result.get("parentLabel", {}).get("value", ""),
-                        "relationship": result.get("relationship", {}).get("value", "")
-                    }
-                    results_dict.setdefault(item_uri, []).append(parent_data)
-                # Session 3: filter Wikimedia meta-class parents pre-cache so
-                # the junk never persists and never gets traversed.
-                for uri in batch_uris:
-                    raw_parents = results_dict.get(uri, [])
-                    data_to_cache = [
-                        p for p in raw_parents
-                        if p.get("parent") not in WIKIMEDIA_META_URIS
-                    ]
-                    save_to_cache(uri, data_to_cache, cache_db_path)
-                    cached_data[uri] = data_to_cache
-                time.sleep(1)  # Throttle for courtesy
-            except Exception as e:
-                logger.error(f"Error querying WikiData for URIs {batch_uris}: {e}", exc_info=True)
+    # Bail before SPARQL setup if breaker is already open.
+    if _breaker_check_state() == "open":
+        logger.debug("WikiData circuit breaker (ontology) is open; skipping batch of %d URIs",
+                     len(uncached_uris))
+        return cached_data
+
+    BATCH_SIZE = 50
+    for i in range(0, len(uncached_uris), BATCH_SIZE):
+        batch_uris = uncached_uris[i:i+BATCH_SIZE]
+        uris_str = ' '.join(f"wd:{uri.split('/')[-1]}" for uri in batch_uris)
+        # Session 3: P910 ("topic's main category") removed. P910 was the
+        # gateway to "Category:X" parents and the Wikimedia-meta cascade
+        # (Wikimedia category / Wikimedia administration category etc.)
+        # that dominated the ancestor traversal noise.
+        query = f"""
+        SELECT ?item ?parent ?parentLabel ?relationship
+        WHERE {{
+            VALUES ?item {{ {uris_str} }}
+            OPTIONAL {{
+                ?item wdt:P460 ?parent .
+                BIND("said to be the same as" AS ?relationship)
+            }}
+            OPTIONAL {{
+                ?item wdt:P279 ?parent .
+                BIND("subclass of" AS ?relationship)
+            }}
+            OPTIONAL {{
+                ?item wdt:P31 ?parent .
+                BIND("instance of" AS ?relationship)
+            }}
+            OPTIONAL {{
+                ?item wdt:P361 ?parent .
+                BIND("part of" AS ?relationship)
+            }}
+            SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
+        }}
+        """
+        sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
+        # Wikimedia explicitly blocks generic User-Agent strings.
+        sparql.agent = (
+            "Coyote/0.4 (https://github.com/captaininfo/coyote; "
+            "mailto:lifewidelearningllc@gmail.com)"
+        )
+        sparql.setQuery(query)
+        sparql.setReturnFormat(JSON)
+
+        # Re-check breaker between batches — a concurrent thread (unlikely
+        # given _currently_processing) could have tripped it since the
+        # pre-loop check.
+        if _breaker_check_state() == "open":
+            logger.debug("WikiData circuit breaker (ontology) opened between batches; bailing")
+            return cached_data
+
+        try:
+            logger.info(f"Querying WikiData for batch of {len(batch_uris)} URIs.")
+            results = sparql.query().convert()
+            _breaker_record_success()
+            results_dict: Dict[str, List[Dict[str, str]]] = {}
+            for result in results["results"]["bindings"]:
+                item_uri = result["item"]["value"]
+                parent_data = {
+                    "parent": result.get("parent", {}).get("value", ""),
+                    "parentLabel": result.get("parentLabel", {}).get("value", ""),
+                    "relationship": result.get("relationship", {}).get("value", "")
+                }
+                results_dict.setdefault(item_uri, []).append(parent_data)
+            # Session 3: filter Wikimedia meta-class parents pre-cache so
+            # the junk never persists and never gets traversed.
+            for uri in batch_uris:
+                raw_parents = results_dict.get(uri, [])
+                data_to_cache = [
+                    p for p in raw_parents
+                    if p.get("parent") not in WIKIMEDIA_META_URIS
+                ]
+                save_to_cache(uri, data_to_cache, cache_db_path)
+                cached_data[uri] = data_to_cache
+            time.sleep(1)  # Throttle for courtesy
+        except HTTPError as e:
+            retry_after = _parse_retry_after(e.headers)
+            logger.warning(
+                "WikiData HTTP %d on batch of %d URIs%s",
+                e.code, len(batch_uris),
+                f" (Retry-After: {retry_after}s)" if retry_after else "",
+            )
+            if e.code in (403, 429):
+                _breaker_record_failure(retry_after_seconds=retry_after)
+                # Bail entire call. Remaining batches are absent from
+                # `cached_data`; callers default to [] via `.get(uri, [])`.
+                # Do NOT write [] to cache here — the breaker is the
+                # suppression mechanism; caching [] would persist a wrong
+                # "no parents" answer for CACHE_EXPIRATION_DAYS even after
+                # WDQS recovers.
+                return cached_data
+            # Other 4xx (e.g., 400 from malformed SPARQL) is a real bug
+            # in our query construction; surface it.
+            logger.error("WikiData HTTP %d (unexpected) on batch: %s",
+                         e.code, batch_uris, exc_info=True)
+        except SPARQLExceptions.EndPointInternalError as e:
+            # 5xx is transient server-side; log and continue to next batch.
+            # Does NOT count toward breaker. URI is not cached, so next event
+            # will retry it (after breaker check).
+            logger.warning(
+                "WikiData 5xx on batch of %d URIs: %s",
+                len(batch_uris), e,
+            )
+        except Exception as e:
+            logger.error(f"Error querying WikiData for URIs {batch_uris}: {e}", exc_info=True)
 
     return cached_data
 
