@@ -89,6 +89,8 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 | SENTENCE_TRANSFORMERS_HOME | /opt/embedding_model | Embedding model cache path (both containers) |
 | VECTOR_SIMILARITY_THRESHOLD | 0.65 | Tier 0 cosine similarity cutoff (Phase C) |
 | TFIDF_TOPIC_THRESHOLD | 0.15 | Drop HAS_TOPIC root URIs whose tfidf_score is below this (MVP Session 2) |
+| WIKIDATA_BREAKER_THRESHOLD | 1 | Consecutive 403/429 from WDQS before tripping `query_wikidata`'s circuit breaker |
+| WIKIDATA_BREAKER_COOLDOWN | 1800 | Seconds the breaker stays OPEN before a single half-open probe is allowed |
 
 ### Things NOT To Do
 - Never expose ports to public internet
@@ -101,7 +103,8 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 - **Abandoned-search edge misattribution** (residual from orphan fix, 2026-04-21): if the user submits a search but no SERP ever loads (closes tab, network error), `last_search_terms_node_id` stays set on the singleton state manager. The next unrelated webpage — possibly hours later — will receive a `GENERATES_SERP`/`INITIATES` edge attributing it to the abandoned search. Affects edge semantics, not data integrity. A full fix requires session IDs in the event payload (post-MVP).
 - **Single-linear-browsing-history assumption**: the `CoyoteNeo4jStateManager` writer assumes one sequential event stream per user. Multiple browser tabs, multiple devices, or opening search results in new tabs all produce interleaved events that break the state machine — the `last_*_node_id` attributes reflect only whichever event the poller processed most recently. Concurrent sessions produce undefined edge topology. Related design tension: `LINKS_TO` chains capture browsing *sequence* but make session-*membership* queries expensive (Phase C v2 would need arbitrary-length traversal to reconstruct which webpages belong to a given SearchTerms). Long-term fix: session ID in the event payload + dual relationships (`SearchTerms-[:INITIATES]->Webpage` for set membership + `Webpage-[:LINKS_TO]->Webpage` for sequence). Phase C v2 designs must not depend on `LINKS_TO` traversal for set membership.
 - **Purpose and SearchTerms not embedded**: Phase B scope excluded these node types. They represent high-value intellectual output (user goals and queries) and should carry `content_role: "output"` embeddings. Target: **Phase B.5** (separate from Phase C v2). Until B.5 lands, the search-intent branch in `_build_context_hybrid` (chains.py) short-circuits to Tier-1 searches ahead of Tier 0.
-- **Scrape effectiveness degradation**: `scrape_webpage.py` returns empty text for a growing share of URLs. Roughly two-thirds of post-Phase-B non-exempt Webpages land in the null-embedding bucket (combined with exempt URLs). Root cause unknown — possibly anti-scraping trends. Future enhancement: add `embedding_skip_reason` property to distinguish "exempt URL" vs. "empty scrape" in Neo4j.
+- **Scrape effectiveness degradation**: `scrape_webpage.py` returns empty text for a growing share of URLs. Roughly two-thirds of post-Phase-B non-exempt Webpages land in the null-embedding bucket (combined with exempt URLs). Root cause unknown — possibly anti-scraping trends. Future enhancement: add `embedding_skip_reason` property to distinguish "exempt URL" vs. "empty scrape" in Neo4j. Sibling to `wikidata_skip_reason` below — both share the same plumbing path through NLP state manager → Neo4j writer and should be implemented together post-MVP.
+- **WikiData-throttled events not tagged in Neo4j** (deferred from MVP breaker work 2026-05-12): when `text_bertopic_analysis.query_wikidata`'s circuit breaker is OPEN, affected Webpages get empty topic/entity Wikidata mappings indistinguishable from events with no matching labels. Forensically recoverable by cross-referencing breaker state-transition log lines (`WikiData circuit breaker tripped/recovered`) with `Webpage.timestamp`. Sibling to `embedding_skip_reason` above — both require parallel plumbing changes through `query_wikidata`/`scrape_webpage` → NLP state manager → Neo4j writer and should land together post-MVP.
 - **Click-tracking redirects captured by browser extension**: the extension records every page navigation, including ephemeral redirect URLs (`google.com/url`, `t.co/`, `lnkd.in/`, etc.) that bounce to the real destination in <1s. The Python-side filter in `should_exempt_url` (`_REDIRECT_HOST_PATTERNS`) prevents these from creating Webpage nodes, but the events still reach SQLite staging and the NLP queue, doing avoidable work. Complete fix lives in the extension (filter before staging). Post-MVP.
 - ~~**`"day"`/`"days"` leak through `_terms()` STOP set** (chains.py)~~ (resolved 2026-05-07, MVP Fix 1): added `day`, `days`, `hour`, `hours`, `minute`, `minutes`, `ago`, `lately`, `currently` to the STOP set in `_build_context_hybrid`.
 - **LLM hallucinates empty-result response despite populated context**: observed during Phase C v1 gate verification (2026-04-21): a Tier 1 query assembled 557 chars of real context, but the LLM answered "I couldn't find anything matching your query in the selected time window." Pre-existing prompt-following issue, not specific to Tier 0. Investigate `PROMPT_RAG` wording and whether the empty-result instruction is over-weighted.
@@ -124,12 +127,13 @@ Default volume paths assume `NEO4J_DATA_DIR` and `COYOTE_USER_DATA` env vars are
 ```bash
 # from project root
 cd compose
-docker compose --profile core --profile agent down
+docker compose --profile core --profile llm --profile agent down
 sudo rm -rf ./volumes/neo4j
 rm -f ./volumes/coyote/wikidata_cache.db
-docker compose --profile core --profile agent up -d --build
+docker compose --profile core --profile llm --profile agent up -d --build
 cd ..
 ```
+All three profiles are required: `bot` (agent profile) has a hard `depends_on: llm`, so omitting `--profile llm` triggers `service "bot" depends on undefined service "llm": invalid compose project`. Same combination as `ui/coyote_ui_server.py:327`.
 Vector indexes recreate automatically on first node insert. SQLite source-of-truth is untouched; Webpage/Annotation/Purpose/SearchTerms nodes rebuild from event data on next NLP cycle. Tier 0 starts cold (Webpage embeddings repopulate as new browsing comes in) — acceptable per data-expendable invariant.
 
 **Verification gates** (run 2hr post-deploy after some browsing):
@@ -205,10 +209,11 @@ Three future capabilities depend on keeping these corpora distinct:
 - Time parsing: `shared.time_utils.days_from_text()` (default 90d) or `days_from_text_maybe()` (returns `Optional[int]`, `None` when no temporal signal — used by Tier 0 to drop the time filter)
 - NL→Cypher pipeline: `graph_run()` → `_validate_and_execute()` (guards + Neo4j exec) with single-retry for NL queries; on failure, re-calls `_nl_to_cypher(prior_error=...)` with truncated error as `CORRECTION REQUIRED:` suffix
 - `PROMPT_GRAPH` rules: no unprompted time filters (rule 2), `datetime()` wrapper required (rule 3), two labeled worked examples
+- Python datetime: codebase is mixed — `coyote_server.py` and `text_bertopic_analysis.py` use `datetime.utcnow()` (naive); `coyote_embedder.py` uses `datetime.now(timezone.utc)` (aware). Core image is Python 3.11 (no deprecation warnings). Project-wide migration to the aware form is a Python 3.12+ readiness item, not MVP-blocking.
 
 ## Testing
 ```bash
-python -m pytest tests/ -v        # 57 tests (security, sync check, time parsing)
+python -m pytest tests/ -v        # 78 tests (security, sync check, time parsing, wikidata breaker)
 make sync-shared                  # sync nl2cypher.py before docker build
 make build-agent                  # sync + rebuild bot container
 ```

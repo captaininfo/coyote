@@ -5,8 +5,10 @@ Module for extracting topics from text using BERTopic and TF-IDF analysis,
 and mapping them to WikiData entities.
 """
 
-import logging, json, re
+import logging, json, os, re, threading
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
+from urllib.error import HTTPError
 
 import spacy
 from nltk.corpus import stopwords
@@ -20,6 +22,94 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 BACKOFF     = (1.0, 3.0)   # seconds
+
+# --- WikiData circuit breaker -------------------------------------------------
+# Trips on 403/429 from query.wikidata.org. Once tripped, query_wikidata()
+# short-circuits to [] without making SPARQL calls until the cooldown expires.
+# A failed probe in the half_open state immediately re-trips.
+_BREAKER_FAILURE_THRESHOLD = int(os.environ.get("WIKIDATA_BREAKER_THRESHOLD", "1"))
+_BREAKER_COOLDOWN_SECONDS  = int(os.environ.get("WIKIDATA_BREAKER_COOLDOWN", "1800"))
+_BREAKER_RETRY_AFTER_CAP   = 3600  # bound server-supplied cooldowns
+
+_BREAKER_STATE: str = "closed"  # "closed" | "open" | "half_open"
+_BREAKER_CONSECUTIVE_FAILURES: int = 0
+_BREAKER_OPEN_UNTIL: Optional[datetime] = None
+_BREAKER_LOCK = threading.Lock()
+
+
+def _breaker_check_state() -> str:
+    """Return effective state; transitions open→half_open if cooldown expired."""
+    global _BREAKER_STATE
+    with _BREAKER_LOCK:
+        if _BREAKER_STATE == "open" and _BREAKER_OPEN_UNTIL is not None:
+            if datetime.utcnow() >= _BREAKER_OPEN_UNTIL:
+                _BREAKER_STATE = "half_open"
+                logger.info("WikiData circuit breaker: open → half_open")
+        return _BREAKER_STATE
+
+
+def _breaker_record_success() -> None:
+    """Reset to closed; logs recovery if breaker had been open/half_open."""
+    global _BREAKER_STATE, _BREAKER_CONSECUTIVE_FAILURES, _BREAKER_OPEN_UNTIL
+    with _BREAKER_LOCK:
+        prev = _BREAKER_STATE
+        _BREAKER_STATE = "closed"
+        _BREAKER_CONSECUTIVE_FAILURES = 0
+        _BREAKER_OPEN_UNTIL = None
+        if prev != "closed":
+            logger.info("WikiData circuit breaker: %s → closed (recovered)", prev)
+
+
+def _breaker_record_failure(retry_after_seconds: Optional[int] = None) -> None:
+    """Increment failure counter; trip if threshold reached. Half-open probe
+    failure re-trips immediately regardless of threshold."""
+    global _BREAKER_STATE, _BREAKER_CONSECUTIVE_FAILURES, _BREAKER_OPEN_UNTIL
+    with _BREAKER_LOCK:
+        cooldown = retry_after_seconds if retry_after_seconds else _BREAKER_COOLDOWN_SECONDS
+        cooldown = min(cooldown, _BREAKER_RETRY_AFTER_CAP)
+        if _BREAKER_STATE == "half_open":
+            _BREAKER_STATE = "open"
+            _BREAKER_OPEN_UNTIL = datetime.utcnow() + timedelta(seconds=cooldown)
+            logger.warning(
+                "WikiData circuit breaker re-tripped from half_open, cooldown=%ds", cooldown,
+            )
+            return
+        _BREAKER_CONSECUTIVE_FAILURES += 1
+        if _BREAKER_CONSECUTIVE_FAILURES >= _BREAKER_FAILURE_THRESHOLD:
+            _BREAKER_STATE = "open"
+            _BREAKER_OPEN_UNTIL = datetime.utcnow() + timedelta(seconds=cooldown)
+            logger.warning(
+                "WikiData circuit breaker tripped: %d consecutive failure(s), cooldown=%ds",
+                _BREAKER_CONSECUTIVE_FAILURES, cooldown,
+            )
+
+
+def _breaker_reset_for_tests() -> None:
+    """Test-only: reset module state. Do not call from production code."""
+    global _BREAKER_STATE, _BREAKER_CONSECUTIVE_FAILURES, _BREAKER_OPEN_UNTIL
+    with _BREAKER_LOCK:
+        _BREAKER_STATE = "closed"
+        _BREAKER_CONSECUTIVE_FAILURES = 0
+        _BREAKER_OPEN_UNTIL = None
+
+
+def _parse_retry_after(headers) -> Optional[int]:
+    """Parse Retry-After HTTP header. Integer-seconds form only; HTTP-date
+    form returns None (caller falls back to default cooldown)."""
+    if headers is None:
+        return None
+    try:
+        value = headers.get("Retry-After")
+    except (AttributeError, TypeError):
+        return None
+    if not value:
+        return None
+    try:
+        seconds = int(value)
+    except (ValueError, TypeError):
+        return None
+    return seconds if seconds >= 0 else None
+# -----------------------------------------------------------------------------
 
 # Whitespace + invisible Unicode that scrapers can leak into topic strings.
 # str.strip() alone does not handle these (soft hyphen / ZW chars are not
@@ -77,10 +167,13 @@ def query_wikidata(term: str) -> List[Tuple[str, str]]:
         List[Tuple[str, str]]: A list of tuples containing the item label and item URI.
     """
     try:
+        if _breaker_check_state() == "open":
+            return []
+
         sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
         # Wikidata blocks generic clients, so identify yourself
         sparql.agent = (
-            "Coyote/0.3 (https://github.com/captaininfo/coyote; "
+            "Coyote/0.4 (https://github.com/captaininfo/coyote; "
             "mailto:lifewidelearningllc@gmail.com)"
         )
 
@@ -98,27 +191,37 @@ def query_wikidata(term: str) -> List[Tuple[str, str]]:
 
         results = None
         for attempt in range(1, MAX_RETRIES + 1):
+            if _breaker_check_state() == "open":
+                return []
             try:
                 results = sparql.query().convert()
-                break                                 # success
+                _breaker_record_success()
+                break
+            except HTTPError as e:
+                retry_after = _parse_retry_after(e.headers)
+                logger.warning(
+                    "WikiData HTTP %d on attempt %d/%d for '%s'%s",
+                    e.code, attempt, MAX_RETRIES, term,
+                    f" (Retry-After: {retry_after}s)" if retry_after else "",
+                )
+                if e.code in (403, 429):
+                    _breaker_record_failure(retry_after_seconds=retry_after)
+                else:
+                    raise  # unexpected HTTP error — real bug
             except SPARQLExceptions.EndPointInternalError as e:
-                # 5xx errors from the service
+                # 5xx is transient server-side; log but do not count toward breaker
                 logger.warning(
                     "WikiData 5xx on attempt %d/%d for '%s': %s",
                     attempt, MAX_RETRIES, term, e,
                 )
-            except Exception as e:
-                if "403" not in str(e) and "429" not in str(e):
-                    raise                               # real bug
-                logger.warning(
-                    "WikiData %s on attempt %d/%d for '%s'",
-                    "403/429", attempt, MAX_RETRIES, term,
-                )
-            # back-off and retry
+            # Skip backoff sleep if the breaker just opened — next call to
+            # query_wikidata will short-circuit anyway, no point waiting here.
+            if _breaker_check_state() == "open":
+                return []
             time.sleep(random.uniform(*BACKOFF) * attempt)
         else:
-            raise Exception("WikiData query failed after retries")
-        
+            return []  # all retries exhausted without success
+
         return [
             (b['itemLabel']['value'], b['item']['value'])
             for b in results['results']['bindings']
