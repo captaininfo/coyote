@@ -148,7 +148,7 @@ Three tiers; details for each tier live in their own sections or referenced docu
 - ~~**Session 3**~~ (shipped 2026-05-07, gate status below): ontology entry-point cleanup in `connect_to_ontology.py`. Three changes: (1) dropped P910 from the ancestor SPARQL; (2) post-query filter for `WIKIMEDIA_META_URIS` (Q4167836, Q15184295, Q4167410, Q14204246, Q11266439, Q13406463); (3) `MAX_RECURSION_DEPTH` 5 → 3.
 
 **Session 3 gate status** (re-classified 2026-05-27 in light of 0.5 refactor):
-- **Gate B** — go/no-go precondition for the 0.5 refactor. Per `MVP_REFACTOR_PLAN.md` § 1.3: if Gate B fails (i.e., meta-class edges still being created), Session 3 needs revisiting before the refactor starts. Must be measured at pre-flight check 3.
+- **Gate B** — deferred and superseded (resolved 2026-05-28). Cannot be measured on current data: WDQS throttling contaminates Wikidata-enriched events, leaving topic/entity mappings sparse or missing — Gate B's HAS_TOPIC → meta-class query has nothing meaningful to count. Additionally, Units 3/9b/9d of the 0.5 refactor change which terms reach Wikidata and filter edges differently, so any pre-refactor Gate B number is invalid for the shipped system. Gate B's intent (zero meta-class edges) is preserved as a post-refactor verification requirement under Unit 9d (P31 instance-of blocklist). Run after first database wipe on `coyote-0.5-nlp-refactor`.
 - **Gate A** — informational. The 0.5 refactor's KeyBERT-based topic extraction, Unit 9b edge cap, and Unit 9d P31 instance-of blocklist all change edge counts in ways that supersede this gate's reference point.
 - **Gate C** — informational. Replaced by Unit 3's KeyBERT verification gate (Gate 3.1 in the refactor plan).
 
