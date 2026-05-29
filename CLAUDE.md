@@ -241,6 +241,7 @@ Catch-all for work that's named but explicitly NOT in the MVP scope. Two flavors
 - **Wikidata-throttled events not tagged in Neo4j** — `embedding_skip_reason` and `wikidata_skip_reason` properties, plumbing changes through `query_wikidata` / `batch_query_wikidata` / `scrape_webpage` → NLP state manager → Neo4j writer. Unit 9c of the 0.5 refactor targets `embedding_skip_reason` specifically; full sibling implementation including `wikidata_skip_reason` is post-MVP.
 - **LLM hallucinates empty-result response despite populated context** — observed during Phase C v1 gate verification (2026-04-21): a Tier 1 query assembled 557 chars of real context, but the LLM answered "I couldn't find anything matching your query in the selected time window." Pre-existing prompt-following issue, not specific to Tier 0. Investigate `PROMPT_RAG` wording and whether the empty-result instruction is over-weighted.
 - **Remove `/legacy` route + delete `coyote_wireframe.html`** — once `wireframe_v2.html` stability is confirmed in production.
+- **PDF extraction fallback (`pypdf`)** — trafilatura returns empty on PDF URLs. Pre-flight 6 measured 3/50 URLs as PDFs across a typical academic mix. Add `pypdf` as a content-type-routed fallback in `scrape_webpage.py`. Targets the PDF subset of the scrape-effectiveness Known Issue above.
 
 ### Big-vision items, short on detail
 These extend the "Design Vision: Input/Output Separation" section above.
