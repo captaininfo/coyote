@@ -38,6 +38,13 @@ ENV SENTENCE_TRANSFORMERS_HOME=/opt/embedding_model
 RUN python -c "from sentence_transformers import SentenceTransformer; \
                SentenceTransformer('all-MiniLM-L6-v2')"
 
+# Pre-download nltk corpora needed by rake-nltk (extract_topics_with_rake.py
+# on search, hyperlink, and annotation event paths). rake-nltk's defaults
+# need both punkt (sentence tokenizer) and stopwords (phrase-boundary
+# detection); without this step, first event invocation fails with
+# LookupError: Resource punkt not found.
+RUN python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('stopwords', quiet=True)"
+
 # Copy the coyote package
 COPY coyote/ /app/coyote/
 
