@@ -17,8 +17,17 @@ Workaround: pre-import `shared` submodules at session start. Once cached
 in sys.modules, subsequent `from shared.X import Y` reuses the cached
 binding without re-walking sys.path.
 """
+import os
 import sys
+import tempfile
 from pathlib import Path
+
+# Set COYOTE_DATA_DIR before any coyote.* module loads. config_container.py
+# runs mkdir on the resolved path at module load; the in-container default
+# (/app/data) isn't writable on the host.
+_TEST_DATA_DIR = Path(tempfile.gettempdir()) / "coyote_pytest_data"
+_TEST_DATA_DIR.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("COYOTE_DATA_DIR", str(_TEST_DATA_DIR))
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 

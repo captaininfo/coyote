@@ -5,7 +5,7 @@ Module for extracting topics from text using BERTopic and TF-IDF analysis,
 and mapping them to WikiData entities.
 """
 
-import logging, json, os, re, threading
+import logging, json, os, re, sqlite3, threading
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from urllib.error import HTTPError
@@ -16,6 +16,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from SPARQLWrapper import SPARQLWrapper, JSON, SPARQLExceptions
 import time, random
 
+from coyote.utils.config_container import WIKIDATA_CACHE_DB_FILE
 from coyote.analysis.nlp.bertopic_analysis import analyze_topics
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,53 @@ except LookupError:
     stop_words_list = list(set(stopwords.words('english')).union(set(custom_stopwords)))
 
 
+# NOTE: Unit 3 M2 will relocate this cache (helpers + query_wikidata + map_topics_to_wikidata)
+# to wikidata_lookup.py.
+WIKIDATA_TERM_CACHE_TTL_DAYS = int(os.environ.get("WIKIDATA_TERM_CACHE_TTL_DAYS", "30"))
+_CACHE_STATS_LOCK = threading.Lock()
+_cache_hits = 0
+_cache_misses = 0
+
+
+def _cache_lookup(entity: str) -> Optional[List[Tuple[str, str]]]:
+    """Return cached SPARQL result for *entity*, or None if missing/expired/error."""
+    try:
+        with sqlite3.connect(WIKIDATA_CACHE_DB_FILE) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT data, timestamp FROM wikidata_term_cache WHERE entity = ?",
+                (entity,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        data_str, ts_str = row
+        cached_at = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+        if (datetime.now() - cached_at).days >= WIKIDATA_TERM_CACHE_TTL_DAYS:
+            return None
+        raw = json.loads(data_str)
+        return [tuple(item) for item in raw]
+    except (sqlite3.Error, json.JSONDecodeError, ValueError) as e:
+        logger.debug("WikiData term-cache lookup error for '%s': %s", entity, e)
+        return None
+
+
+def _cache_store(entity: str, data: List[Tuple[str, str]]) -> None:
+    """INSERT OR REPLACE the cache row for *entity*. Empty list cached too."""
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(WIKIDATA_CACHE_DB_FILE) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT OR REPLACE INTO wikidata_term_cache (entity, data, timestamp) "
+                "VALUES (?, ?, ?)",
+                (entity, json.dumps(data), ts),
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.warning("WikiData term-cache store failed for '%s': %s", entity, e)
+
+
 def query_wikidata(term: str) -> List[Tuple[str, str]]:
     """
     Query WikiData for *term* and return [(label, uri), …].
@@ -166,7 +214,18 @@ def query_wikidata(term: str) -> List[Tuple[str, str]]:
     Returns:
         List[Tuple[str, str]]: A list of tuples containing the item label and item URI.
     """
+    global _cache_hits, _cache_misses
     try:
+        cached = _cache_lookup(term)
+        if cached is not None:
+            logger.debug("WikiData term-cache hit: '%s' (%d entries)", term, len(cached))
+            with _CACHE_STATS_LOCK:
+                _cache_hits += 1
+            return cached
+        with _CACHE_STATS_LOCK:
+            _cache_misses += 1
+        logger.debug("WikiData term-cache miss: '%s'", term)
+
         if _breaker_check_state() == "open":
             return []
 
@@ -222,10 +281,12 @@ def query_wikidata(term: str) -> List[Tuple[str, str]]:
         else:
             return []  # all retries exhausted without success
 
-        return [
+        result = [
             (b['itemLabel']['value'], b['item']['value'])
             for b in results['results']['bindings']
         ]
+        _cache_store(term, result)
+        return result
     except Exception as e:
         logger.error(f"Error querying WikiData for term '{term}': {e}")
         return []
@@ -243,6 +304,8 @@ def map_topics_to_wikidata(topics: List[str]) -> Dict[str, Dict[str, str]]:
     """
     try:
         mapped_topics = {}
+        with _CACHE_STATS_LOCK:
+            start_hits, start_misses = _cache_hits, _cache_misses
         for topic in topics:
             if not topic or not topic.strip(_INVISIBLE_CHARS):
                 continue
@@ -250,6 +313,11 @@ def map_topics_to_wikidata(topics: List[str]) -> Dict[str, Dict[str, str]]:
             if wikidata_result:
                 label, uri = wikidata_result[0]
                 mapped_topics[topic] = {'uri': uri, 'label': label}
+        with _CACHE_STATS_LOCK:
+            batch_hits = _cache_hits - start_hits
+            batch_misses = _cache_misses - start_misses
+        if batch_hits or batch_misses:
+            logger.info("WikiData term cache (topics): %d hits / %d misses", batch_hits, batch_misses)
         logger.debug(f"Mapped Topics to WikiData: {mapped_topics}")
         return mapped_topics
     except Exception as e:
