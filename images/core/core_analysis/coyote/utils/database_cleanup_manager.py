@@ -1,5 +1,5 @@
 # coyote/maintenance/database_cleanup_manager.py
-import logging, threading, time
+import logging, os, threading, time
 from datetime import datetime, timedelta
 from pathlib import Path
 import sqlite3
@@ -9,6 +9,7 @@ from coyote.utils.config_manager import (
     get_state_read_only_connection,
     event_data_db_lock,
     EVENT_DATA_DB_FILE as EVENT_DATA_PATH,
+    WIKIDATA_CACHE_DB_FILE,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,12 +97,17 @@ class CoyoteDatabaseCleanupManager(threading.Thread):
         logger.debug("Full cleanup: purged %s terminal events from all DBs", len(ids))
 
     def _cleanup_wikidata_cache(self) -> None:
-        cache_path = Path("data/wikidata_cache.db")
-        thresh = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-        with sqlite3.connect(cache_path) as conn:
+        # wikidata_cache.db holds the URI cache and term cache as two tables; both purged here.
+        uri_thresh = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+        term_ttl_days = int(os.environ.get("WIKIDATA_TERM_CACHE_TTL_DAYS", "30"))
+        term_thresh = (datetime.now() - timedelta(days=term_ttl_days)).strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(WIKIDATA_CACHE_DB_FILE) as conn:
             cur = conn.cursor()
-            cur.execute("DELETE FROM wikidata_cache WHERE timestamp < ?", (thresh,))
-            purged = cur.rowcount
+            cur.execute("DELETE FROM wikidata_cache WHERE timestamp < ?", (uri_thresh,))
+            uri_purged = cur.rowcount
+            cur.execute("DELETE FROM wikidata_term_cache WHERE timestamp < ?", (term_thresh,))
+            term_purged = cur.rowcount
             conn.commit()
-        logger.debug("Wikidata‑cache: purged %s expired rows", purged)
+        logger.debug("Wikidata URI-cache: purged %s expired rows", uri_purged)
+        logger.debug("Wikidata term-cache: purged %s expired rows (TTL %dd)", term_purged, term_ttl_days)
 

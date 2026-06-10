@@ -244,14 +244,14 @@ def initialize_wikidata_cache_db() -> None:
     Initializes the wikidata_cache.db with the required tables.
     """
     schema_sql = '''
-    CREATE TABLE IF NOT EXISTS WikidataCache (
+    CREATE TABLE IF NOT EXISTS wikidata_term_cache (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         entity TEXT NOT NULL UNIQUE,
         data TEXT NOT NULL,
         timestamp TEXT
     );
 
-    CREATE INDEX IF NOT EXISTS idx_wikidata_cache_entity ON WikidataCache(entity);
+    CREATE INDEX IF NOT EXISTS idx_wikidata_term_cache_entity ON wikidata_term_cache(entity);
     '''
     initialize_database(WIKIDATA_CACHE_DB_FILE, schema_sql)
 
