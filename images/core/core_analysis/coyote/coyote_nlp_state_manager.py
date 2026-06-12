@@ -8,6 +8,7 @@ import logging
 from time import sleep
 from typing import List, Optional
 import sqlite3
+import spacy
 
 from coyote.utils.config_manager import (
     get_event_data_db_connection,
@@ -28,18 +29,16 @@ from coyote.analysis.scrape_webpage import scrape_webpage, should_exempt_url
 from coyote.analysis.summarize_text import summarize_text
 from coyote.analysis.nlp.extract_topics_with_rake import extract_topics_with_rake
 from coyote.analysis.nlp.text_ner_analysis import extract_entities, map_ner_to_wikidata, replace_named_entities_in_text
-from coyote.analysis.nlp.text_bertopic_analysis import (
-    calculate_tfidf_on_phrases,
-    extract_and_replace_topics
-)
+from coyote.analysis.nlp.text_bertopic_analysis import calculate_tfidf_on_phrases
+from coyote.analysis.nlp.keybert_analysis import extract_keywords
 from coyote.analysis.wikidata_lookup import map_topics_to_wikidata
-from coyote.analysis.nlp.bertopic_analysis import analyze_topics
 from coyote.analysis.nlp.stopwords import STOP_WORDS
 from coyote.analysis.relevance_calculator import calculate_relevance
 import json
 from coyote.coyote_embedder import (
     embed_text,
-    build_webpage_embedding_text,
+    embed_document,
+    embed_document_with_text,
     build_annotation_embedding_text,
     embedding_timestamp,
 )
@@ -61,6 +60,18 @@ class CoyoteNLPStateManager:
 
         # Read-only queries use fresh connections per call to avoid stale WAL snapshots.
         # See fetch_ready_for_nlp_events(), _is_ready_for_nlp(), get_event_type().
+
+        # Shared full-pipeline spaCy instance (Unit 3c): one load serves both
+        # NER and KeyBERT noun_chunks across all event paths. Lifetime tracks
+        # the manager's lifetime; passed explicitly to every call site.
+        try:
+            self.nlp = spacy.load("en_core_web_sm")
+        except Exception:
+            logger.exception(
+                "Failed to load spaCy model — NER and topic extraction "
+                "disabled for this session"
+            )
+            self.nlp = None
 
 
     def fetch_pending_event_ids(self) -> List[str]:
@@ -348,8 +359,8 @@ class CoyoteNLPStateManager:
             logger.debug(f"Extracted search terms topics: {search_terms_topics_data}")
             
             # Step 4: Extract entities with NER
-            purpose_entities = extract_entities(purpose)
-            search_terms_entities = extract_entities(search_terms)
+            purpose_entities = extract_entities(purpose, self.nlp)
+            search_terms_entities = extract_entities(search_terms, self.nlp)
             logger.debug(f"Extracted purpose entities: {purpose_entities}")
             logger.debug(f"Extracted search terms entities: {search_terms_entities}")
             
@@ -454,19 +465,23 @@ class CoyoteNLPStateManager:
             5. Record scraped text to database
             6. Create summary of scraped text
             7. Record webpage summary
-            8. Extract topics using BERTopic (analyze_topics)
+            7.5 Pooled full-document embedding (embed_document_with_text)
+            8. Extract topics with KeyBERT on raw text (cosine scores)
             9. Insert extracted topics into Topics table
             10. Map topics to WikiData
             11. Update mapped topics in Topics table
-            12. Replace topics in text
-            13. Calculate TF-IDF scores and update Topics table
             14. Extract entities from scraped text
             15. Insert entities into Entities table
             16. Map entities to WikiData
             17. Update mapped entities in Entities table
-            18. Replace entities in text
+            18. Stopword-strip + replace entities in text (entity path only)
             19. Calculate TF-IDF scores for entities
             20. Write 'entities_scored' to the 'score' field of the 'Entities' table
+            20.5 Persist the Step 7.5 embedding + embedded_text
+
+        (Steps 12-13, the topic underscore-replacement and topic TF-IDF
+        second pass, were dissolved by the Unit 3 KeyBERT swap: Step 8's
+        cosine scores persist directly at Step 9.)
         """
         logger.info(f"Starting NLP processing for webpage loads event_id: {event_id}")
 
@@ -542,13 +557,20 @@ class CoyoteNLPStateManager:
                 )
                 logger.debug(f"Webpage summary recorded for event_id {event_id}")
 
-                # Step 8: Extract topics with BERTopic
-                processed_text = ' '.join(
-                    [word for word in scraped_text.split() if word.lower() not in stop_words_list]
-                )
-                logger.debug("Stopwords removed from scraped text.")
+                # Step 7.5: Pooled full-document embedding (Unit 3b). One
+                # embedding serves KeyBERT (Step 8) and persistence (Step 20.5).
+                emb_text = f"{title}\n\n{scraped_text}" if title else scraped_text
+                doc_embedding = None
+                embedded_text = None
+                emb_result = embed_document_with_text(emb_text)
+                if emb_result is not None:
+                    doc_embedding, embedded_text = emb_result
 
-                topic_info, detailed_topics = analyze_topics(processed_text)
+                # Step 8: Extract topics with KeyBERT on RAW text — a stopword
+                # strip would destroy the dependency parse noun_chunks needs.
+                detailed_topics = extract_keywords(
+                    scraped_text, doc_embedding, self.nlp
+                )
                 if not detailed_topics:
                     logger.warning(f"No topics extracted from the webpage text for event_id {event_id}.")
                     detailed_topics = []
@@ -588,30 +610,8 @@ class CoyoteNLPStateManager:
                 else:
                     logger.warning(f"No mapped webpage topics to update in Topics table for event_id {event_id}.")
 
-                # Step 12: Replace topics in text
-                processed_text = extract_and_replace_topics(processed_text, mapped_topics)
-                logger.debug(f"Processed text after replacing topics for event_id {event_id}: {processed_text[:100]}...")
-
-                # Step 13: Calculate TF-IDF scores for topics
-                # Fetch a representative sample of documents from CorpusDocuments
-                self.data_cursor.execute("SELECT content FROM CorpusDocuments WHERE source='TEDTalk' LIMIT 500")
-                rows = self.data_cursor.fetchall()
-                corpus = [r[0] for r in rows]
-                topics_scored = calculate_tfidf_on_phrases(processed_text, corpus=corpus, threshold=0.07)
-                logger.debug(f"TF-IDF scores for topics (event_id={event_id}): {topics_scored}")
-
-                # Update the 'score' field in Topics table
-                for term, tfidf_score in topics_scored.items():
-                    # Convert underscores back to spaces to match the original topic in the database
-                    original_topic = term.replace('_', ' ')
-                    self.data_cursor.execute(
-                        "UPDATE Topics SET score=? WHERE event_id=? AND topic=?",
-                        (tfidf_score, event_id, original_topic)
-                    )
-                logger.info(f"Updated Topics table with TF-IDF scores for event_id {event_id}.")
-
                 # Step 14: Extract entities
-                extracted_entities = extract_entities(scraped_text)
+                extracted_entities = extract_entities(scraped_text, self.nlp)
                 logger.debug(f"Extracted webpage entities for event_id {event_id}: {extracted_entities}")
 
                 # Step 15: Insert extracted entities into Entities table
@@ -647,11 +647,20 @@ class CoyoteNLPStateManager:
                 else:
                     logger.warning(f"No mapped webpage entities to update in Entities table for event_id {event_id}.")
 
-                # Step 18: Replace entities in text
+                # Step 18: Stopword-strip + replace entities in text. The strip
+                # is local to this entity TF-IDF path (the topic path now needs
+                # raw text); the whole block dies with Unit 4.
+                processed_text = ' '.join(
+                    [word for word in scraped_text.split() if word.lower() not in stop_words_list]
+                )
                 processed_text = replace_named_entities_in_text(processed_text, mapped_entities)
                 logger.debug(f"Processed Text after replacing entities: {processed_text}")
 
                 # Step 19: Calculate TF-IDF scores
+                # Fetch a representative sample of documents from CorpusDocuments
+                self.data_cursor.execute("SELECT content FROM CorpusDocuments WHERE source='TEDTalk' LIMIT 500")
+                rows = self.data_cursor.fetchall()
+                corpus = [r[0] for r in rows]
                 entities_scored = calculate_tfidf_on_phrases(processed_text, corpus=corpus, threshold=0.07)
                 logger.debug(f"TF-IDF scores for entities (event_id={event_id}): {entities_scored}")
 
@@ -665,33 +674,26 @@ class CoyoteNLPStateManager:
                     )
                 logger.info(f"Updated Entities table with TF-IDF scores for event_id {event_id}.")
 
-                # Step 20.5: Compute and store embedding
-                # entity_texts already set at Step 16
-                topic_labels = [t[0] for t in detailed_topics] if detailed_topics else []
-
-                emb_text = build_webpage_embedding_text(
-                    title=title or "",
-                    summary=webpage_summary or "",
-                    entity_texts=entity_texts,
-                    topic_labels=topic_labels,
-                )
-                embedding_vector = embed_text(emb_text)
-                ts = embedding_timestamp() if embedding_vector is not None else None
-                embedding_json = json.dumps(embedding_vector) \
-                    if embedding_vector is not None else None
+                # Step 20.5: Persist the Step 7.5 pooled embedding.
+                # embedding_text MUST be embedded_text from
+                # embed_document_with_text — it differs from emb_text exactly
+                # when MAX_CHUNKS truncates, the case the invariant exists for.
+                ts = embedding_timestamp() if doc_embedding is not None else None
+                embedding_json = json.dumps(doc_embedding) \
+                    if doc_embedding is not None else None
 
                 self.data_cursor.execute(
                     """UPDATE WebpageLoads
                        SET embedding=?, embedding_text=?, embedding_generated_at=?
                        WHERE event_id=?""",
                     (embedding_json,
-                     emb_text if embedding_vector is not None else None,
+                     embedded_text if doc_embedding is not None else None,
                      ts,
                      event_id)
                 )
                 logger.info(
                     "Webpage embedding for event_id %s: stored=%s",
-                    event_id, embedding_vector is not None
+                    event_id, doc_embedding is not None
                 )
 
                 # Step 21: Commit transaction and update internal EventTracking status
@@ -757,7 +759,7 @@ class CoyoteNLPStateManager:
             logger.debug(f"Extracted hyperlink topics (event_id={event_id}): {link_topics_data}")
 
             # Step 4: Extract entities with NER from link_text
-            link_entities = extract_entities(link_text)
+            link_entities = extract_entities(link_text, self.nlp)
             logger.debug(f"Extracted hyperlink entities (event_id={event_id}): {link_entities}")
 
             # Step 5: Insert extracted topics into Topics table
@@ -857,7 +859,7 @@ class CoyoteNLPStateManager:
         Logic for topic extraction:
             - If the combined annotation_text and highlighted_text have fewer than 50 words,
               use RAKE for topic extraction.
-            - If 50 words or more, use BERTopic (analyze_topics).
+            - If 50 words or more, use KeyBERT (extract_keywords) on the raw text.
 
         Steps:
             1. Begin transaction
@@ -903,19 +905,22 @@ class CoyoteNLPStateManager:
 
             # Step 3: Determine method for topic extraction
             if word_count >= 50:
-                # Use BERTopic (analyze_topics)
-                logger.debug(f"Using BERTopic for event_id={event_id}, word_count={word_count}")
-                # Remove stopwords if needed and analyze topics
-                processed_text = ' '.join([w for w in full_text.split() if w.lower() not in stop_words_list])
-                topic_info, detailed_topics = analyze_topics(processed_text)
+                # KeyBERT on RAW text (Unit 3c) — no stopword strip, the
+                # dependency parse needs grammatical text. Intentional
+                # double-embed: this per-call embedding feeds KeyBERT only
+                # and is discarded; Step 10.5 separately embeds and persists
+                # the digest (content-based annotation embedding is Phase B.5).
+                logger.debug(f"Using KeyBERT for event_id={event_id}, word_count={word_count}")
+                detailed_topics = extract_keywords(
+                    full_text, embed_document(full_text), self.nlp
+                )
                 if not detailed_topics:
-                    logger.warning(f"No topics extracted via BERTopic for event_id {event_id}.")
+                    logger.warning(f"No topics extracted via KeyBERT for event_id {event_id}.")
                     detailed_topics = []
                 else:
-                    logger.debug(f"Extracted BERTopic topics for event_id={event_id}: {detailed_topics}")
+                    logger.debug(f"Extracted KeyBERT topics for event_id={event_id}: {detailed_topics}")
 
-                # Convert detailed_topics to RAKE-like format if needed
-                # Assume detailed_topics is list of (topic_str, score) tuples
+                # detailed_topics is a list of (topic_str, score) tuples
                 topics_data_annotation = {"topics_with_weights": detailed_topics}
             else:
                 # Use RAKE
@@ -930,16 +935,15 @@ class CoyoteNLPStateManager:
                 topics_data_annotation = {"annotation_text": annotation_topics_data, "highlighted_text": highlighted_topics_data}
 
             # Step 4: Extract entities with NER
-            annotation_entities = extract_entities(annotation_text or "")
-            highlighted_entities = extract_entities(highlighted_text or "")
+            annotation_entities = extract_entities(annotation_text or "", self.nlp)
+            highlighted_entities = extract_entities(highlighted_text or "", self.nlp)
             logger.debug(f"Extracted annotation entities for event_id={event_id}: {annotation_entities}")
             logger.debug(f"Extracted highlighted entities for event_id={event_id}: {highlighted_entities}")
 
             # Step 5: Insert extracted topics into Topics table
             topics_records = []
             if word_count >= 50:
-                # Using BERTopic, single context 'annotation_text' for entire combined text or separate?
-                # Let's just use 'annotation_text' context for simplicity.
+                # Using KeyBERT, single context 'annotation_text' for the entire combined text.
                 for (topic_str, score) in topics_data_annotation.get("topics_with_weights", []):
                     topics_records.append((event_id, 'annotation_text', topic_str, None, None, score))
             else:

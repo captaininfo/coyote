@@ -9,13 +9,12 @@ coyote.analysis.wikidata_lookup; deleted the dead TF-IDF chain
 (calculate_tfidf_on_phrases / map_tfidf_to_wikidata / combine_nlp_results /
 get_ner_from_text — zero external callers), the shadowed ner.py import
 (which loaded a third unused spaCy instance), and the stopwords block
-(only the dead chain consumed it).
+(only the dead chain consumed it). Phase 5 removed the module-level
+spaCy load: extract_entities now takes the caller-owned instance.
 """
 
 import logging
 from typing import List, Dict, Tuple, Any
-
-import spacy
 
 from coyote.analysis.wikidata_lookup import (
     _INVISIBLE_CHARS,
@@ -24,20 +23,16 @@ from coyote.analysis.wikidata_lookup import (
 
 logger = logging.getLogger(__name__)
 
-# Load spaCy model at module level
-try:
-    nlp = spacy.load("en_core_web_sm")
-except Exception as e:
-    logger.error(f"Failed to load spaCy model: {e}")
-    nlp = None  # Handle initialization failure
 
-
-def extract_entities(text: str) -> List[Tuple[str, str]]:
+def extract_entities(text: str, nlp) -> List[Tuple[str, str]]:
     """
     Extract named entities from the given text using spaCy.
 
     Args:
         text (str): The text to analyze.
+        nlp: The caller-owned spaCy Language instance (Unit 3c constructor
+            injection — the NLP state manager loads one full-pipeline
+            instance and shares it between NER and KeyBERT noun_chunks).
 
     Returns:
         List[Tuple[str, str]]: A list of tuples containing entities and their labels.
