@@ -1,5 +1,5 @@
 """
-Unit tests for the WikiData term→QID cache in text_bertopic_analysis.
+Unit tests for the WikiData term→QID cache in wikidata_lookup.
 
 Covers:
 - Cache miss → SPARQL called → row inserted
@@ -18,8 +18,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
-# --- Stub heavy module-level imports BEFORE loading target module ---------
-# Match the pattern in test_wikidata_breaker.py.
+# --- Stub SPARQLWrapper BEFORE loading the target module ------------------
+# wikidata_lookup imports it at module level; nothing heavier is needed
+# (the Unit 3 M2 move took spaCy/nltk/sklearn/bertopic out of this path).
 
 class _StubEndPointInternalError(Exception):
     """Stand-in for SPARQLExceptions.EndPointInternalError."""
@@ -31,28 +32,11 @@ _sparql_stub.SPARQLExceptions = MagicMock()
 _sparql_stub.SPARQLExceptions.EndPointInternalError = _StubEndPointInternalError
 sys.modules.setdefault("SPARQLWrapper", _sparql_stub)
 
-_spacy_stub = MagicMock()
-_spacy_stub.load.return_value = MagicMock()
-sys.modules.setdefault("spacy", _spacy_stub)
-
-sys.modules.setdefault("nltk", MagicMock())
-_nltk_corpus_stub = MagicMock()
-_nltk_corpus_stub.stopwords.words = MagicMock(return_value=["the", "and", "a"])
-sys.modules.setdefault("nltk.corpus", _nltk_corpus_stub)
-
-sys.modules.setdefault("sklearn", MagicMock())
-sys.modules.setdefault("sklearn.feature_extraction", MagicMock())
-sys.modules.setdefault("sklearn.feature_extraction.text", MagicMock())
-
 sys.path.insert(
     0, str(Path(__file__).parent.parent / "images" / "core" / "core_analysis")
 )
 
-_bertopic_stub = MagicMock()
-_bertopic_stub.analyze_topics = MagicMock(return_value=([], []))
-sys.modules.setdefault("coyote.analysis.nlp.bertopic_analysis", _bertopic_stub)
-
-from coyote.analysis.nlp import text_bertopic_analysis as target  # noqa: E402
+from coyote.analysis import wikidata_lookup as target  # noqa: E402
 
 
 # --- Helpers --------------------------------------------------------------

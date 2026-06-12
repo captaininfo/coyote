@@ -1,5 +1,5 @@
 """
-Unit tests for the WikiData circuit breaker in text_bertopic_analysis.
+Unit tests for the WikiData circuit breaker in wikidata_lookup.
 
 Covers:
 - State transitions (closed → open → half_open → closed/open)
@@ -14,9 +14,9 @@ from urllib.error import HTTPError
 
 import pytest
 
-# --- Stub heavy module-level imports BEFORE loading target module ---------
-# text_bertopic_analysis loads spaCy / NLTK / sklearn at import time. Those
-# packages aren't required for testing the breaker, so stub them out.
+# --- Stub SPARQLWrapper BEFORE loading the target module ------------------
+# wikidata_lookup imports it at module level; nothing heavier is needed
+# (the Unit 3 M2 move took spaCy/nltk/sklearn/bertopic out of this path).
 
 class _StubEndPointInternalError(Exception):
     """Stand-in for SPARQLExceptions.EndPointInternalError."""
@@ -27,32 +27,11 @@ _sparql_stub.SPARQLExceptions = MagicMock()
 _sparql_stub.SPARQLExceptions.EndPointInternalError = _StubEndPointInternalError
 sys.modules.setdefault("SPARQLWrapper", _sparql_stub)
 
-_spacy_stub = MagicMock()
-_spacy_stub.load.return_value = MagicMock()
-sys.modules.setdefault("spacy", _spacy_stub)
-
-sys.modules.setdefault("nltk", MagicMock())
-_nltk_corpus_stub = MagicMock()
-_nltk_corpus_stub.stopwords.words = MagicMock(return_value=["the", "and", "a"])
-sys.modules.setdefault("nltk.corpus", _nltk_corpus_stub)
-
-sys.modules.setdefault("sklearn", MagicMock())
-sys.modules.setdefault("sklearn.feature_extraction", MagicMock())
-sys.modules.setdefault("sklearn.feature_extraction.text", MagicMock())
-
 sys.path.insert(
     0, str(Path(__file__).parent.parent / "images" / "core" / "core_analysis")
 )
 
-# Only stub the leaf module (transitively imports the heavy `bertopic` package).
-# Letting Python load the real coyote.* parent packages ensures the
-# `from coyote.analysis.nlp import text_bertopic_analysis` import below
-# returns the real module rather than a MagicMock attribute.
-_bertopic_stub = MagicMock()
-_bertopic_stub.analyze_topics = MagicMock(return_value=([], []))
-sys.modules.setdefault("coyote.analysis.nlp.bertopic_analysis", _bertopic_stub)
-
-from coyote.analysis.nlp import text_bertopic_analysis as target  # noqa: E402
+from coyote.analysis import wikidata_lookup as target  # noqa: E402
 
 
 class _MockHeaders:

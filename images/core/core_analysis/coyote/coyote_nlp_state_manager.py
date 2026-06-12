@@ -8,7 +8,6 @@ import logging
 from time import sleep
 from typing import List, Optional
 import sqlite3
-from nltk.corpus import stopwords
 
 from coyote.utils.config_manager import (
     get_event_data_db_connection,
@@ -30,11 +29,12 @@ from coyote.analysis.summarize_text import summarize_text
 from coyote.analysis.nlp.extract_topics_with_rake import extract_topics_with_rake
 from coyote.analysis.nlp.text_ner_analysis import extract_entities, map_ner_to_wikidata, replace_named_entities_in_text
 from coyote.analysis.nlp.text_bertopic_analysis import (
-    map_topics_to_wikidata, 
-    calculate_tfidf_on_phrases, 
+    calculate_tfidf_on_phrases,
     extract_and_replace_topics
 )
+from coyote.analysis.wikidata_lookup import map_topics_to_wikidata
 from coyote.analysis.nlp.bertopic_analysis import analyze_topics
+from coyote.analysis.nlp.stopwords import STOP_WORDS
 from coyote.analysis.relevance_calculator import calculate_relevance
 import json
 from coyote.coyote_embedder import (
@@ -47,18 +47,8 @@ from coyote.coyote_embedder import (
 # Get logger
 logger = logging.getLogger(__name__)
 
-# Define stop words
-custom_stopwords = [
-    'page', 'click', 'link', 'comment', 'username', 'password', 'login',
-    'subscribe', 'share', 'like', 'read', 'more', 'article', 'posted', 'said'
-]
-
-try:
-    stop_words_list = list(set(stopwords.words('english')).union(set(custom_stopwords)))
-except LookupError:
-    import nltk
-    nltk.download('stopwords')
-    stop_words_list = list(set(stopwords.words('english')).union(set(custom_stopwords)))
+# Stop words consolidated in stopwords.py (Unit 3 M11)
+stop_words_list = STOP_WORDS
 
 
 class CoyoteNLPStateManager:
