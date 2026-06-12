@@ -33,8 +33,8 @@ def _default_count_tokens(text: str) -> int:
 def _embedder_max_tokens() -> int:
     # Lazy import: coyote_embedder imports this module, so a top-level
     # import here would be circular.
-    from coyote.coyote_embedder import _get_model
-    model = _get_model()
+    from coyote.coyote_embedder import get_model
+    model = get_model()
     if model is None:
         raise RuntimeError(
             "max_tokens not provided and the embedding model is "
