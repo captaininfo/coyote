@@ -88,7 +88,7 @@ Returns convention: `(True, context)` = found | `(False, "")` = empty | `(None, 
 | FLASK_DEBUG | 0 | Flask debug mode |
 | SENTENCE_TRANSFORMERS_HOME | /opt/embedding_model | Embedding model cache path (both containers) |
 | VECTOR_SIMILARITY_THRESHOLD | 0.65 | Tier 0 cosine similarity cutoff (Phase C) |
-| TFIDF_TOPIC_THRESHOLD | 0.15 | Drop HAS_TOPIC root URIs whose tfidf_score is below this (MVP Session 2) |
+| TOPIC_SCORE_THRESHOLD | 0.10 | Drop HAS_TOPIC root URIs whose topic_score (KeyBERT cosine) is below this. Renamed from TFIDF_TOPIC_THRESHOLD + default 0.15→0.10 by Unit 3 (KeyBERT swap); Gate 3.4 retunes. |
 | WIKIDATA_BREAKER_THRESHOLD | 1 | Consecutive 403/429 from WDQS before tripping the WikiData circuit breakers in `text_bertopic_analysis.query_wikidata` and `connect_to_ontology.batch_query_wikidata` (independent instances, same env vars) |
 | WIKIDATA_BREAKER_COOLDOWN | 1800 | Seconds either breaker stays OPEN before a single half-open probe is allowed |
 | WIKIDATA_TERM_CACHE_TTL_DAYS | 30 | Days a row in `wikidata_term_cache` (in `wikidata_cache.db`) stays fresh before `query_wikidata` (in `text_bertopic_analysis.py`) re-queries WDQS. Empty results cached as `"[]"` so repeat zero-match terms don't re-hit WDQS. Cleanup janitor purges expired rows on its 6-minute interval. |
@@ -147,7 +147,7 @@ Three tiers; details for each tier live in their own sections or referenced docu
 **Goal at the time:** harden HAS_TOPIC edge quality before public MVP. Sequenced fixes (all shipped on `coyote-0.4`):
 - ~~**Session 1**~~ (shipped 2026-04-30): per-topic score plumbing in `connect_to_ontology.py`. `extract_uris_from_node_data` now returns `List[Tuple[str, float]]`; `get_score_from_node_data` deleted (was the broadcast bug).
 - ~~**Session 1.5**~~ (shipped 2026-04-30): added `COLLATE NOCASE` to the `UPDATE Entities SET score=...` WHERE clause in Step 20 of `coyote_nlp_state_manager.py`.
-- ~~**Session 2**~~ (shipped 2026-05-06): `TFIDF_TOPIC_THRESHOLD` env var (default `0.15`) applied at the entry of `_process_single_event`'s URI loop. Drops low-scored root URIs and their full WikiData ancestor tree. **Renamed `TOPIC_SCORE_THRESHOLD` by 0.5 refactor when KeyBERT replaces TF-IDF.**
+- ~~**Session 2**~~ (shipped 2026-05-06): env var (default `0.15`) applied at the entry of `_process_single_event`'s URI loop. Drops low-scored root URIs and their full WikiData ancestor tree. **Renamed `TFIDF_TOPIC_THRESHOLD`→`TOPIC_SCORE_THRESHOLD`, default `0.15`→`0.10`, by Unit 3 Phase 7 (2026-06-12) when KeyBERT replaced TF-IDF.**
 - ~~**Fix 1**~~ (shipped 2026-05-07): added `day`, `days`, `hour`, `hours`, `minute`, `minutes`, `ago`, `lately`, `currently` to the `_terms()` STOP set in `chains.py`.
 - ~~**Session 3**~~ (shipped 2026-05-07, gate status below): ontology entry-point cleanup in `connect_to_ontology.py`. Three changes: (1) dropped P910 from the ancestor SPARQL; (2) post-query filter for `WIKIMEDIA_META_URIS` (Q4167836, Q15184295, Q4167410, Q14204246, Q11266439, Q13406463); (3) `MAX_RECURSION_DEPTH` 5 → 3.
 

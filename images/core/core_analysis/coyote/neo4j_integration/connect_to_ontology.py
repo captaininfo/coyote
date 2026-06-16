@@ -26,6 +26,7 @@ from coyote.utils.config_manager import (
     get_state_db_connection,
     connect_to_neo4j
 )
+from coyote.utils.config_container import WIKIDATA_CACHE_DB_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -155,24 +156,26 @@ WIKIMEDIA_META_URIS = frozenset(
     f"http://www.wikidata.org/entity/{q}" for q in WIKIMEDIA_META_QIDS
 )
 
-# HAS_TOPIC edges with tfidf_score below this threshold are dropped at the
+# HAS_TOPIC edges with topic_score below this threshold are dropped at the
 # root level of _process_single_event's URI loop. The whole recursive
 # WikiData ancestor tree for a dropped root is also skipped (descendants
 # inherit the root's score). Legacy URI patterns 2 and 3 default to score
 # 0.0 in extract_uris_from_node_data, so any positive threshold drops them
 # entirely; that is intentional — Pattern 1 is the only shape current
 # production NLP writes.
+# Default 0.10 is the provisional Unit 3 ship value (KeyBERT cosine noise
+# floor per pre-flight 2); Gate 3.4 retunes empirically post-deploy.
 def _read_threshold_env() -> float:
-    raw = os.environ.get("TFIDF_TOPIC_THRESHOLD", "0.15")
+    raw = os.environ.get("TOPIC_SCORE_THRESHOLD", "0.10")
     try:
         return float(raw)
     except (TypeError, ValueError):
         logger.warning(
-            "Invalid TFIDF_TOPIC_THRESHOLD=%r; falling back to 0.15", raw
+            "Invalid TOPIC_SCORE_THRESHOLD=%r; falling back to 0.10", raw
         )
-        return 0.15
+        return 0.10
 
-TFIDF_TOPIC_THRESHOLD = _read_threshold_env()
+TOPIC_SCORE_THRESHOLD = _read_threshold_env()
 
 ################################################################################
 # Caching logic
@@ -524,15 +527,17 @@ def create_or_link_node(
             targetLabel=target_label
         )
 
-        # Link from user node to wikiDataOntology
+        # Link from user node to wikiDataOntology. timestamp + score live in
+        # SET, not the MERGE key, so re-processing a (node, topic) pair updates
+        # one edge in place (last-write-wins) instead of stacking duplicates on
+        # each revisit. Revisit-history loss is accepted tech debt (CLAUDE.md
+        # Known Issues); relationship_type is allowlist-validated above.
         session.run(
             f"""
             MATCH (n) WHERE id(n) = $node_id
             MERGE (wdo:WikiDataOntology {{uri: $targetUri}})
-            MERGE (n)-[rel:{relationship_type} {{
-                timestamp: $timestamp, 
-                tfidf_score: $score
-            }}]->(wdo)
+            MERGE (n)-[rel:{relationship_type}]->(wdo)
+            SET rel.topic_score = $score, rel.timestamp = $timestamp
             """,
             node_id=node_id,
             targetUri=target_uri,
@@ -557,7 +562,10 @@ class CoyoteOntologyStateManager:
         self._neo4j_driver: Optional[Driver] = None
 
         # We'll also set up the local path for wikidata_cache
-        self._cache_db_path: Path = Path('data/wikidata_cache.db')
+        # WIKIDATA_CACHE_DB_FILE is a str; wrap in Path — the four consumers
+        # (initialize_cache_db, get_from_cache, batch_query_wikidata,
+        # create_or_link_wikidata_ontology_node) receive a Path today.
+        self._cache_db_path: Path = Path(WIKIDATA_CACHE_DB_FILE)
 
         try:
             uri = get_setting('neo4j_uri')
@@ -695,11 +703,11 @@ class CoyoteOntologyStateManager:
                 timestamp = data.get('timestamp', '')
                 skipped_below_threshold = 0
                 for uri, score in uri_score_pairs:
-                    if score < TFIDF_TOPIC_THRESHOLD:
+                    if score < TOPIC_SCORE_THRESHOLD:
                         skipped_below_threshold += 1
                         logger.debug(
                             "Skipping low-importance topic uri=%s score=%.4f < threshold=%.3f",
-                            uri, score, TFIDF_TOPIC_THRESHOLD,
+                            uri, score, TOPIC_SCORE_THRESHOLD,
                         )
                         continue
                     # Query or retrieve from cache
@@ -713,7 +721,7 @@ class CoyoteOntologyStateManager:
                 if skipped_below_threshold:
                     logger.info(
                         "Threshold %.3f filtered %d/%d URIs for node %s",
-                        TFIDF_TOPIC_THRESHOLD, skipped_below_threshold,
+                        TOPIC_SCORE_THRESHOLD, skipped_below_threshold,
                         len(uri_score_pairs), node_id,
                     )
 
