@@ -153,31 +153,6 @@ def embed_text(text: str) -> Optional[list]:
         return None
 
 
-def build_webpage_embedding_text(
-    title: str,
-    summary: str,
-    entity_texts: list,
-    topic_labels: list
-) -> str:
-    """
-    Assemble the structured text string for Webpage embedding.
-    Entity NER label types (PERSON, ORG, etc.) are excluded —
-    entity text only.
-    The returned string is stored verbatim as embedding_text on the
-    Neo4j node.
-    """
-    parts = []
-    if title:
-        parts.append(f"Title: {title}")
-    if summary:
-        parts.append(f"Summary: {summary}")
-    if entity_texts:
-        parts.append(f"Entities: {', '.join(entity_texts)}")
-    if topic_labels:
-        parts.append(f"Topics: {', '.join(topic_labels)}")
-    return "\n".join(parts)
-
-
 def build_annotation_embedding_text(
     annotation_text: str,
     highlighted_text: str,
