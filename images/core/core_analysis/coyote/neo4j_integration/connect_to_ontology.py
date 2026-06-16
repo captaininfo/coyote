@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # A failed probe in the half_open state immediately re-trips.
 #
 # This is a separate breaker instance from the one in
-# text_bertopic_analysis.py. Both target the same endpoint from the same client
+# wikidata_lookup.py. Both target the same endpoint from the same client
 # IP and will typically trip near-simultaneously when WDQS rate-limits. Sharing
 # state across modules would be cleaner; unification is a post-MVP follow-up.
 #
