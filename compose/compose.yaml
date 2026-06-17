@@ -110,7 +110,7 @@ services:
       - AGENT_LOG_LEVEL=DEBUG
       - USE_LC_NL2CYPHER=0
       - SENTENCE_TRANSFORMERS_HOME=/opt/embedding_model
-      - VECTOR_SIMILARITY_THRESHOLD=${VECTOR_SIMILARITY_THRESHOLD:-0.65}
+      - VECTOR_SIMILARITY_THRESHOLD=${VECTOR_SIMILARITY_THRESHOLD:-0.40}
     volumes:
       - ${AGENT_LOG_DIR-./volumes/agent_logs}:/app/logs
     depends_on:
