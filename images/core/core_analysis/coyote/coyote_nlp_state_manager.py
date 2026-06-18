@@ -28,11 +28,10 @@ from coyote.utils.event_data_handler import (
 from coyote.analysis.scrape_webpage import scrape_webpage, should_exempt_url
 from coyote.analysis.summarize_text import summarize_text
 from coyote.analysis.nlp.extract_topics_with_rake import extract_topics_with_rake
-from coyote.analysis.nlp.text_ner_analysis import extract_entities, map_ner_to_wikidata, replace_named_entities_in_text
-from coyote.analysis.nlp.text_bertopic_analysis import calculate_tfidf_on_phrases
+from coyote.analysis.nlp.text_ner_analysis import extract_entities, map_ner_to_wikidata
+from coyote.analysis.nlp.entity_scoring import mention_frequency_score, NER_SCORE_FORMULA
 from coyote.analysis.nlp.keybert_analysis import extract_keywords
 from coyote.analysis.wikidata_lookup import map_topics_to_wikidata
-from coyote.analysis.nlp.stopwords import STOP_WORDS
 from coyote.analysis.relevance_calculator import calculate_relevance
 import json
 from coyote.coyote_embedder import (
@@ -45,9 +44,6 @@ from coyote.coyote_embedder import (
 
 # Get logger
 logger = logging.getLogger(__name__)
-
-# Stop words consolidated in stopwords.py (Unit 3 M11)
-stop_words_list = STOP_WORDS
 
 
 class CoyoteNLPStateManager:
@@ -474,9 +470,8 @@ class CoyoteNLPStateManager:
             15. Insert entities into Entities table
             16. Map entities to WikiData
             17. Update mapped entities in Entities table
-            18. Stopword-strip + replace entities in text (entity path only)
-            19. Calculate TF-IDF scores for entities
-            20. Write 'entities_scored' to the 'score' field of the 'Entities' table
+            18. Score entities by mention frequency (Unit 4) and write the
+                score to the 'score' field of the 'Entities' table
             20.5 Persist the Step 7.5 embedding + embedded_text
 
         (Steps 12-13, the topic underscore-replacement and topic TF-IDF
@@ -647,32 +642,35 @@ class CoyoteNLPStateManager:
                 else:
                     logger.warning(f"No mapped webpage entities to update in Entities table for event_id {event_id}.")
 
-                # Step 18: Stopword-strip + replace entities in text. The strip
-                # is local to this entity TF-IDF path (the topic path now needs
-                # raw text); the whole block dies with Unit 4.
-                processed_text = ' '.join(
-                    [word for word in scraped_text.split() if word.lower() not in stop_words_list]
+                # Step 18: Mention-frequency entity scoring (Unit 4).
+                # Count is computed in SQL with GROUP BY ... COLLATE NOCASE so
+                # the grouping key matches the UPDATE's COLLATE NOCASE semantics
+                # exactly (no Python-vs-SQLite case-fold divergence). Step 15
+                # inserts one row per recognized mention, so COUNT(*) per group
+                # is the mention count and their sum is the page total (used by
+                # the freq_normalized formula). Reads see the just-inserted rows
+                # on this same connection.
+                self.data_cursor.execute(
+                    """SELECT entity, COUNT(*) AS mentions
+                       FROM Entities
+                       WHERE event_id=? AND entity_context='webpage'
+                       GROUP BY entity COLLATE NOCASE""",
+                    (event_id,)
                 )
-                processed_text = replace_named_entities_in_text(processed_text, mapped_entities)
-                logger.debug(f"Processed Text after replacing entities: {processed_text}")
-
-                # Step 19: Calculate TF-IDF scores
-                # Fetch a representative sample of documents from CorpusDocuments
-                self.data_cursor.execute("SELECT content FROM CorpusDocuments WHERE source='TEDTalk' LIMIT 500")
-                rows = self.data_cursor.fetchall()
-                corpus = [r[0] for r in rows]
-                entities_scored = calculate_tfidf_on_phrases(processed_text, corpus=corpus, threshold=0.07)
-                logger.debug(f"TF-IDF scores for entities (event_id={event_id}): {entities_scored}")
-
-                # Step 20: Write 'entities_scored' to the 'score' field of the 'Entities' table
-                for term, tfidf_score in entities_scored.items():
-                    # Similarly, if entity terms had underscores, convert them back
-                    original_entity = term.replace('_', ' ')
+                entity_counts = self.data_cursor.fetchall()
+                total_mentions = sum(m for _, m in entity_counts)
+                for entity_repr, mentions in entity_counts:
+                    score = mention_frequency_score(
+                        mentions, NER_SCORE_FORMULA, total=total_mentions
+                    )
                     self.data_cursor.execute(
                         "UPDATE Entities SET score=? WHERE event_id=? AND entity=? COLLATE NOCASE",
-                        (tfidf_score, event_id, original_entity)
+                        (score, event_id, entity_repr)
                     )
-                logger.info(f"Updated Entities table with TF-IDF scores for event_id {event_id}.")
+                logger.info(
+                    "Scored %d webpage entities (formula=%s, %d total mentions) for event_id %s.",
+                    len(entity_counts), NER_SCORE_FORMULA, total_mentions, event_id
+                )
 
                 # Step 20.5: Persist the Step 7.5 pooled embedding.
                 # embedding_text MUST be embedded_text from
