@@ -223,14 +223,6 @@ def initialize_coyote_event_data_db() -> None:
         FOREIGN KEY(event_id) REFERENCES Events(event_id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS CorpusDocuments (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT,
-        content TEXT,
-        source TEXT,  -- e.g., "TEDTalk"
-        inserted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
     CREATE INDEX IF NOT EXISTS idx_events_event_id ON Events(event_id);
     CREATE INDEX IF NOT EXISTS idx_entities_event_id ON Entities(event_id);
     CREATE INDEX IF NOT EXISTS idx_topics_event_id ON Topics(event_id);

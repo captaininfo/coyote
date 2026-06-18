@@ -56,23 +56,6 @@ def extract_entities(text: str, nlp) -> List[Tuple[str, str]]:
         return []
 
 
-def replace_named_entities_in_text(text: str, entities_mapped: Dict[str, Dict[str, Any]]) -> str:
-    """
-    Replace entities in text with underscores for multi-word entities.
-
-    Args:
-        text (str): The original text.
-        entities_mapped (Dict[str, Dict[str, Any]]): Mapped entities with URIs (and possibly labels).
-
-    Returns:
-        str: The processed text with entities replaced.
-    """
-    for entity in entities_mapped.keys():
-        replacement = entity.replace(" ", "_")
-        text = text.replace(entity, replacement)
-    return text
-
-
 def map_ner_to_wikidata(entities: List[str]) -> Dict[str, Dict[str, Any]]:
     """
     Map a list of entity strings to WikiData URIs.
