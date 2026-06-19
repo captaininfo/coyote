@@ -282,27 +282,38 @@ Estimated effort (calibrated up per Unit 2 lesson): ~8 commits, 3–5 working se
 
 ---
 
-### Unit 5 — Metadata harvesting (trafilatura swap already shipped)
+### Unit 5 — Metadata harvesting (5a trafilatura-native fields; 5b JSON-LD QIDs DEFERRED)
 
-**Plan item:** 6. **Estimated effort:** small to medium.
+**Plan item:** 6. **Estimated effort:** 5a small; 5b medium (deferred).
 
-**Status check:** Trafilatura is ALREADY in production on `coyote-0.4` — `scrape_webpage.py:7` imports it; `:140` calls `extract()` for body text; `:147` calls `extract_metadata()` but currently only persists `.title`. This unit harvests the additional structured metadata that the original trafilatura swap did not.
+**Status check (verified 2026-06-19):** trafilatura is ALREADY in production — `scrape_webpage.py:7` imports it; `:140` `extract()` for body; `:147` `extract_metadata()` but only `.title` is persisted (`:148-149`). `scrape_webpage()` has exactly ONE caller (`coyote_nlp_state_manager.py:527`) and ZERO test references, so a return-signature change is safe.
 
-**Why this position:** feeds Unit 7 (mwapi fuzzy benefits from disambiguation hints), polish items (title-boost, domain-aware routing), and provides candidate context for Unit 8.
+**Rationale re-evaluation (post Unit 7/8 decision — read before scoping):** the original Unit 5 justified itself as "disambiguation hints for the mwapi fuzzy path." Units 7/8 now absorb disambiguation (wbsearchentities ranking + semantic post-filter), so that rationale is largely gone. What remains, split honestly:
+- **5a (trafilatura-native fields) — KEEP-candidate because it's cheap, NOT because it's load-bearing.** The fields are already computed inside the `extract_metadata()` call we make today and then discard. Concrete remaining MVP consumers are thin: (i) optional **Unit 8 context enrichment** — `description`/`tags` are concentrated topical signal that could sharpen the disambiguation context beyond the page pooled embedding; (ii) future display/filtering. **No hard MVP dependency** — scope-trimming *could* drop 5a without breaking anything. **DECISION (Justin, 2026-06-19): 5a is RETAINED in MVP.** The low-coupling note stays as documentation of *why* 5a is cheap and safe, not as an open question.
+- **5b (JSON-LD `schema:about`/`sameAs` → Wikidata QIDs) — DEFER to post-MVP.** The only non-trivial part (bespoke lxml JSON-LD parser). Signal is rare (single-digit % of pages); its only consumer is the ontology path; and it is **complementary to** Units 7/8, not required by them — when a page *does* carry `schema:about` QIDs they are *higher-confidence than* a wbsearchentities top-K + semantic filter (an author-asserted QID, no disambiguation needed), i.e. a future authoritative shortcut that bypasses 7/8 for those terms. It is **not** obviated by a future OpenTapioca move either (direct QID assertions and a gazetteer linker are complementary). Land it alongside the post-MVP local-linker work.
 
-**Work breakdown:**
-- Extend the metadata extraction in `scrape_webpage.py` beyond `metadata.title`. Use trafilatura's `extract_metadata()` properties: `description`, `tags`, `categories`, `date`, plus parse the raw HTML separately (or via trafilatura JSON-LD support) for `og_type`, `og_description`, and `schema.org/about` `sameAs` Wikidata QIDs.
-- Persist as new properties on the SQLite WebpageLoads row and on the Neo4j Webpage node.
-- New Neo4j writer parameters: extend Webpage CREATE/MERGE to set the new properties when present.
-- Schema documentation update in CLAUDE.md.
+**Verified corrections to the stale plan text (old `:294`):**
+- `og:type`→`pagetype` and `og:description`→`description` are **already trafilatura-native** `Document` fields (live-probed) — the stale "parse the raw HTML separately for `og_type`/`og_description`" is REDUNDANT. Only JSON-LD `sameAs`/`about` needs a bespoke parse (trafilatura surfaces no QID on any `Document` field). That bespoke parse *is* 5b → deferred.
+- **Unit 9a title-boost does NOT depend on Unit 5** (stale plan's "page_title from Unit 5" is a misattribution): the title is *already* harvested today (`metadata.title`→`webpage_title`). 9a proceeds independently.
 
-**Pre-Unit measurement required:**
-- Re-measure the current empty-scrape rate on `coyote-0.4` HEAD. The 67% figure in CLAUDE.md Known Issues predates trafilatura and is not the live baseline. Note: the rate is bounded above by the unfiltered redirect-URL events the browser extension still captures (see CLAUDE.md Known Issue on click-tracking redirects) — factor those OUT of the denominator, or use them as a known ceiling.
-- **Satisfied by pre-flight 6 (2026-05-28).** Results: 11.8% unexpected empty rate (4/34 effective denominator, Wilson 95% CI [4.6%, 26.6%]); full breakdown in pre-flight 6 results above.
+**5a work breakdown (the KEEP part):**
+- Curated trafilatura-native set: `description` (incl. og:description), `tags`, `categories`, `pagetype` (= og:type), `sitename`, `date`. **Dropped as low-value/PII:** `author` (PII), `license`, `image`, `language`, `hostname`, `fingerprint`/`id`, `filedate`.
+- New **pure** module `analysis/nlp/metadata_harvest.py` — `harvest_metadata(trafilatura_meta) -> dict` (never raises; testable without network — the Unit 4 testability lesson). 5a needs only the already-extracted `Document`; no raw-HTML re-parse. (5b later adds an `html_bytes`-consuming helper.)
+- `scrape_webpage` returns a `ScrapeResult(title, text, metadata)` NamedTuple instead of `tuple[str, str]`. **Seven return sites change (verified by grep 2026-06-19):** the **six** early-return `"", ""` sites (`:114, :121, :130, :137, :155, :163`) become `ScrapeResult("", "", {})`, and the success return (`:160`, `return title, text`) becomes `ScrapeResult(title, text, metadata)`. Update the ONE caller (`coyote_nlp_state_manager.py:527`, currently `title, scraped_text = scrape_webpage(...)`). (Sonnet correctly flagged the earlier "four" miscount.)
+- SQLite `WebpageLoads`: new columns — scalars as TEXT; lists (`tags`/`categories`) as JSON TEXT (the existing `embedding` column's pattern). Schema add in `initialize_databases.py` (data-expendable, **NO `ALTER` migration**). Exempt-URL path leaves them NULL.
+- State manager: one new UPDATE step after the title/summary writes, before the Step 20.5 embedding persist. **Do NOT fold metadata into `embedding_text`** (keeps embedding = title+body; Gate 5.3).
+- Neo4j writer (`data_sources/coyote_extension/coyote_browser_extension_to_neo4j.py`): scalars as String props; lists (`meta_tags`/`meta_categories`) as native `String[]` (writer `json.loads` then passes the list — the `embedding` pattern at `:255`). **Footgun (verified):** there are **TWO duplicated Webpage CREATE blocks** — orphan (`:438-456`) and linked (`:476-496`) — plus the `SELECT … FROM WebpageLoads` (`:226-238`) and the `_create_and_link_webpage` signature (`:403-419`). All four sites move together; keep the two CREATE blocks in sync, do NOT refactor the duplication mid-unit.
+- CLAUDE.md schema-doc update.
 
-**Verification gates:** (Gate 5.1 retired 2026-05-28 — was conceptually misaligned with Unit 5, which harvests additional metadata from already-successful scrapes and does not move the empty-scrape rate. Scraper-health observations now live under pre-flight 6 results instead. Numbering preserved as 5.2 / 5.3 to keep the gate-number history readable.)
-- **Gate 5.2:** at least 5/20 pages with `og_type` or `og_description` non-null (sanity check on OG harvesting); at least 2/20 pages with non-null `schema_about_uris` containing valid Wikidata QIDs (JSON-LD adoption is sparser than OG tags).
-- **Gate 5.3:** no regression in `embedding_text` content quality — the text being embedded is still the body content, not metadata fields contaminating the body.
+**5b (DEFERRED — recorded, do NOT implement for MVP):** bespoke `_extract_schema_about_wikidata(html_bytes)` via `lxml` (6.1.1 already in the core image — no new dep): find `<script type="application/ld+json">`, defensive `json.loads` (NOT bare except), walk `@graph`/arrays/dict, read `schema:about`/`sameAs` `@id`, keep only Wikidata entity URIs, normalize to canonical `http://www.wikidata.org/entity/Q####`, dedup. Persist as `schema_about_uris` (JSON TEXT in SQLite, native `String[]` in Neo4j).
+
+**Verification gates:**
+- **Gate 5.2a (5a):** on a sample of 20 pages, ≥5/20 have `pagetype` or `description` non-null (OG-harvesting sanity).
+- **Gate 5.2b (5b — ONLY if 5b is un-deferred):** ≥2/20 pages with non-null `schema_about_uris` containing valid Wikidata QIDs (JSON-LD is sparser than OG tags).
+- **Gate 5.3:** no regression in `embedding_text` — the embedded text is still title+body, not metadata-contaminated (structural: the metadata UPDATE is a separate write from the Step 7.5 embedding).
+- **Gate 5.4 (NEW, 5b only):** every harvested `schema_about_uri` matches `^http://www\.wikidata\.org/entity/Q\d+$`.
+
+(Gate 5.1 retired 2026-05-28 — was about empty-scrape rate, conceptually misaligned with harvesting metadata from already-successful scrapes; scraper-health lives under pre-flight 6. Result retained: 11.8% unexpected empty rate, 4/34, Wilson 95% CI [4.6%, 26.6%].)
 
 ---
 
@@ -325,46 +336,79 @@ Estimated effort (calibrated up per Unit 2 lesson): ~8 commits, 3–5 working se
 
 ---
 
-### Unit 7 — WikiData mwapi fuzzy label matching
+### Unit 7 — WikiData term→QID via the Action API (`wbsearchentities`)
 
-**Plan item:** 4. **Estimated effort:** medium.
+**Plan item:** 4. **Estimated effort:** small–medium (one-function transport swap; see integration surface).
 
-**Why this position:** depends on Unit 2 (cache absorbs the increased query volume from broader matching). Improves coverage of terms that currently return zero matches under exact-label SPARQL.
+**Supersedes the original Unit 7** (`wikibase:mwapi`-inside-SPARQL fuzzy match). That approach kept the lookup on the WDQS SPARQL endpoint (`query.wikidata.org/sparql`) — the exact endpoint whose per-IP/per-minute throttling zeroed WikiData coverage on the Units 1-4 replay (one HTTP 429 + breaker `threshold=1` disabled the whole ~8-min session; see memory `project-wdqs-zero-coverage-diagnosis` and the Known Issue in CLAUDE.md). Routing *more* matching volume through `mwapi` would only add load to the throttled endpoint. This redraft moves term→QID lookup to the **Wikibase Action API** (`www.wikidata.org/w/api.php?action=wbsearchentities`), a different endpoint with far more generous read limits and native prominence-ranked prefix/alias matching.
 
-**Work breakdown:**
-- Replace the current strict label-match SPARQL in `query_wikidata` with a `wikibase:mwapi` fuzzy-search query. Single-stage (no NER-context disambiguation — too expensive, deferred).
-- The cache layer from Unit 2 wraps this; cache lookup first, fuzzy SPARQL on miss, cache result (including empty results).
-- Update the User-Agent and any rate-limit handling for the new query shape.
-- Keep the existing exact-match path as a fallback if mwapi returns nothing.
+**Why this position:** depends on Unit 2 (the term cache wraps the new transport unchanged) and **Unit 6 (load-bearing here):** prefix/alias matching is *more permissive* than exact-label SPARQL, so noise tokens that returned `[]` under exact match can now return a spurious QID. Unit 6's token-quality filter + a top-K cardinality cut must strip the junk *before* it reaches the API — this both protects mapping quality and is the dominant rate-limit lever (below).
+
+**Forward dependency:** this unit also **establishes the 3-wide `(label, uri, description)` candidate contract** that **Unit 8**'s semantic post-filter consumes — the contract is set here, not changed there (see Integration surface). This deliberately moves the widening out of Unit 8 so Unit 7's gates are not immediately followed by a contract-shape change.
+
+**Endpoint behavior (verified by 2026-06-19 probe, 8 cohort terms, 0.6s spacing):**
+- 8/8 HTTP 200, 0 throttled (vs WDQS 429 within ~4 queries) — availability solved.
+- 8/8 returned ≥1 candidate (prefix/alias match) — coverage solved (the original Unit 7 goal, for free).
+- Prominence-ranked: `ai` → Q11660 artificial-intelligence at #1, Anguilla demoted to #2 — the flagship known-bad case fixed by default ranking.
+- Each candidate carries its `description` **inline** → Unit 8's planned separate batched-description SPARQL fetch is eliminated (Unit 8 to be redrafted to consume the inline payload).
+- Top-1 is NOT reliable on hard ambiguous cases (Robespierre → family-name #1; Jacobin → genus #1; "the French Revolution" → only works-titled-that) → a top-K disambiguation step (Unit 8) is still required. Caveat: single 8-term probe, directional not rigorous.
+
+**Determinism note:** this does not reduce the determinism of Coyote's pipeline. Coyote's *local* NLP (spaCy NER, KeyBERT, embeddings) remains deterministic. The WikiData *linking* step has always been a live external lookup — and the current exact-label SPARQL is `LIMIT 1` with **no `ORDER BY`** (`wikidata_lookup.py:217-224`), so it returns an *arbitrary* match among same-label items (the mechanism behind `ai`→Anguilla). `wbsearchentities`'s prominence ranking is strictly more principled, not less. Within-TTL reproducibility is provided by the Unit 2 cache regardless of endpoint. (A fully-local, fully-deterministic linker is the post-MVP OpenTapioca/gazetteer move — see `MVP_REFACTOR_PLAN.md:56`.)
+
+**Integration surface + candidate contract (verified against code 2026-06-19):**
+- `query_wikidata(term)` (`wikidata_lookup.py:181`) is the single chokepoint. Both consumers — `map_topics_to_wikidata` (`:271`) and `map_ner_to_wikidata` (`text_ner_analysis.py:59`) — currently use only `result[0]` → `(label, uri)`.
+- Re-implement only the *body* of `query_wikidata`: `requests.get` to `www.wikidata.org/w/api.php` with `action=wbsearchentities&search=<term>&language=en&format=json&formatversion=2&limit=K&maxlag=5`. `requests` is already a core dep; drop `SPARQLWrapper` from this path (it stays in `connect_to_ontology.py` — see "Two WDQS clients").
+- **Return the 3-wide candidate `List[Tuple[label, uri, description]]` from the start, not 2-wide.** The `description` is free in the same `wbsearchentities` response and Unit 8 consumes it; setting the shape here avoids a 2-wide→3-wide change one unit after Unit 7's gates. Unit 7's own consumers stay top-1 — unpack `label, uri, _ = result[0]` (the description is inert until Unit 8). If Unit 8 is ever cut from MVP, Unit 7 trivially reverts to 2-wide (one field, no functional impact).
+- **Update the now-stale 2-wide annotations when widening** (Sonnet catch, verified `:142`/`:165`/`:181`/`:191`): `query_wikidata`'s signature + docstring (`:181`, `:191`), `_cache_lookup -> Optional[List[Tuple[...]]]` (`:142`), `_cache_store(data: List[Tuple[...]])` (`:165`). The cache *reconstruction* `[tuple(item) for item in raw]` (`:159`) needs **no** change for a plain 3-tuple (a `WikidataCandidate` NamedTuple would read cleaner but then `:159` must become `WikidataCandidate(*item)`). The two `label, uri = wikidata_result[0]` unpack sites (`:290`, `text_ner_analysis.py:73`) become `label, uri, _ = ...` (then are replaced outright by Unit 8's selection call).
+- URI normalization is free: use each result's `concepturi` (already canonical `http://www.wikidata.org/entity/Q####`, matching `Entities/Topics.wikidata_uri`); do **not** reconstruct from `id`.
+- Unchanged because the rest of the contract holds: the Unit 2 term cache (stores/loads `List[Tuple]` of either width), the circuit breaker, retry/backoff, the Neo4j writer, chains.py, all of retrieval.
+
+**Rate-limit strategy (ordered by leverage):**
+1. **Cardinality cut (Unit 6, load-bearing):** map only the top-K scored topics (~10-20) and top-K scored entities (~10-20), not the hundreds of raw NER tokens. Dominant lever; improves quality simultaneously.
+2. **Cache (Unit 2):** endpoint-agnostic; recurring entities hit cache within a session, empty results cached too.
+3. **Serial pacing:** ~0.5-1s sleep between cache-miss calls + `maxlag=5`. Safe *because* the NLP manager is a single-threaded serial drain — see invariant below.
+4. **Raise `WIKIDATA_BREAKER_THRESHOLD` above 1** (independent robustness fix): a single transient 429 must never zero a whole session again.
+
+**Two WDQS clients — only one migrates:** Coyote runs two independent WikiData clients in two separate daemon threads:
+- **NLP thread** → `query_wikidata` (term→QID, hundreds of calls/page) — **migrates to the Action API here.**
+- **Ontology thread** → `connect_to_ontology.batch_query_wikidata` (`:247`, hits `query.wikidata.org/sparql` `:317`, own `while True` loop `:628`) — P279/P31 **ancestor traversal**, a graph query `wbsearchentities` cannot serve. **Stays on WDQS SPARQL**, keeps its own independent breaker.
+- Net effect: this migration removes the *high-volume* consumer from WDQS, leaving only the lower-volume batched ancestor traversal — a large request-volume reduction on WDQS, **not** a full WDQS exit. Do not let downstream text imply WikiData is off WDQS.
+
+**Rate-limit safety invariant (document in CLAUDE.md):** Term→QID lookups (Action API) and ancestor traversal (WDQS SPARQL) are each safe under *per-event* pacing **only because** the NLP and ontology managers are single-threaded serial drains — one `while True` loop per thread, and the NLP loop additionally guards with `is_event_processing` (`coyote_nlp_state_manager.py:136`); no `ThreadPool`/per-event thread fan-out exists. If event processing is ever parallelized (post-MVP session-ID / multi-stream work), per-event pacing becomes insufficient: pacing must move to a **shared cross-event limiter, one per endpoint** (two endpoints). Do **not** add concurrency caps now — they would defend against a parallelism the single-linear-browsing-history design structurally forbids, and would duplicate/mask the existing `is_event_processing` serialization.
 
 **Verification gates:**
-- **Gate 7.1:** on a sample of pages, label-mapping coverage (proportion of KeyBERT phrases that map to a Wikidata QID) increases materially vs Unit 6 baseline (target: >20% relative increase).
-- **Gate 7.2:** no spurious mappings introduced. Top-mapped phrases pass human spot-check (avoid the known "ai → Anguilla" class of errors — these are Unit 8's domain, not made worse here).
-- **Gate 7.3:** WDQS call volume does not spike disproportionately (cache from Unit 2 is doing its job).
-- **Gate 7.4:** WikiData circuit breaker does not trip during the replay.
+- **Gate 7.1 (availability — the regression refutation):** full replay of ≥20 pages completes with **zero** Action-API breaker trips and WikiData coverage > 0% (directly refutes the Units 1-4 zero-coverage result).
+- **Gate 7.2 (coverage):** proportion of (Unit-6-filtered) KeyBERT phrases + entities mapping to a QID increases materially vs the exact-label baseline (target: >20% relative).
+- **Gate 7.3 (no gross spurious mappings):** top-mapped phrases pass human spot-check; `ai`→artificial-intelligence (#1) holds. Hard-case disambiguation (Robespierre/Jacobin class) is Unit 8's domain, not gated here.
+- **Gate 7.4 (WDQS load):** the surviving WDQS consumer (ancestor traversal) does not trip its breaker during the replay; Action-API calls per page track the post-Unit-6 cardinality (tens, not hundreds).
 
 ---
 
-### Unit 8 — NER semantic-similarity post-filter
+### Unit 8 — semantic-similarity disambiguation over the `wbsearchentities` top-K
 
 **Plan item:** 5. **Estimated effort:** medium.
 
-**Work breakdown:**
-- For ambiguous mappings (currently `"ai"` → Anguilla, `"gpt"` → GNU Portable Threads, `"First Monday"` → calendar date), add a post-mapping filter.
-- For each candidate (label, uri) pair, fetch the Wikidata `description` for the QID. **Batch description fetches in a single SPARQL `VALUES` clause per page** rather than one call per QID, to bound WDQS load.
-- Embed the description using the active embedder (whichever Unit 10 selects, or current MiniLM).
-- Compare against the page/entity context embedding.
-- Pick the highest-scoring candidate. Below threshold → "no mapping".
+**Redrafted to consume Unit 7's Action-API payload.** The original Unit 8 fetched each candidate's Wikidata `description` via a separate batched SPARQL `VALUES` query against WDQS. That fetch is now **eliminated**: `wbsearchentities` (Unit 7) returns each candidate's `description` **inline**, in the same response that already gives `(label, uri)`. Unit 8 becomes a *pure local re-ranking* over candidates Unit 7 already has in hand — **zero additional network calls** (Action API or WDQS).
 
-**Cost accounting (per page, M phrases × K candidates from mwapi):**
-- SPARQL: 1 batched description query per page (after Unit 2 cache absorbs repeats across pages). Cache extension: persist description fetches in the term→QID cache keyed by QID alongside the term mapping, so repeat description fetches don't re-hit WDQS.
-- Embedding ops: K × M descriptions embedded per page (local CPU; no rate limit but additive latency). With K=5 mwapi candidates and M=20 phrases that's 100 embedding ops per page, ~1-3 seconds CPU on current MiniLM. Tolerable but not free.
-- Net: small SPARQL increase (1 batched call), material CPU increase (~1-3s per page). Document the latency in CLAUDE.md.
+**What problem this solves (verified hard cases from the 2026-06-19 probe):** Unit 7's prominence ranking fixes the *common* ambiguities for free (`ai`→artificial-intelligence is now correct at #1 — it has moved from "known-bad" to "known-good"). What it does NOT fix is context-dependent ambiguity where the globally-prominent sense is wrong for *this page*: `Robespierre`→family-name #1 (person Q44197 at #2), `Jacobin`→plant genus #1 (FR club Q179885 at #3), `the French Revolution`→works-titled-that (the event not surfaced). These are exactly the cases a context-aware post-filter is for.
+
+**Candidate contract (now established in Unit 7):** the 3-wide `List[Tuple[label, uri, description]]` is set in **Unit 7** — Unit 8 changes **no return shapes**, only consumer logic. The two `label, uri = wikidata_result[0]` unpack sites (`map_topics_to_wikidata:290`, `map_ner_to_wikidata:73`) are *replaced* by the `select_best_candidate(...)` call below, which consumes the full top-K-with-descriptions list. (Earlier drafts placed the widening in Unit 8; it was moved to Unit 7 so Unit 7's gates are not immediately followed by a contract-shape change — see Unit 7 Integration surface, and the stale-2-wide-annotation cleanup lands there too.)
+
+**Work breakdown:**
+- Add a **pure** selection function — `select_best_candidate(context_embedding, candidates, threshold) -> Optional[Tuple[label, uri]]` — that embeds each candidate's `description` with the active embedder (`coyote_embedder.embed_text`; whichever model Unit 10 settles on), cosine-compares against the page context embedding, returns the argmax above `threshold`, else `None` ("no mapping"). Pure-function + network-free = unit-testable on fixed embeddings (the Unit 4 testability lesson).
+- **Context embedding = the page's pooled full-doc embedding** (Unit 3, already computed in Step 7.5 — reuse it, do not recompute). This is the pragmatic MVP signal: a page about Revolutionary politics scores Robespierre-the-person's description above Robespierre-the-surname's. Per-mention local-context windows would be sharper but cost more; defer as a refinement, note in CLAUDE.md.
+- Move selection into `map_topics_to_wikidata` / `map_ner_to_wikidata`: replace `result[0]` with `select_best_candidate(page_embedding, result, threshold)`. The page embedding must be threaded into these calls (currently they receive only the term list) — small signature change, the embedding is already in scope in the NLP state manager.
+- New env var `WIKIDATA_DISAMBIG_THRESHOLD` (cosine floor for accepting the best candidate). This is a **different similarity space** than `VECTOR_SIMILARITY_THRESHOLD` (description↔page-context, not query↔doc) → its own var, its own tuning; pick the default from Gate 8.3 data, do not borrow 0.40.
+
+**Cost accounting (per page, M mapped terms × K candidates):**
+- **Network: zero** added calls — descriptions ride in the Unit 7 `wbsearchentities` response and the Unit 2 term cache. The original "1 batched SPARQL/page + persist-descriptions-by-QID" line is **deleted** (moot).
+- Embedding ops: K descriptions × M terms, local CPU. With K=5 and M~10-20 *after Unit 6's cardinality cut* (not the old 20+ raw), ~50-100 short-string embeds/page, ~1-2s on MiniLM. Context embedding is reused (0 extra). Optional optimization: cache the description *embedding* keyed by QID to skip re-embedding repeat candidates across pages — descriptions are short, so this is a latency nicety, not required for MVP.
+- Net: no rate-limit exposure, modest additive CPU. Document the latency in CLAUDE.md.
 
 **Verification gates:**
-- **Gate 8.1 (precision on known-bad cases):** ≥80% of the curated known-bad set resolve to the semantically correct QID. Curated set must include: `"ai"` → Q11660 (artificial intelligence) not Anguilla; `"gpt"` → Q105434500 (GPT) not GNU Portable Threads; `"First Monday"` → the journal Q3739241 (or the magazine, depending on context) not the calendar date; plus 5-10 additional cases assembled during pre-flight check 1. Curated set committed to `tests/fixtures/ambiguous_terms_known_bad.json`.
-- **Gate 8.2 (no regression on known-good):** terms that mapped correctly before Unit 8 still map correctly after. Curated set committed similarly.
-- **Gate 8.3 (informational, NOT pass/fail):** track mapping coverage delta vs Unit 7 baseline. A correctly-working semantic filter SHOULD prune some bad mappings, so coverage may legitimately drop by 10-20%. Use this number as a sanity check (a 60%+ drop would indicate the embedder threshold is too aggressive), not as a binary gate.
+- **Gate 8.1 (precision on context-dependent known-bad cases):** ≥80% of the curated set resolve to the *contextually* correct QID. Set must include the probe-verified hard cases — `Robespierre`→Q44197 (person) not the surname; `Jacobin`→Q179885 (FR political club) not the plant genus; `the French Revolution`→Q6534 (the event) not a work titled that — each paired with a representative page context. Plus 5-10 cases assembled during pre-flight 1. Committed to `tests/fixtures/ambiguous_terms_known_bad.json`. (Note: `ai`→Q11660 is now a *known-good* Unit 7 case, not a Unit 8 target.)
+- **Gate 8.2 (no regression on known-good):** terms Unit 7's top-1 already maps correctly (`ai`→Q11660, `Paris`→Q90, `philosophy`→Q5891, `vienna circle`→Q208238) still map correctly after the post-filter. **Caveat — re-verify, do not freeze (Sonnet catch):** these QIDs are the correct *targets* (stable identifiers), but the assertion that `wbsearchentities` ranks each at #1 is a single-point-in-time probe (2026-06-19), and prominence ranking can drift as Wikidata's index changes (see Unit 7 determinism note). Re-confirm Unit 7's *actual* top-1 outputs at Gate 7.1 execution time and freeze *those* as the known-good baseline; do not hardcode the probe results as eternal. Commit the fixture once re-confirmed.
+- **Gate 8.3 (threshold tuning + coverage delta, informational):** sweep `WIKIDATA_DISAMBIG_THRESHOLD` and record the coverage delta vs the Unit 7 (top-1) baseline. A correctly-working filter SHOULD prune some bad mappings, so coverage may legitimately drop 10-20%; a 60%+ drop means the threshold is too aggressive. Use to set the default, not as a binary gate.
 
 ---
 
