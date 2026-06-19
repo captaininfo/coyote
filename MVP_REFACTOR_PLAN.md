@@ -317,22 +317,44 @@ Estimated effort (calibrated up per Unit 2 lesson): ~8 commits, 3–5 working se
 
 ---
 
-### Unit 6 — Layer 2 post-extraction token quality filter
+### Unit 6 — Token-quality filter + entity mapping-cardinality floor
 
-**Plan item:** 7. **Estimated effort:** small.
+**Plan item:** 7. **Estimated effort:** small-to-medium. **Depends on:** Unit 3 (KeyBERT topics), Unit 4 (mention-frequency signal), and PF-9a below (sets the floor default). **Feeds:** Unit 7 — this is the cardinality control that makes the Action-API request volume rate-safe.
 
-**Work breakdown:**
-- After KeyBERT (Unit 3) returns phrases, before WikiData mapping:
-  - Drop phrases matching the existing custom-stopword list (`text_bertopic_analysis.py:143-146` — preserve and import to a shared location).
-  - Drop phrases of length <3 characters. Preserves meaningful 3-char tokens (`NLP`, `OER`, `API`, `MVP`, `AI`) common in academic/tech corpora.
-  - Drop bound-morpheme tokens that survive the length-3 check but are word-formation prefixes, not standalone concepts: `pre`, `anti`, `non`, `sub`, `pro`, `neo`, `post`, `semi`, `pseudo`, `quasi`. Pre-flight 2 surfaced "doc pre" in candidate output (score 0.2350 on the BERTopic page), confirming the gap: spaCy tags these as ADJ in compound-word contexts and they leak through as unigrams. Independent of the noun_chunks switch — applies to whichever candidate generator is in use.
-  - Drop Wikipedia citation-template fragments: `cite web`, `cite news`, `cite book`, `cite journal`. These are wiki-markup leakage that trafilatura should strip but doesn't always. Pre-flight 2 did NOT surface these in any condition's top-5 on the 5 sample pages, so this is cheap insurance, not a gating issue.
-  - Drop pure-numeric phrases.
-  - Drop single-character tokens.
-  - Drop temporal-noise phrases (extension of MVP Fix 1 STOP set: `day`, `days`, `hour`, etc.).
-- Centralize the filter list in a shared module so chains.py `_terms()` and the NLP filter use the same source.
+**Two responsibilities** (the original section described only the first):
+- **(A) Token-quality filter** — drop junk (numeric/date entities, single-char, pure-numeric, stopword-only phrases, citation fragments, bound morphemes) BEFORE storage, on both the topic and entity paths.
+- **(B) Entity mapping-cardinality floor** — among surviving entities, map to WikiData only those mentioned ≥ `ENTITY_MAP_MENTION_FLOOR` times *on that page*. This is the lever that takes per-page WikiData lookups from the measured ~1000-2000 (Unit-4 cohort: median 1393, max 2140 raw distinct) down to the salient tens-to-low-hundreds, making Unit 7's endpoint swap rate-safe.
 
-**Verification gate:** on a sample of 20 pages, no phrases in the filter list appear in `Topics` rows.
+**Design decisions (settled 2026-06-19, Justin + Sonnet):**
+- **No `chains.py` centralization.** The original "share one list with `chains.py` `_terms()`" mandate is rejected: `chains.py` `STOP` (`:192-209`, *agent* image) is a *query-parsing* set that deliberately strips meta-vocabulary ("webpage", "search", "topic") which are *legitimate extracted topics* the NLP filter must keep; and the agent image has no nltk, so `STOP_WORDS` can't cross. The NLP filter is core-side, consuming `analysis/nlp/stopwords.py`. Universal primitives (pure-numeric, single-char) are 2-line predicates, not worth a cross-image shared module.
+- **Drop numeric/date entirely (no store-unmapped).** NER labels {CARDINAL, ORDINAL, QUANTITY, PERCENT, MONEY, TIME, DATE} and pure-numeric/single-char tokens are dropped before storage — never enter SQLite or Neo4j. Invariant: Neo4j is THE personal-data repository; no SQLite-only data. (Revisit after the post-MVP gazetteer.)
+- **A mention-frequency *floor*, not a fixed top-K.** Rationale from the Unit-4 cohort (4 dense Wikipedia pages — Vienna Circle, French Revolution, Hundred Years' War, a delegate list): of ~1000 filtered distinct entities/page, only ~100-300 are mentioned ≥2× and the rest are once-only NER noise. A floor is principled (the salience cliff = Unit 4's signal), adaptive (short pages map few automatically), noise-killing (excludes the once-only tail), and **chunking-robust** (post-MVP chunking shrinks per-event counts with no retune; a whole-document-tuned K would be wrong after chunking). **Application is PER-EVENT** (that event's own mention counts — the same per-event `GROUP BY` as Step 18); the floor's default *value* is a single global constant calibrated once from PF-9a. These are distinct — do not conflate per-event application with the sample-calibrated default.
+
+**New module `analysis/nlp/token_filter.py` (pure, network-free, no spaCy load — mirrors `entity_scoring.py`):**
+- `is_quality_token(phrase) -> bool` — drop if length-1, pure-numeric, non-alpha-dominant, all-tokens-∈-`STOP_WORDS`, citation fragment (`cite web/news/book/journal`), or lone bound-morpheme (`pre, anti, non, sub, pro, neo, post, semi, pseudo, quasi`). **The old `<3 chars` rule is CORRECTED to length-1 only** — `<3` would have killed `AI`/`ML`; 2-char alpha is kept.
+- `filter_topics(List[(phrase, score)])` and `filter_entities(List[(text, ner_label)])` — apply the quality filter; `filter_entities` additionally drops the numeric/date NER-label set.
+- `select_mapping_entities(entities, floor=ENTITY_MAP_MENTION_FLOOR) -> List[str]` — case-folded mention `Counter`; return distinct entity strings with count ≥ floor. (Optional safety top-K cap reserved if PF-9b demands it.)
+- `ENTITY_MAP_MENTION_FLOOR = int(os.environ.get("ENTITY_MAP_MENTION_FLOOR", "2"))` at module level (provisional default 2; PF-9a confirms/tunes). **Single read, single consumer, passed as arg** — mirrors `NER_SCORE_FORMULA` / `KEYBERT_MMR_LAMBDA` (`keybert_analysis.py:48`). **Code-review checkpoint:** verify it is wired exactly once so PF-9b's number is a one-character change.
+
+**Integration (webpage path, verified line refs):**
+- after Step 8 (`:566`): `detailed_topics = filter_topics(detailed_topics)`.
+- Step 9 (`:575`) inserts the filtered topics (all). Topics aren't a volume problem (KeyBERT bounds `top_n=20`) → quality filter only, no entity-style floor.
+- after Step 14 (`:609`): `extracted_entities = filter_entities(extracted_entities)`.
+- Step 15 (`:612`) inserts the filtered entities (all survivors — still stored and still reach the Neo4j blob with NULL uri if unmapped; the floor governs *mapping*, not storage).
+- Step 16 (`:627`): replace `entity_texts = [r[2] for r in entities_records]` with `select_mapping_entities(extracted_entities)`.
+- Step 18 (`:645`) scoring UNCHANGED — runs over all stored (filtered) entities; `total_mentions` now reflects the clean denominator.
+- Other three event paths (search uses RAKE not KeyBERT; hyperlink/annotation unread): apply the same pure helpers AFTER verifying each path's extraction shape. The floor is a no-op where volume < floor count.
+
+**Pre-Unit measurement required (PF-9a — entity-density replay; STABLE, corpus-shape, run before Unit 6):** browse a *representative* mix (mostly short/typical articles + a couple deep Wikipedia pages) and measure the per-page distinct-entity and mention-frequency distribution AFTER the quality filter. The current Unit-4 cohort is unrepresentative (all 4 pages are dense Wikipedia — zero typical articles), so it cannot set the default. PF-9a picks `ENTITY_MAP_MENTION_FLOOR` on salience grounds (the ≥2× cliff). Network-independent; does not go stale like PF-9b.
+
+**Verification gates:**
+- **Gate 6.1 (junk removed):** on a 20-page replay, zero curated junk tokens (`pp.`, `978`, bare years, single chars, stopword-only, `cite web`) appear in `Topics`/`Entities` rows.
+- **Gate 6.2 (cardinality / rate precondition):** per-page distinct WikiData mapping inputs after the floor ≤ the PF-9b budget (the number Unit 7 Gate 7.4 verifies against).
+- **Gate 6.3 (no false positives):** legitimate multi-word topics/entities survive — host unit tests + spot-check (KEEP "french revolution", "logical positivism", "AI", "OER"; DROP "pp.", "978", "1789", "x", "cite web", "more").
+- **Gate 6.4 (Unit 4 non-regression):** entity mention-frequency scores still computed correctly over the filtered set.
+- **Host unit tests** `tests/test_token_filter.py` (mirrors `test_entity_scoring.py`): pure keep/drop cases + `select_mapping_entities` floor cases.
+
+**Commit sequence (buildable each step):** (1) `token_filter.py` + tests; (2) wire webpage path + env var; (3) extend to the other three paths (verify shapes first); (4) CLAUDE.md env-var row + Known-Issue update (the `pp.`/`978` NER-noise item → resolved).
 
 ---
 
@@ -364,7 +386,7 @@ Estimated effort (calibrated up per Unit 2 lesson): ~8 commits, 3–5 working se
 - Unchanged because the rest of the contract holds: the Unit 2 term cache (stores/loads `List[Tuple]` of either width), the circuit breaker, retry/backoff, the Neo4j writer, chains.py, all of retrieval.
 
 **Rate-limit strategy (ordered by leverage):**
-1. **Cardinality cut (Unit 6, load-bearing):** map only the top-K scored topics (~10-20) and top-K scored entities (~10-20), not the hundreds of raw NER tokens. Dominant lever; improves quality simultaneously.
+1. **Cardinality floor (Unit 6, load-bearing):** map only entities mentioned ≥ `ENTITY_MAP_MENTION_FLOOR` times per page (a salience *floor*, NOT a fixed top-K — see Unit 6), plus the ~20 KeyBERT topics. The Unit-4 cohort measured ~1000-2000 raw distinct entities/page; the floor cuts this to the salient tens-to-low-hundreds (deep pages higher, typical pages far lower). Dominant lever; improves quality simultaneously. Floor default set by PF-9a; per-page volume verified against PF-9b at Gate 7.4.
 2. **Cache (Unit 2):** endpoint-agnostic; recurring entities hit cache within a session, empty results cached too.
 3. **Serial pacing:** ~0.5-1s sleep between cache-miss calls + `maxlag=5`. Safe *because* the NLP manager is a single-threaded serial drain — see invariant below.
 4. **Raise `WIKIDATA_BREAKER_THRESHOLD` above 1** (independent robustness fix): a single transient 429 must never zero a whole session again.
@@ -380,7 +402,7 @@ Estimated effort (calibrated up per Unit 2 lesson): ~8 commits, 3–5 working se
 - **Gate 7.1 (availability — the regression refutation):** full replay of ≥20 pages completes with **zero** Action-API breaker trips and WikiData coverage > 0% (directly refutes the Units 1-4 zero-coverage result).
 - **Gate 7.2 (coverage):** proportion of (Unit-6-filtered) KeyBERT phrases + entities mapping to a QID increases materially vs the exact-label baseline (target: >20% relative).
 - **Gate 7.3 (no gross spurious mappings):** top-mapped phrases pass human spot-check; `ai`→artificial-intelligence (#1) holds. Hard-case disambiguation (Robespierre/Jacobin class) is Unit 8's domain, not gated here.
-- **Gate 7.4 (WDQS load):** the surviving WDQS consumer (ancestor traversal) does not trip its breaker during the replay; Action-API calls per page track the post-Unit-6 cardinality (tens, not hundreds).
+- **Gate 7.4 (rate budget):** the surviving WDQS consumer (ancestor traversal) does not trip its breaker; AND per-page Action-API (`wbsearchentities`) calls stay within the **PF-9b** freshly-measured sustained-rate budget. **PF-9b (Pre-Unit measurement required — LIVE, run CLOSE to this unit's implementation):** a sustained-rate probe of `wbsearchentities` from the deploy IP to establish the safe per-minute/per-page call budget. Unlike PF-9a (stable corpus shape, feeds Unit 6), PF-9b is time-sensitive and goes stale, so it is measured here, fresh. **Contingency (resolves the Unit 6↔7 coupling one-directionally):** Unit 6's floor is chosen on *salience* (PF-9a) and stands alone; if its per-page volume exceeds PF-9b's fresh budget, RAISE `ENTITY_MAP_MENTION_FLOOR` (the floor is the contingency knob) — never lower a fixed K. This is the only adjustment PF-9b can force, and it is upward-only.
 
 ---
 
@@ -402,7 +424,7 @@ Estimated effort (calibrated up per Unit 2 lesson): ~8 commits, 3–5 working se
 
 **Cost accounting (per page, M mapped terms × K candidates):**
 - **Network: zero** added calls — descriptions ride in the Unit 7 `wbsearchentities` response and the Unit 2 term cache. The original "1 batched SPARQL/page + persist-descriptions-by-QID" line is **deleted** (moot).
-- Embedding ops: K descriptions × M terms, local CPU. With K=5 and M~10-20 *after Unit 6's cardinality cut* (not the old 20+ raw), ~50-100 short-string embeds/page, ~1-2s on MiniLM. Context embedding is reused (0 extra). Optional optimization: cache the description *embedding* keyed by QID to skip re-embedding repeat candidates across pages — descriptions are short, so this is a latency nicety, not required for MVP.
+- Embedding ops: K descriptions × M terms, local CPU. M = the entities surviving Unit 6's mention-frequency floor (typically tens; more on deep pages). With K=5 that is ~tens to ~1500 short-string embeds/page (deep pages higher) — local CPU, no rate limit, but a real latency cost on deep pages. Context embedding is reused (0 extra). **The QID-keyed description-embedding cache is therefore RECOMMENDED, not just a nicety** (the old "~10-20 M" estimate that made it optional was refuted by the Unit-4 density data): cache the description *embedding* keyed by QID so repeat candidates across pages aren't re-embedded.
 - Net: no rate-limit exposure, modest additive CPU. Document the latency in CLAUDE.md.
 
 **Verification gates:**
