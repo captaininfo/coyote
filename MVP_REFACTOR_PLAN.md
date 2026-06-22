@@ -349,7 +349,7 @@ Estimated effort (calibrated up per Unit 2 lesson): ~8 commits, 3–5 working se
 
 **Verification gates:**
 - **Gate 6.1 (junk removed):** on a 20-page replay, zero curated junk tokens (`pp.`, `978`, bare years, single chars, stopword-only, `cite web`) appear in `Topics`/`Entities` rows.
-- **Gate 6.2 (cardinality / rate precondition):** per-page distinct WikiData mapping inputs after the floor ≤ the PF-9b budget (the number Unit 7 Gate 7.4 verifies against).
+- **Gate 6.2 (cardinality collapse — self-contained):** on the same replay, per-page distinct WikiData mapping inputs *after the floor* collapse from the raw ~1000-2000 baseline (Unit-4 cohort: median 1393, max 2140) to the salient tens-to-low-hundreds PF-9a predicts at the chosen floor. This gate closes Unit 6 on PF-9a's salience target alone — it does **not** reference the PF-9b budget, which does not exist until Unit 7. The pass/fail comparison of this post-floor volume *against* the live PF-9b rate budget is deferred to **Gate 7.4**; if it exceeds the budget there, the one-directional contingency raises `ENTITY_MAP_MENTION_FLOOR` (line ref: Unit 7 Gate 7.4 contingency).
 - **Gate 6.3 (no false positives):** legitimate multi-word topics/entities survive — host unit tests + spot-check (KEEP "french revolution", "logical positivism", "AI", "OER"; DROP "pp.", "978", "1789", "x", "cite web", "more").
 - **Gate 6.4 (Unit 4 non-regression):** entity mention-frequency scores still computed correctly over the filtered set.
 - **Host unit tests** `tests/test_token_filter.py` (mirrors `test_entity_scoring.py`): pure keep/drop cases + `select_mapping_entities` floor cases.
