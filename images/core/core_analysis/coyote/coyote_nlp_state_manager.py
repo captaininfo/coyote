@@ -31,6 +31,11 @@ from coyote.analysis.nlp.extract_topics_with_rake import extract_topics_with_rak
 from coyote.analysis.nlp.text_ner_analysis import extract_entities, map_ner_to_wikidata
 from coyote.analysis.nlp.entity_scoring import mention_frequency_score, NER_SCORE_FORMULA
 from coyote.analysis.nlp.keybert_analysis import extract_keywords
+from coyote.analysis.nlp.token_filter import (
+    filter_topics,
+    filter_entities,
+    select_mapping_entities,
+)
 from coyote.analysis.wikidata_lookup import map_topics_to_wikidata
 from coyote.analysis.relevance_calculator import calculate_relevance
 import json
@@ -572,6 +577,9 @@ class CoyoteNLPStateManager:
                 else:
                     logger.debug(f"Extracted topics for event_id {event_id}: {detailed_topics}")
 
+                # Unit 6: drop junk-phrase topics before storage and mapping.
+                detailed_topics = filter_topics(detailed_topics)
+
                 # Step 9: Insert extracted topics into Topics table
                 topics_records = []
                 for (topic_str, topic_score) in detailed_topics:
@@ -609,6 +617,10 @@ class CoyoteNLPStateManager:
                 extracted_entities = extract_entities(scraped_text, self.nlp)
                 logger.debug(f"Extracted webpage entities for event_id {event_id}: {extracted_entities}")
 
+                # Unit 6: drop numeric/date NER labels and junk-phrase
+                # entities before storage and mapping.
+                extracted_entities = filter_entities(extracted_entities)
+
                 # Step 15: Insert extracted entities into Entities table
                 entities_records = []
                 for (entity_text, ner_label) in extracted_entities:
@@ -623,8 +635,13 @@ class CoyoteNLPStateManager:
                 else:
                     logger.warning(f"No entities inserted into Entities table for event_id {event_id}.")
 
-                # Step 16: Map entities to WikiData
-                entity_texts = [r[2] for r in entities_records]
+                # Step 16: Map entities to WikiData. Unit 6 — the
+                # mention-frequency floor (WEBPAGE PATH ONLY) selects which
+                # filtered entities to map, keeping Unit 7's request volume
+                # rate-safe. Returns deterministic, distinct, original-case
+                # surface forms (case preserved for the case-sensitive
+                # pre-Unit-7 SPARQL literal match).
+                entity_texts = select_mapping_entities(extracted_entities)
                 mapped_entities = {}
                 if entity_texts:
                     mapped_entities = map_ner_to_wikidata(entity_texts) or {}
