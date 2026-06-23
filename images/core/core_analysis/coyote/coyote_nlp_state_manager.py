@@ -364,6 +364,16 @@ class CoyoteNLPStateManager:
             search_terms_entities = extract_entities(search_terms, self.nlp)
             logger.debug(f"Extracted purpose entities: {purpose_entities}")
             logger.debug(f"Extracted search terms entities: {search_terms_entities}")
+
+            # Unit 6: quality filter only (NO mapping floor — this path is
+            # low-volume, high-value user intent; a floor would suppress
+            # legitimate single-mention search/purpose entities).
+            purpose_topics_data["topics_with_weights"] = filter_topics(
+                purpose_topics_data.get("topics_with_weights", []))
+            search_terms_topics_data["topics_with_weights"] = filter_topics(
+                search_terms_topics_data.get("topics_with_weights", []))
+            purpose_entities = filter_entities(purpose_entities)
+            search_terms_entities = filter_entities(search_terms_entities)
             
             # Step 5: Insert extracted topics into Topics table
             topics_records = []
@@ -777,6 +787,11 @@ class CoyoteNLPStateManager:
             link_entities = extract_entities(link_text, self.nlp)
             logger.debug(f"Extracted hyperlink entities (event_id={event_id}): {link_entities}")
 
+            # Unit 6: quality filter only (no mapping floor on this path).
+            link_topics_data["topics_with_weights"] = filter_topics(
+                link_topics_data.get("topics_with_weights", []))
+            link_entities = filter_entities(link_entities)
+
             # Step 5: Insert extracted topics into Topics table
             topics_records = []
             for (topic, score) in link_topics_data.get("topics_with_weights", []):
@@ -935,6 +950,9 @@ class CoyoteNLPStateManager:
                 else:
                     logger.debug(f"Extracted KeyBERT topics for event_id={event_id}: {detailed_topics}")
 
+                # Unit 6: quality filter (no mapping floor on this path).
+                detailed_topics = filter_topics(detailed_topics)
+
                 # detailed_topics is a list of (topic_str, score) tuples
                 topics_data_annotation = {"topics_with_weights": detailed_topics}
             else:
@@ -942,6 +960,12 @@ class CoyoteNLPStateManager:
                 logger.debug(f"Using RAKE for event_id={event_id}, word_count={word_count}")
                 annotation_topics_data = extract_topics_with_rake(annotation_text or "")
                 highlighted_topics_data = extract_topics_with_rake(highlighted_text or "")
+
+                # Unit 6: quality filter (no mapping floor on this path).
+                annotation_topics_data["topics_with_weights"] = filter_topics(
+                    annotation_topics_data.get("topics_with_weights", []))
+                highlighted_topics_data["topics_with_weights"] = filter_topics(
+                    highlighted_topics_data.get("topics_with_weights", []))
 
                 # Merge results from annotation_text and highlighted_text
                 # We'll treat them as separate contexts (annotation_text, highlighted_text)
@@ -954,6 +978,10 @@ class CoyoteNLPStateManager:
             highlighted_entities = extract_entities(highlighted_text or "", self.nlp)
             logger.debug(f"Extracted annotation entities for event_id={event_id}: {annotation_entities}")
             logger.debug(f"Extracted highlighted entities for event_id={event_id}: {highlighted_entities}")
+
+            # Unit 6: drop numeric/date + junk entities (quality filter only).
+            annotation_entities = filter_entities(annotation_entities)
+            highlighted_entities = filter_entities(highlighted_entities)
 
             # Step 5: Insert extracted topics into Topics table
             topics_records = []
