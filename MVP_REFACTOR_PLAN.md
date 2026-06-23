@@ -319,6 +319,13 @@ Estimated effort (calibrated up per Unit 2 lesson): ~8 commits, 3–5 working se
 
 ### Unit 6 — Token-quality filter + entity mapping-cardinality floor
 
+**✅ CLOSED 2026-06-23 — Gates 6.1–6.4 ALL PASS.** Implemented across 5 commits (`f2e6e01` plan → `c3bbee0` module+stopwords-hardening+56 tests → `97e4fb8` webpage floor → `fecb54c` other-3-paths quality filter → `fc0d219` docs), all pushed. Deploy + 26-page fresh-cohort replay verified (`embedding_generated_at >= 2026-06-23T00:00`):
+- **Gate 6.1 (junk removed): PASS** — 0 junk tokens (single-char / pure-numeric / `pp.`-style trailing-dot / `cite …`) across 499 distinct fresh Topics and 6,415 distinct fresh Entities (independent scan, not re-running the filter).
+- **Gate 6.2 (cardinality collapse): PASS** — post-floor per-page mapping inputs median **7**, deep tail 171/219/288/578 (arXiv 578 sits inside PF-9a's ~794 prediction; quality filter shaved it further). Multi-fold collapse from the ~1000–2000 raw baseline (arXiv 3657 raw → 2673 post-filter → 578 post-floor). Self-contained vs PF-9a salience; the budget comparison stays deferred to Gate 7.4 / PF-9b. The 578 tail is exactly the case `ENTITY_MAP_CAP` (built, disabled) covers.
+- **Gate 6.3 (no false positives): PASS** — legit multi-word terms (`Open Educational Resources`, `Daniels County`, …) survive; every 2-char acronym kept (`AI, ML, UK, UN, IR, EP, EM`) plus `OER, ICDE, MIT, HCI, FOAF` — proves the `<3 chars → length-1` correction.
+- **Gate 6.4 (Unit 4 non-regression): PASS** — fresh webpage entity scores all exact `ln(1+count)` (e.g. "the French Revolution" ×81 → 4.4067), **0 NULL** scores, denominator now over the clean filtered set.
+- **Carried (not a gate failure):** author-year citation entities like `Schama 1989` (60% alpha) survive `is_quality_token` and sit unmapped — low-value noise, distinct from the bare-year/`pp.`/`978` junk the gates removed. Post-MVP citation-pattern rule / gazetteer territory; not reopening Unit 6.
+
 **Plan item:** 7. **Estimated effort:** small-to-medium. **Depends on:** Unit 3 (KeyBERT topics), Unit 4 (mention-frequency signal), and PF-9a below (sets the floor default). **Feeds:** Unit 7 — this is the cardinality control that makes the Action-API request volume rate-safe.
 
 **Two responsibilities** (the original section described only the first):
