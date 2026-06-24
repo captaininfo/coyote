@@ -79,6 +79,15 @@ services:
       - SENTENCE_TRANSFORMERS_HOME=/opt/embedding_model
       - TOPIC_SCORE_THRESHOLD=${TOPIC_SCORE_THRESHOLD:-0.10}
       - NER_SCORE_FORMULA=${NER_SCORE_FORMULA:-log}
+      - ENTITY_MAP_MENTION_FLOOR=${ENTITY_MAP_MENTION_FLOOR:-2}
+      # Unit 7: per-page top-K cap on webpage entities mapped to WikiData.
+      # Enabled at 100 per PF-9b (2026-06-23): the Action API has no rate
+      # ceiling (260 calls / 0 throttle), so the cap is a THROUGHPUT knob —
+      # bounds a cold deep page (~578 cache-miss calls × ~0.91s ≈ 8.8 min) to
+      # ~1.8 min, keeping the top-100 most-mentioned entities. Typical pages
+      # (~5 entities) are unaffected.
+      - ENTITY_MAP_CAP=${ENTITY_MAP_CAP:-100}
+      - WIKIDATA_ACTION_MIN_INTERVAL=${WIKIDATA_ACTION_MIN_INTERVAL:-0.6}
     volumes:
       - ${COYOTE_USER_DATA-./volumes/coyote}:/app/data
     healthcheck:
