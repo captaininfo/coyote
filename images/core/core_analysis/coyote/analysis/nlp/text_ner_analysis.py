@@ -70,7 +70,7 @@ def map_ner_to_wikidata(entities: List[str]) -> Dict[str, Dict[str, Any]]:
                 continue
             wikidata_result = query_wikidata(entity)
             if wikidata_result:
-                wikidata_label, wikidata_uri = wikidata_result[0]
+                wikidata_label, wikidata_uri, _ = wikidata_result[0]  # desc inert until Unit 8
                 mapped_entities[entity] = {
                     'replacement': entity.replace(" ", "_"),
                     'uri': wikidata_uri,

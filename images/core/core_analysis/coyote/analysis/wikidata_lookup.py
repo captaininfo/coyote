@@ -1,20 +1,30 @@
 """
 wikidata_lookup.py
 
-WikiData term→QID lookup: SPARQL query with circuit breaker, retry/backoff,
-SPARQL-literal escaping, and the SQLite term cache (Unit 2).
+WikiData term→QID lookup via the Wikibase **Action API**
+(`www.wikidata.org/w/api.php?action=wbsearchentities`), with a circuit
+breaker, retry/backoff, serial inter-call pacing, and the SQLite term cache
+(Unit 2). Returns prominence-ranked candidate triples
+`(label, concepturi, description)`.
 
-Moved verbatim from text_bertopic_analysis.py in Unit 3 M2/M3 — this module
-is core-only (NOT in shared/; the agent does not need WikiData lookup).
+Unit 7 (0.5 refactor) moved this path off the WDQS SPARQL endpoint
+(`query.wikidata.org/sparql`) — a per-IP throttle that zeroed WikiData
+coverage on the Units 1-4 replay (one 429 + breaker threshold=1). The Action
+API has far more generous read limits and native prefix/alias matching, and
+returns each candidate's `description` inline (consumed by Unit 8). The WDQS
+SPARQL endpoint is still used for P279/P31 ancestor traversal in
+`connect_to_ontology.batch_query_wikidata` (a graph query the Action API
+cannot serve) — that path keeps its own independent breaker.
+
+Core-only (NOT in shared/; the agent does not need WikiData lookup).
 """
 
-import logging, json, os, re, sqlite3, threading
+import logging, json, os, sqlite3, threading
 import time, random
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
-from urllib.error import HTTPError
 
-from SPARQLWrapper import SPARQLWrapper, JSON, SPARQLExceptions
+import requests
 
 from coyote.utils.config_container import WIKIDATA_CACHE_DB_FILE
 
@@ -24,8 +34,9 @@ MAX_RETRIES = 3
 BACKOFF     = (1.0, 3.0)   # seconds
 
 # --- WikiData circuit breaker -------------------------------------------------
-# Trips on 403/429 from query.wikidata.org. Once tripped, query_wikidata()
-# short-circuits to [] without making SPARQL calls until the cooldown expires.
+# Trips on 403/429 from the Wikidata Action API. Once tripped, query_wikidata()
+# short-circuits to [] without making API calls until the cooldown expires.
+# 5xx (incl. maxlag-503) is transient and does NOT count toward the breaker.
 # A failed probe in the half_open state immediately re-trips.
 _BREAKER_FAILURE_THRESHOLD = int(os.environ.get("WIKIDATA_BREAKER_THRESHOLD", "1"))
 _BREAKER_COOLDOWN_SECONDS  = int(os.environ.get("WIKIDATA_BREAKER_COOLDOWN", "1800"))
@@ -118,18 +129,63 @@ def _parse_retry_after(headers) -> Optional[int]:
 _INVISIBLE_CHARS = " \t\n\r\u00ad\u200b\u200c\u200d\ufeff"
 
 
-def _escape_sparql_literal(raw: str) -> str:
-    """
-    Make *raw* safe for insertion between double quotes in a SPARQL query.
+# --- Wikidata Action API transport (Unit 7) -----------------------------------
+WIKIDATA_ACTION_API_URL = "https://www.wikidata.org/w/api.php"
 
-    • use json.dumps() to get proper back-slash escaping of quotes, control chars …
-    • strip the surrounding pair of quotes added by json.dumps()
-    • drop line-breaks and excessive whitespace (SPARQL literals cannot span lines)
-    • truncate to some sane length to avoid DoS-size queries
-    """
-    safe = json.dumps(raw)[1:-1]          #  → \" and other escapes
-    safe = re.sub(r"\s+", " ", safe)      # collapse \n, \t … into spaces
-    return safe[:250]                     # hard cap – adjust as you like
+# K candidates per term. Top-1 is all Unit 7's consumers use; the deeper list
+# is cached so Unit 8's semantic re-rank works off a cache hit with no extra
+# network. K-wide × 3-fields makes a cached row ~1-2 KB (sentence descriptions)
+# vs the old LIMIT-1 2-tuple — a deliberate, SQLite-trivial tradeoff.
+_CANDIDATE_LIMIT = 7
+
+# Steady-state inter-call pacing (seconds) between cache-MISS Action-API calls.
+# This is the one parameter PF-9b tunes; default 0.6s = the probe spacing that
+# returned 8/8 HTTP 200. <= 0 disables pacing. Safe under per-event pacing only
+# because the NLP manager is a single-threaded serial drain (see CLAUDE.md
+# rate-limit safety invariant).
+WIKIDATA_ACTION_MIN_INTERVAL = float(
+    os.environ.get("WIKIDATA_ACTION_MIN_INTERVAL", "0.6")
+)
+
+# Wikidata blocks generic clients — identify ourselves per the UA policy.
+_USER_AGENT = (
+    "Coyote/0.4 (https://github.com/captaininfo/coyote; "
+    "mailto:lifewidelearningllc@gmail.com)"
+)
+
+_PACE_LOCK = threading.Lock()
+_last_call_monotonic = 0.0
+
+
+def _pace() -> None:
+    """Sleep so consecutive Action-API calls are >= WIKIDATA_ACTION_MIN_INTERVAL
+    apart. No-op when the interval is disabled. Computes the wait under the lock
+    but sleeps outside it; under the single-threaded serial drain there is no
+    contention, and even with future threads this only ever under-paces."""
+    global _last_call_monotonic
+    if WIKIDATA_ACTION_MIN_INTERVAL <= 0:
+        return
+    with _PACE_LOCK:
+        wait = _last_call_monotonic + WIKIDATA_ACTION_MIN_INTERVAL - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    with _PACE_LOCK:
+        _last_call_monotonic = time.monotonic()
+
+
+def _parse_wbsearchentities(payload) -> List[Tuple[str, str, str]]:
+    """Extract (label, concepturi, description) triples from a wbsearchentities
+    formatversion=2 response, prominence order preserved. `concepturi` is the
+    canonical `http://www.wikidata.org/entity/Q####` form (matches stored
+    `Entities/Topics.wikidata_uri`); items without one are skipped. Missing
+    label/description default to ''."""
+    out: List[Tuple[str, str, str]] = []
+    for item in (payload.get("search") or []):
+        uri = item.get("concepturi") or ""
+        if not uri:
+            continue
+        out.append((item.get("label") or "", uri, item.get("description") or ""))
+    return out
 
 
 # --- Term→QID cache (Unit 2) ---------------------------------------------------
@@ -139,8 +195,10 @@ _cache_hits = 0
 _cache_misses = 0
 
 
-def _cache_lookup(entity: str) -> Optional[List[Tuple[str, str]]]:
-    """Return cached SPARQL result for *entity*, or None if missing/expired/error."""
+def _cache_lookup(entity: str) -> Optional[List[Tuple[str, str, str]]]:
+    """Return cached candidate triples for *entity*, or None if
+    missing/expired/error. `[tuple(item) for item in raw]` reconstructs each
+    3-tuple from the JSON-serialized list unchanged."""
     try:
         with sqlite3.connect(WIKIDATA_CACHE_DB_FILE) as conn:
             cur = conn.cursor()
@@ -162,7 +220,7 @@ def _cache_lookup(entity: str) -> Optional[List[Tuple[str, str]]]:
         return None
 
 
-def _cache_store(entity: str, data: List[Tuple[str, str]]) -> None:
+def _cache_store(entity: str, data: List[Tuple[str, str, str]]) -> None:
     """INSERT OR REPLACE the cache row for *entity*. Empty list cached too."""
     try:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -178,17 +236,22 @@ def _cache_store(entity: str, data: List[Tuple[str, str]]) -> None:
         logger.warning("WikiData term-cache store failed for '%s': %s", entity, e)
 
 
-def query_wikidata(term: str) -> List[Tuple[str, str]]:
+def query_wikidata(term: str) -> List[Tuple[str, str, str]]:
     """
-    Query WikiData for *term* and return [(label, uri), …].
-    The term is escaped so that quotes, back-slashes or line-breaks
-    cannot break the SPARQL syntax.
+    Look *term* up via the Wikidata Action API (`wbsearchentities`) and return
+    prominence-ranked candidate triples `[(label, concepturi, description), …]`.
+
+    `description` rides inline in the same response (Unit 8 consumes it); Unit
+    7's own consumers use only `result[0]`. The term needs no SPARQL escaping —
+    it is a URL query parameter that `requests` encodes.
 
     Args:
         term (str): The term to query.
 
     Returns:
-        List[Tuple[str, str]]: A list of tuples containing the item label and item URI.
+        List[Tuple[str, str, str]]: (label, canonical entity URI, description)
+        per candidate, up to `_CANDIDATE_LIMIT`; [] on no match / error / open
+        breaker.
     """
     global _cache_hits, _cache_misses
     try:
@@ -205,62 +268,81 @@ def query_wikidata(term: str) -> List[Tuple[str, str]]:
         if _breaker_check_state() == "open":
             return []
 
-        sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
-        # Wikidata blocks generic clients, so identify yourself
-        sparql.agent = (
-            "Coyote/0.4 (https://github.com/captaininfo/coyote; "
-            "mailto:lifewidelearningllc@gmail.com)"
-        )
+        params = {
+            "action": "wbsearchentities",
+            "search": term,
+            "language": "en",
+            "uselang": "en",
+            "type": "item",
+            "format": "json",
+            "formatversion": "2",
+            "limit": _CANDIDATE_LIMIT,
+            "maxlag": "5",
+        }
 
-        safe_term = _escape_sparql_literal(term)
-
-        sparql.setQuery(f"""
-            SELECT ?item ?itemLabel WHERE {{
-                ?item ?label "{safe_term}"@en .
-                FILTER (STRSTARTS(STR(?item), "http://www.wikidata.org/entity/Q"))
-                SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
-            }}
-            LIMIT 1
-        """)
-        sparql.setReturnFormat(JSON)
-
-        results = None
+        payload = None
         for attempt in range(1, MAX_RETRIES + 1):
             if _breaker_check_state() == "open":
                 return []
+            _pace()
+            retry_after_hint = None  # set by maxlag-503 to honor its Retry-After
             try:
-                results = sparql.query().convert()
-                _breaker_record_success()
-                break
-            except HTTPError as e:
-                retry_after = _parse_retry_after(e.headers)
-                logger.warning(
-                    "WikiData HTTP %d on attempt %d/%d for '%s'%s",
-                    e.code, attempt, MAX_RETRIES, term,
-                    f" (Retry-After: {retry_after}s)" if retry_after else "",
+                resp = requests.get(
+                    WIKIDATA_ACTION_API_URL,
+                    params=params,
+                    headers={"User-Agent": _USER_AGENT},
+                    timeout=30,
                 )
-                if e.code in (403, 429):
+                status = resp.status_code
+                if status in (403, 429):
+                    retry_after = _parse_retry_after(resp.headers)
+                    logger.warning(
+                        "WikiData Action API HTTP %d on attempt %d/%d for '%s'%s",
+                        status, attempt, MAX_RETRIES, term,
+                        f" (Retry-After: {retry_after}s)" if retry_after else "",
+                    )
                     _breaker_record_failure(retry_after_seconds=retry_after)
+                elif status >= 500:
+                    # 5xx incl. maxlag-503: transient, do NOT count toward breaker.
+                    # We sent maxlag=5, so honor the server's Retry-After hint for
+                    # the inter-retry sleep below (a maxlag-503 carries it); else
+                    # fall through to the default backoff.
+                    retry_after_hint = _parse_retry_after(resp.headers)
+                    logger.warning(
+                        "WikiData Action API %d (transient) on attempt %d/%d for '%s'%s",
+                        status, attempt, MAX_RETRIES, term,
+                        f" (Retry-After: {retry_after_hint}s)" if retry_after_hint else "",
+                    )
                 else:
-                    raise  # unexpected HTTP error — real bug
-            except SPARQLExceptions.EndPointInternalError as e:
-                # 5xx is transient server-side; log but do not count toward breaker
+                    body = resp.json()
+                    if isinstance(body, dict) and "error" in body:
+                        # in-band error (e.g. maxlag reported at HTTP 200): transient
+                        logger.warning(
+                            "WikiData Action API in-band error for '%s': %s",
+                            term, body.get("error", {}).get("code", "unknown"),
+                        )
+                    else:
+                        _breaker_record_success()
+                        payload = body
+                        break
+            except (requests.RequestException, ValueError) as e:
+                # network error or undecodable JSON: transient, do not count
                 logger.warning(
-                    "WikiData 5xx on attempt %d/%d for '%s': %s",
+                    "WikiData Action API error on attempt %d/%d for '%s': %s",
                     attempt, MAX_RETRIES, term, e,
                 )
             # Skip backoff sleep if the breaker just opened — next call to
             # query_wikidata will short-circuit anyway, no point waiting here.
             if _breaker_check_state() == "open":
                 return []
-            time.sleep(random.uniform(*BACKOFF) * attempt)
+            if retry_after_hint:
+                time.sleep(min(retry_after_hint, _BREAKER_RETRY_AFTER_CAP))
+            else:
+                time.sleep(random.uniform(*BACKOFF) * attempt)
         else:
             return []  # all retries exhausted without success
 
-        result = [
-            (b['itemLabel']['value'], b['item']['value'])
-            for b in results['results']['bindings']
-        ]
+        result = _parse_wbsearchentities(payload)
         _cache_store(term, result)
         return result
     except Exception as e:
@@ -287,7 +369,7 @@ def map_topics_to_wikidata(topics: List[str]) -> Dict[str, Dict[str, str]]:
                 continue
             wikidata_result = query_wikidata(topic)
             if wikidata_result:
-                label, uri = wikidata_result[0]
+                label, uri, _ = wikidata_result[0]  # description inert until Unit 8
                 mapped_topics[topic] = {'uri': uri, 'label': label}
         with _CACHE_STATS_LOCK:
             batch_hits = _cache_hits - start_hits
