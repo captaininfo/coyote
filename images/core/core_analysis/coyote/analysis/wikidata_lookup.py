@@ -96,12 +96,17 @@ def _breaker_record_failure(retry_after_seconds: Optional[int] = None) -> None:
 
 
 def _breaker_reset_for_tests() -> None:
-    """Test-only: reset module state. Do not call from production code."""
+    """Test-only: reset breaker AND pacing module state. Do not call from
+    production code. (Name kept for the existing call sites; also clears the
+    Unit 7 pacing clock so timing tests start from a known state.)"""
     global _BREAKER_STATE, _BREAKER_CONSECUTIVE_FAILURES, _BREAKER_OPEN_UNTIL
+    global _last_call_monotonic
     with _BREAKER_LOCK:
         _BREAKER_STATE = "closed"
         _BREAKER_CONSECUTIVE_FAILURES = 0
         _BREAKER_OPEN_UNTIL = None
+    with _PACE_LOCK:
+        _last_call_monotonic = 0.0
 
 
 def _parse_retry_after(headers) -> Optional[int]:
