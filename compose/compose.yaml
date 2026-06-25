@@ -94,7 +94,7 @@ services:
       # how far a non-prominence candidate must beat prominence #1 to override
       # it. Read at import — restart to change.
       - WIKIDATA_DISAMBIG_THRESHOLD=${WIKIDATA_DISAMBIG_THRESHOLD:-0.0}
-      - WIKIDATA_DISAMBIG_MARGIN=${WIKIDATA_DISAMBIG_MARGIN:-0.05}
+      - WIKIDATA_DISAMBIG_MARGIN=${WIKIDATA_DISAMBIG_MARGIN:-0.15}
     volumes:
       - ${COYOTE_USER_DATA-./volumes/coyote}:/app/data
     healthcheck:

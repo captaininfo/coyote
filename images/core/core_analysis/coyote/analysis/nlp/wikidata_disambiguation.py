@@ -63,7 +63,12 @@ WIKIDATA_DISAMBIG_THRESHOLD = _read_float_env("WIKIDATA_DISAMBIG_THRESHOLD", 0.0
 # to override it. 0.0 disables the guard (pure argmax re-rank); higher values
 # make overrides harder. Protects already-correct prominence-#1 mappings (Gate
 # 8.2) against marginal cosine flips.
-WIKIDATA_DISAMBIG_MARGIN = _read_float_env("WIKIDATA_DISAMBIG_MARGIN", 0.05)
+# Default 0.15 CALIBRATED from Gate 8.1/8.2 data (2026-06-25): the one bad
+# override (`gpt` -> the specific GPT-1 over the general concept) beat prominence
+# by +0.131, while the smallest GOOD override (`transformer` -> the ML sense)
+# was +0.179. 0.15 sits in that gap: it blocks the same-family granularity flip
+# while preserving all six known-bad lifts. The pre-gate provisional was 0.05.
+WIKIDATA_DISAMBIG_MARGIN = _read_float_env("WIKIDATA_DISAMBIG_MARGIN", 0.15)
 
 
 def _cosine(a: List[float], b: List[float]) -> float:
