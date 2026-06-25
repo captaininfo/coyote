@@ -1,0 +1,124 @@
+{
+  "_comment": "Unit 8 disambiguation fixture (Gate 8.1 known-bad re-rank cases + Gate 8.2 known-good controls). Each known_bad case is a term whose wbsearchentities PROMINENCE #1 is the wrong sense for the paired page context, while the contextually-correct QID IS present elsewhere in the candidate list -> a genuine re-ranking failure Unit 8's context-aware selection should fix. Cases where the correct QID is NOT returned at all (recall failures: 'the French Revolution', 'Marat') were deliberately excluded -- re-ranking cannot reach a sense the API never returns. Page context is represented as substantive prose (>=2 paragraphs); Gate 8.1 embeds the blob with the production embedder at test time (embedder-agnostic on purpose -- no precomputed vectors, so this survives the Unit 10 embedder swap). The three French-Revolution cases share one context blob.",
+  "_provenance": "Term set and every QID/prominence position verified LIVE against wbsearchentities (www.wikidata.org/w/api.php) on 2026-06-25. Rankings confirmed CASE-INVARIANT: lowercase (the production topic-path form, keybert_analysis.py:99) returned rank-for-rank identical results to title case across all probed terms. Re-confirm at gate-execution time -- prominence ranking can drift as Wikidata's index changes.",
+  "_thresholds": {
+    "gate_8_1_pass_fraction": 0.80,
+    "note": "At n=6 known_bad (excluding the may_not_resolve case from the hard floor), 0.80 means at most one miss."
+  },
+  "contexts": {
+    "french_revolution": "The French Revolution was a period of radical political and social upheaval in France that lasted from 1789 to 1799. It swept away the absolute monarchy of the Bourbon kings, abolished feudal privileges, and proclaimed the Declaration of the Rights of Man and of the Citizen. The Estates-General convened in 1789 gave way to the National Assembly, and the storming of the Bastille became the revolution's enduring symbol.\n\nAs the revolution radicalized, the Jacobins emerged as its most influential political club, meeting in a former convent in Paris and pushing for a republic founded on civic virtue. Maximilien Robespierre rose to dominate the Committee of Public Safety, and under his leadership the Reign of Terror sent thousands to the guillotine in the name of revolutionary justice. His own fall in the Thermidorian Reaction of 1794 ended the most violent phase of the upheaval.\n\nThe revolution reshaped ideas of citizenship, popular sovereignty, and the nation-state across Europe. Its slogans of liberty, equality, and fraternity, its republican calendar, and its assault on inherited privilege influenced revolutionary movements for generations, even as the instability it unleashed eventually opened the way to Napoleon's rise.",
+    "us_congress": "The United States Congress is the bicameral legislature of the federal government of the United States. It consists of two chambers: the House of Representatives, whose members are apportioned among the states by population, and the Senate, in which each state is represented equally by two senators. Together they hold the constitutional power to make federal law, levy taxes, declare war, and control federal spending.\n\nMeeting at the Capitol in Washington, D.C., Congress conducts its work through committees that draft and amend legislation before it is debated and voted on the floor of each chamber. A bill must pass both the House and the Senate in identical form before being presented to the President for signature or veto. Congressional oversight of the executive branch, confirmation of appointments, and the power of impeachment are central to the American system of checks and balances.\n\nThe two-year electoral cycle of the House and the staggered six-year terms of the Senate shape the rhythm of national politics, with each new Congress numbered in sequence since the first convened in 1789.",
+    "deep_learning": "Modern natural language processing is built on the transformer, a neural network architecture introduced in 2017 that relies on self-attention to model relationships between all tokens in a sequence in parallel. By dispensing with recurrence, the transformer made it practical to train very large language models on enormous text corpora, and it now underpins systems for translation, summarization, and question answering.\n\nA central idea in these systems is the embedding: text is converted into dense numerical vectors so that words, sentences, or whole documents with similar meaning lie close together in a high-dimensional space. These learned representations let a model measure semantic similarity, retrieve relevant passages, and feed downstream classifiers. Generative pre-trained models such as the GPT family extend the approach, learning to predict the next token and thereby to generate fluent text.\n\nMost of this work is carried out in Python, whose ecosystem of machine-learning libraries has made it the default language for research and deployment. Practitioners assemble data pipelines, fine-tune pretrained checkpoints, and evaluate models on benchmark tasks, iterating rapidly on architectures and training regimes.",
+    "philosophy_of_education": "John Dewey was an American philosopher, psychologist, and educational reformer whose ideas shaped progressive education in the twentieth century. A leading figure in the pragmatist tradition, he argued that knowledge arises from experience and inquiry rather than the passive reception of fixed truths, and that thinking is an instrument for solving the problems life presents.\n\nDewey held that education should be grounded in the lived experience of the learner and oriented toward active, hands-on inquiry rather than rote memorization. In works such as Democracy and Education he tied schooling to the health of democratic society, contending that schools should cultivate the habits of reflection, cooperation, and self-direction that democratic citizenship requires.\n\nHis emphasis on learning by doing, on the continuity between school and community, and on the student as an active participant in constructing understanding influenced curriculum reform, teacher training, and theories of experiential and self-determined learning that remain widely discussed today."
+  },
+  "known_bad": [
+    {
+      "term": "robespierre",
+      "context": "french_revolution",
+      "correct_qid": "Q44197",
+      "correct_label": "Maximilien Robespierre",
+      "why_correct": "The person -- the French revolutionary lawyer and politician who led the Committee of Public Safety. The page is about the French Revolution and his role in it.",
+      "prominence_qid": "Q56577055",
+      "prominence_label": "Robespierre (family name)",
+      "why_wrong": "wbsearchentities ranks the bare surname #1; the actual person is at rank 2.",
+      "may_not_resolve": false
+    },
+    {
+      "term": "jacobin",
+      "context": "french_revolution",
+      "correct_qid": "Q179885",
+      "correct_label": "Jacobins",
+      "why_correct": "The political club of the French Revolution. The page is about the Revolution and its factions.",
+      "prominence_qid": "Q15940749",
+      "prominence_label": "Jacobinia (genus of plants)",
+      "why_wrong": "Prominence #1 is a plant genus; the FR club is at rank 3, also outranked by the modern magazine 'Jacobin' (Q6119666) at rank 2.",
+      "may_not_resolve": false
+    },
+    {
+      "term": "revolution",
+      "context": "french_revolution",
+      "correct_qid": "Q10931",
+      "correct_label": "revolution",
+      "why_correct": "The general concept of a fundamental change in power or organizational structures -- the appropriate sense on a page about a political revolution.",
+      "prominence_qid": "Q8079",
+      "prominence_label": "Wii",
+      "why_wrong": "Prominence #1 is the Nintendo Wii (whose development codename was 'Revolution'); the concept is at rank 5. Large semantic gap -> a strong re-rank case.",
+      "may_not_resolve": false
+    },
+    {
+      "term": "congress",
+      "context": "us_congress",
+      "correct_qid": "Q11268",
+      "correct_label": "United States Congress",
+      "why_correct": "The US federal legislature. The page is about US government, the House, the Senate, and lawmaking.",
+      "prominence_qid": "Q10225",
+      "prominence_label": "Indian National Congress",
+      "why_wrong": "Prominence #1 is the Indian political party; the United States Congress is at rank 2.",
+      "may_not_resolve": false
+    },
+    {
+      "term": "transformer",
+      "context": "deep_learning",
+      "correct_qid": "Q85810444",
+      "correct_label": "transformer (machine-learning model architecture)",
+      "why_correct": "The neural-network architecture. The page is about NLP and deep learning.",
+      "prominence_qid": "Q11658",
+      "prominence_label": "transformer (electrical device)",
+      "why_wrong": "Prominence #1 is the electrical device; the ML architecture is at rank 3. Large semantic gap -> a strong re-rank case.",
+      "may_not_resolve": false
+    },
+    {
+      "term": "dewey",
+      "context": "philosophy_of_education",
+      "correct_qid": "Q131805",
+      "correct_label": "John Dewey",
+      "why_correct": "The philosopher and educational reformer. The page is about pragmatism and the philosophy of education.",
+      "prominence_qid": "Q16869543",
+      "prominence_label": "Dewey (family name)",
+      "why_wrong": "Prominence #1 is the surname; John Dewey is at rank 4 (also behind a tanker and Dwayne Johnson).",
+      "may_not_resolve": false
+    },
+    {
+      "term": "embedding",
+      "context": "deep_learning",
+      "correct_qid": "Q133284072",
+      "correct_label": "embedding (text -> vector)",
+      "why_correct": "The NLP sense: converting text into mathematical vectors that represent meaning. The page is about NLP/deep learning.",
+      "prominence_qid": "Q980509",
+      "prominence_label": "embedding (injective structure-preserving map)",
+      "why_wrong": "Prominence #1 is the mathematics sense; the NLP sense is at rank 3.",
+      "may_not_resolve": true,
+      "may_not_resolve_reason": "Subtle case: both the mathematics sense and the NLP sense are technical/mathematical, so a page's pooled embedding may not separate the two candidate descriptions cleanly. Included to probe the limit of the method; not counted against the hard 80% floor."
+    }
+  ],
+  "known_good": [
+    {
+      "term": "french revolution",
+      "context": "french_revolution",
+      "correct_qid": "Q6534",
+      "correct_label": "French Revolution",
+      "note": "Prominence #1 is already correct (the event, 1789-1799). The leading-article form 'the French Revolution' returns only WORKS titled that (Q6534 absent) -- but determiner-stripping (keybert_analysis.py:94) yields the bare form, so this is what production actually sends. Must still map to Q6534 after the post-filter."
+    },
+    {
+      "term": "gpt",
+      "context": "deep_learning",
+      "correct_qid": "Q116777014",
+      "correct_label": "generative pre-trained transformer",
+      "note": "Prominence #1 is already correct. The pre-Unit-7 SPARQL path mapped 'gpt' -> 'GNU Portable Threads'; Unit 7's Action-API prominence ranking fixed it. Must not regress after the post-filter."
+    },
+    {
+      "term": "python",
+      "context": "deep_learning",
+      "correct_qid": "Q28865",
+      "correct_label": "Python (programming language)",
+      "note": "Prominence #1 is already correct (the language outranks the snake genus). Must still map to Q28865 after the post-filter on a deep-learning page."
+    },
+    {
+      "term": "ai",
+      "context": "deep_learning",
+      "correct_qid": "Q11660",
+      "correct_label": "artificial intelligence",
+      "note": "Gate 7.3-verified known-good (Unit 7 fixed the pre-Unit-7 'ai' -> Anguilla error). Must not regress."
+    }
+  ]
+}
