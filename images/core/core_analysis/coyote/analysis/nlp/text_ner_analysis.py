@@ -14,7 +14,7 @@ spaCy load: extract_entities now takes the caller-owned instance.
 """
 
 import logging
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 
 from coyote.analysis.wikidata_lookup import (
     _INVISIBLE_CHARS,
@@ -56,26 +56,45 @@ def extract_entities(text: str, nlp) -> List[Tuple[str, str]]:
         return []
 
 
-def map_ner_to_wikidata(entities: List[str]) -> Dict[str, Dict[str, Any]]:
+def map_ner_to_wikidata(
+    entities: List[str], context_embedding: Optional[List[float]] = None
+) -> Dict[str, Dict[str, Any]]:
     """
     Map a list of entity strings to WikiData URIs.
+
+    When context_embedding is provided (webpage path only — the page's pooled
+    full-doc embedding), Unit 8 re-ranks each entity's candidate list by
+    description<->context cosine and may DECLINE a mapping; when None (every
+    other event path, or a webpage whose own embedding failed) the prominence
+    top-1 is used unchanged.
 
     Returns:
         Dict[str, Dict[str, Any]]: Mapped entities with replacements, URIs, and labels (labels from WikiData).
     """
+    # Function-local import: avoid enlarging this module's import surface / any cycle.
+    from coyote.analysis.nlp.wikidata_disambiguation import select_best_candidate
     try:
         mapped_entities = {}
         for entity in entities:
             if not entity or not entity.strip(_INVISIBLE_CHARS):
                 continue
             wikidata_result = query_wikidata(entity)
-            if wikidata_result:
-                wikidata_label, wikidata_uri, _ = wikidata_result[0]  # desc inert until Unit 8
-                mapped_entities[entity] = {
-                    'replacement': entity.replace(" ", "_"),
-                    'uri': wikidata_uri,
-                    'label': wikidata_label  # Using the wikidata_label from the query
-                }
+            if not wikidata_result:
+                continue
+            if context_embedding is not None:
+                selected = select_best_candidate(
+                    context_embedding, wikidata_result, term=entity
+                )
+                if selected is None:
+                    continue  # Unit 8 declined below threshold -> no mapping
+                wikidata_label, wikidata_uri = selected
+            else:
+                wikidata_label, wikidata_uri, _ = wikidata_result[0]  # prominence top-1
+            mapped_entities[entity] = {
+                'replacement': entity.replace(" ", "_"),
+                'uri': wikidata_uri,
+                'label': wikidata_label  # from WikiData
+            }
         logger.debug(f"Mapped Entities to WikiData: {mapped_entities}")
         return mapped_entities
     except Exception as e:

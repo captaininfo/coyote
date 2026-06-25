@@ -355,16 +355,27 @@ def query_wikidata(term: str) -> List[Tuple[str, str, str]]:
         return []
 
 
-def map_topics_to_wikidata(topics: List[str]) -> Dict[str, Dict[str, str]]:
+def map_topics_to_wikidata(
+    topics: List[str], context_embedding: Optional[List[float]] = None
+) -> Dict[str, Dict[str, str]]:
     """
     Map a list of topic strings to WikiData URIs.
 
     Args:
         topics (List[str]): A list of topic strings.
+        context_embedding: when provided (webpage path only — the page's
+            pooled full-doc embedding), Unit 8 re-ranks each term's candidate
+            list by description<->context cosine and may DECLINE a mapping;
+            when None (every other event path, or a webpage whose own
+            embedding failed) the prominence top-1 is used unchanged.
 
     Returns:
         Dict[str, Dict[str, str]]: Mapped topics with URIs and labels.
     """
+    # Function-local import: keeps wikidata_lookup's module-import surface (and
+    # its requests-stubbed test imports) free of the embedder chain, and
+    # sidesteps any import cycle. Only loads when a map is actually requested.
+    from coyote.analysis.nlp.wikidata_disambiguation import select_best_candidate
     try:
         mapped_topics = {}
         with _CACHE_STATS_LOCK:
@@ -373,9 +384,18 @@ def map_topics_to_wikidata(topics: List[str]) -> Dict[str, Dict[str, str]]:
             if not topic or not topic.strip(_INVISIBLE_CHARS):
                 continue
             wikidata_result = query_wikidata(topic)
-            if wikidata_result:
-                label, uri, _ = wikidata_result[0]  # description inert until Unit 8
-                mapped_topics[topic] = {'uri': uri, 'label': label}
+            if not wikidata_result:
+                continue
+            if context_embedding is not None:
+                selected = select_best_candidate(
+                    context_embedding, wikidata_result, term=topic
+                )
+                if selected is None:
+                    continue  # Unit 8 declined below threshold -> no mapping
+                label, uri = selected
+            else:
+                label, uri, _ = wikidata_result[0]  # prominence top-1
+            mapped_topics[topic] = {'uri': uri, 'label': label}
         with _CACHE_STATS_LOCK:
             batch_hits = _cache_hits - start_hits
             batch_misses = _cache_misses - start_misses

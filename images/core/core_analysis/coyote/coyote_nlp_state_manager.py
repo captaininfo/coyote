@@ -608,7 +608,12 @@ class CoyoteNLPStateManager:
                 topic_strings = [t[2] for t in topics_records]
                 mapped_topics = {}
                 if topic_strings:
-                    mapped_topics = map_topics_to_wikidata(topic_strings) or {}
+                    # Unit 8: pass the page's pooled full-doc embedding (Step
+                    # 7.5) so candidate disambiguation re-ranks by context.
+                    # doc_embedding is None on embed failure -> prominence top-1.
+                    mapped_topics = map_topics_to_wikidata(
+                        topic_strings, context_embedding=doc_embedding
+                    ) or {}
                     logger.debug(f"Mapped webpage topics to WikiData for event_id {event_id}: {mapped_topics}")
 
                 # Step 11: Update mapped topics in Topics table
@@ -654,7 +659,11 @@ class CoyoteNLPStateManager:
                 entity_texts = select_mapping_entities(extracted_entities)
                 mapped_entities = {}
                 if entity_texts:
-                    mapped_entities = map_ner_to_wikidata(entity_texts) or {}
+                    # Unit 8: same page context embedding for entity
+                    # disambiguation (webpage path only).
+                    mapped_entities = map_ner_to_wikidata(
+                        entity_texts, context_embedding=doc_embedding
+                    ) or {}
                     logger.debug(f"Mapped webpage entities to WikiData for event_id {event_id}: {mapped_entities}")
 
                 # Step 17: Update mapped entities back to database
