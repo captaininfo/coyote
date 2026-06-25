@@ -153,6 +153,33 @@ def embed_text(text: str) -> Optional[list]:
         return None
 
 
+def embed_texts(texts: List[str]) -> List[Optional[list]]:
+    """
+    Batch-embed a list of short strings in a single model.encode call.
+
+    Returns a list aligned 1:1 with `texts`; an entry is None when its text is
+    empty/blank or the model is unavailable. Vectors are RAW (unnormalized),
+    matching embed_text — callers needing cosine must normalize or use a
+    true-cosine formula. Added for Unit 8 (batched candidate-description
+    embedding); far cheaper than N separate embed_text calls on deep pages.
+    """
+    results: List[Optional[list]] = [None] * len(texts)
+    idx = [i for i, t in enumerate(texts) if t and t.strip()]
+    if not idx:
+        return results
+    model = _get_model()
+    if model is None:
+        return results
+    try:
+        encoded = model.encode([texts[i] for i in idx], convert_to_numpy=True)
+    except Exception:
+        logger.exception("embed_texts encode failed; returning Nones")
+        return results
+    for pos, vec in zip(idx, encoded):
+        results[pos] = vec.tolist()
+    return results
+
+
 def build_annotation_embedding_text(
     annotation_text: str,
     highlighted_text: str,
