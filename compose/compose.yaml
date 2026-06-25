@@ -88,6 +88,13 @@ services:
       # (~5 entities) are unaffected.
       - ENTITY_MAP_CAP=${ENTITY_MAP_CAP:-100}
       - WIKIDATA_ACTION_MIN_INTERVAL=${WIKIDATA_ACTION_MIN_INTERVAL:-0.6}
+      # Unit 8: context-aware disambiguation re-rank over the wbsearchentities
+      # top-K (webpage path only). THRESHOLD is the cosine floor to accept a
+      # mapping (0.0 = near-lossless first deploy; Gate 8.3 tunes it); MARGIN is
+      # how far a non-prominence candidate must beat prominence #1 to override
+      # it. Read at import — restart to change.
+      - WIKIDATA_DISAMBIG_THRESHOLD=${WIKIDATA_DISAMBIG_THRESHOLD:-0.0}
+      - WIKIDATA_DISAMBIG_MARGIN=${WIKIDATA_DISAMBIG_MARGIN:-0.05}
     volumes:
       - ${COYOTE_USER_DATA-./volumes/coyote}:/app/data
     healthcheck:

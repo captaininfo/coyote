@@ -164,13 +164,14 @@ def select_mapping_entities(
     Returns the ORIGINAL-CASE surface forms of the selected entities,
     deterministically ordered (mention count desc, then case-folded asc).
 
-    Surface case is preserved deliberately, not cosmetically: until Unit 7
-    lands, map_ner_to_wikidata still hits the case-sensitive exact-literal
-    SPARQL (`?item ?label "{term}"@en`), so a casefolded "french revolution"
-    is a different literal than canonical "French Revolution" and would fail
-    to resolve. Two passes: count per case-folded key, and collect surface
-    forms per key so a representative (most-frequent casing, tie-broken
-    alpha) can be returned.
+    Surface case is preserved deliberately, not cosmetically: Step 17's SQLite
+    `UPDATE Entities ... WHERE entity=?` (in coyote_nlp_state_manager) matches
+    case-SENSITIVELY and must hit the row inserted at Step 15, so the mapped
+    surface form has to be byte-identical to the stored one. (The WikiData
+    lookup itself is now the Action API and case-invariant — Unit 7/8 — so the
+    *lookup* no longer needs the case; the SQLite storage round-trip does.)
+    Two passes: count per case-folded key, and collect surface forms per key so
+    a representative (most-frequent casing, tie-broken alpha) can be returned.
     """
     if not entities:
         return []

@@ -654,8 +654,11 @@ class CoyoteNLPStateManager:
                 # mention-frequency floor (WEBPAGE PATH ONLY) selects which
                 # filtered entities to map, keeping Unit 7's request volume
                 # rate-safe. Returns deterministic, distinct, original-case
-                # surface forms (case preserved for the case-sensitive
-                # pre-Unit-7 SPARQL literal match).
+                # surface forms. Case is preserved because Step 17's SQLite
+                # UPDATE Entities matches on `WHERE entity=?` case-SENSITIVELY
+                # and must hit the row inserted at Step 15; the Action-API
+                # lookup itself is now case-invariant (Unit 7/8), so the
+                # mapping no longer needs the case — the storage round-trip does.
                 entity_texts = select_mapping_entities(extracted_entities)
                 mapped_entities = {}
                 if entity_texts:
