@@ -479,6 +479,20 @@ Estimated effort (calibrated up per Unit 2 lesson): ~8 commits, 3–5 working se
 
 ---
 
+### Post-Unit-8 fix — direct webpage→concept HAS_TOPIC edge (WDQS decoupling)
+
+**✅ FIXED 2026-06-26 (commit `<PENDING-SHA>`).** Found during post-Unit-8 edge-quality verification: a margin-0.15 fresh-browse deploy (Neo4j + `wikidata_cache.db` wiped) produced **0 HAS_TOPIC edges and 0 WikiDataOntology nodes** despite Units 7/8 resolving hundreds of term→QID mappings correctly (verified in the `Webpage.topics`/`entities` JSON props via `apoc.convert.fromJsonList`).
+
+**Root cause (verified against the call graph):** `connect_to_ontology` created HAS_TOPIC edges **only to WDQS-fetched ancestors** — `create_or_link_node` linked the user node to each `parent_uri`, and the disambiguated **root concept's own node was never created or linked** (the `source_uri`/root was passed but unused in the Cypher). Consequences: (1) the entire topic graph was **100% gated on WDQS SPARQL availability** — with the per-IP throttle tripping the ancestor breaker on its first call (threshold=1) and the cache wiped, every page got zero edges; (2) **even under healthy WDQS**, the webpage linked to a concept's abstract *ancestors* (e.g. "philosopher", "human") but never to the concept itself (`Q131805` John Dewey) — so the Unit 6/7/8 disambiguation never actually landed in the graph. Justin's recollection that `connect_to_ontology` originally linked the webpage directly to each QID's own ontology node was correct; the direct-link step had drifted out (pre-git-tracking, not recoverable from history).
+
+**Fix (`link_concept_and_ancestors`, webpage + all RAKE paths via `_process_single_event`):** for each above-threshold disambiguated `(uri, label, score)` triple — `extract_uris_from_node_data` now returns the **label inline** (was `(uri, score)`) — step (1) MERGEs the concept node + a direct `(node)-[:HAS_TOPIC]->(concept)` edge using only the Action-API-resolved `(uri, label)`, **zero WDQS calls**; step (2) runs the WDQS ancestor walk as **best-effort enrichment** (empty when the breaker is open). The disambiguated concept now lands regardless of WDQS state. Reuses the existing `create_or_link_node` (concept as target) — no new Cypher. 10 new host tests (`tests/test_connect_to_ontology_direct_link.py`), incl. the load-bearing `test_concept_node_merged_even_when_wdqs_empty`; full suite 254 passed / 1 skipped.
+
+**Label-semantics caveat (write-once, NOT "pre-fix nodes are empty"):** `create_or_link_node`'s `ON CREATE SET wdo.label = $targetLabel` (`:534`) is **first-writer-wins** — a `WikiDataOntology` node's label is set at first creation and never updated by a later MERGE. This is pre-existing, not introduced here. Note the correction to an easy misreading: pre-fix ancestor nodes were created with WDQS `parentLabel` (`:345`/`:481`), so they generally carry labels — the graph was not full of empty-label nodes. The real, durable caveat is that *if* a node is first created with an empty label (a concept whose NLP JSON lacked `label`, or an empty `parentLabel`), no later link backfills it. The direct-edge path actually **improves** label coverage: the concept node is now usually created first via step (1) with its disambiguated JSON label, before it could ever appear as someone's (label-less) ancestor.
+
+**Out of scope (post-MVP):** the ancestor model stays **flat** (webpage→every ancestor; ontology nodes not interconnected). Converting to a concept→parent **DAG** is a documented post-MVP target — see CLAUDE.md Known Issue "Ontology graph is flat, not a DAG."
+
+---
+
 ### Unit 9 — Polish (parallelizable)
 
 **Plan items:** 8a, 8b, 9, 10, 11. **Estimated effort:** medium total; individual items small.

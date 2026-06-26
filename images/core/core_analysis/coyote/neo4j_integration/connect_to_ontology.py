@@ -35,10 +35,13 @@ logger = logging.getLogger(__name__)
 # short-circuits without making SPARQL calls until the cooldown expires.
 # A failed probe in the half_open state immediately re-trips.
 #
-# This is a separate breaker instance from the one in
-# wikidata_lookup.py. Both target the same endpoint from the same client
-# IP and will typically trip near-simultaneously when WDQS rate-limits. Sharing
-# state across modules would be cleaner; unification is a post-MVP follow-up.
+# This is a separate breaker instance from the one in wikidata_lookup.py.
+# Post-Unit-7 the two breakers guard DIFFERENT endpoints: wikidata_lookup's
+# breaker now wraps the Action API (www.wikidata.org/w/api.php, term->QID),
+# which is not WDQS-throttled, while THIS breaker wraps WDQS SPARQL
+# (query.wikidata.org/sparql, ancestor traversal). They no longer trip
+# together — the Action API path stays up while WDQS is throttled. Keeping the
+# two breaker instances independent is therefore correct, not just convenient.
 #
 # Bail semantics: when the breaker trips mid-batch, URIs from the failed
 # batch and any later batches are absent from the returned dict. Callers
@@ -401,16 +404,20 @@ def _coerce_score(raw: Any) -> float:
         return 0.0
 
 
-def extract_uris_from_node_data(data: Dict[str, Any]) -> List[Tuple[str, float]]:
+def extract_uris_from_node_data(data: Dict[str, Any]) -> List[Tuple[str, str, float]]:
     """
-    Extract (wikidata_uri, score) pairs from a node's NLP-output JSON fields.
+    Extract (wikidata_uri, label, score) triples from a node's NLP-output JSON
+    fields.
 
-    Each item in the source JSON carries its own score (TF-IDF for topics,
-    NER-derived float for entities). Returning per-item pairs replaces the
-    previous broadcast-score behavior, where one scalar score from the first
-    entity was applied to every HAS_TOPIC edge from the node.
+    Each item in the source JSON carries its own score (KeyBERT cosine for
+    topics, NER mention-frequency for entities) and the disambiguated WikiData
+    `label` resolved by the NLP stage via the Action API. The label is carried
+    so `_process_single_event` can MERGE the concept node directly without a
+    WDQS round-trip (the option-(a) direct webpage->concept edge). Returning
+    per-item triples replaces the previous broadcast-score behavior, where one
+    scalar score from the first entity was applied to every HAS_TOPIC edge.
     """
-    pairs: List[Tuple[str, float]] = []
+    triples: List[Tuple[str, str, float]] = []
     keys = [
         "entities", "topics", "textTopics",
         "annotationTextEntities", "highlightedTextEntities"
@@ -425,27 +432,30 @@ def extract_uris_from_node_data(data: Dict[str, Any]) -> List[Tuple[str, float]]
 
         for item in items:
             # pattern 1 – browser‑extension dicts (the only shape observed in
-            # current production data; carries per-item score)
+            # current production data; carries per-item score and label)
             if isinstance(item, dict) and item.get("wikidata_uri"):
                 uri = item["wikidata_uri"]
                 if isinstance(uri, str) and uri.startswith("http"):
-                    pairs.append((uri, _coerce_score(item.get("score"))))
+                    label = item.get("label") or ""
+                    triples.append((uri, label, _coerce_score(item.get("score"))))
 
-            # pattern 2 – legacy two‑element lists; no per-item score, default to 0.0
+            # pattern 2 – legacy two‑element lists; no per-item score/label,
+            # default to ("" , 0.0). Dropped by any positive threshold.
             elif isinstance(item, list) and len(item) == 2:
                 uri = item[1]
                 if isinstance(uri, str) and uri.startswith("http"):
-                    pairs.append((uri, 0.0))
+                    triples.append((uri, "", 0.0))
 
-            # pattern 3 – legacy schema using 'uri'‑array; one shared score per
-            # item dict, applied to all URIs it contains
+            # pattern 3 – legacy schema using 'uri'‑array; one shared score and
+            # label per item dict, applied to all URIs it contains
             elif isinstance(item, dict) and "uri" in item:
                 shared_score = _coerce_score(item.get("score"))
+                shared_label = item.get("label") or ""
                 for u in item["uri"]:
                     if isinstance(u, str) and u.startswith("http"):
-                        pairs.append((u, shared_score))
+                        triples.append((u, shared_label, shared_score))
 
-    return pairs
+    return triples
 
 def create_or_link_wikidata_ontology_node(
     session: Session,
@@ -547,6 +557,48 @@ def create_or_link_node(
         logger.debug(f"Linked user node {node_id} to ontology node {target_uri} with {relationship_type}")
     except Exception as e:
         logger.error(f"Error create_or_link_node: {e}", exc_info=True)
+
+
+def link_concept_and_ancestors(
+    session: Session,
+    node_id: int,
+    uri: str,
+    label: str,
+    timestamp: str,
+    score: float,
+    cache_db_path: Path,
+) -> None:
+    """
+    Link a user node to its disambiguated WikiData concept, then enrich with
+    the concept's ancestor tree.
+
+    Two steps, deliberately ordered so the first never depends on the second:
+
+      1. DIRECT webpage->concept edge (option-(a) restoration). Uses only the
+         (uri, label) already resolved by the NLP stage via the Action API, so
+         it lands with ZERO WDQS calls. This is the load-bearing edge: a
+         throttled/OPEN WDQS breaker no longer zeroes the page's topic graph,
+         and the specific disambiguated concept (e.g. John Dewey, not just his
+         abstract ancestors) finally becomes a graph node. Reuses
+         create_or_link_node with the concept itself as the target.
+
+      2. ANCESTOR enrichment (P279/P31/... via WDQS). Additive and best-effort:
+         when the breaker is open, batch_query_wikidata returns no parents and
+         this contributes nothing — but step 1 has already run. Unchanged from
+         the prior behavior otherwise.
+    """
+    # 1) Direct concept edge — WDQS-free.
+    create_or_link_node(session, node_id, uri, uri, label, timestamp, score, 'HAS_TOPIC')
+
+    # 2) Ancestor enrichment — best-effort; empty when the WDQS breaker is open.
+    from_cache = get_from_cache(uri, cache_db_path)
+    if from_cache is None:
+        from_cache = batch_query_wikidata([uri], cache_db_path).get(uri, [])
+    create_or_link_wikidata_ontology_node(
+        session, node_id, uri, from_cache, timestamp, score, 1,
+        visited_uris=[uri], cache_db_path=cache_db_path,
+    )
+
 
 ################################################################################
 # The new manager class
@@ -695,14 +747,14 @@ class CoyoteOntologyStateManager:
 
             # Process all URIs with per-item scores
             for node_id, data in nodes_data.items():
-                uri_score_pairs = extract_uris_from_node_data(data)
-                if not uri_score_pairs:
+                uri_triples = extract_uris_from_node_data(data)
+                if not uri_triples:
                     logger.info(f"No URIs found for node {node_id}")
                     continue
 
                 timestamp = data.get('timestamp', '')
                 skipped_below_threshold = 0
-                for uri, score in uri_score_pairs:
+                for uri, label, score in uri_triples:
                     if score < TOPIC_SCORE_THRESHOLD:
                         skipped_below_threshold += 1
                         logger.debug(
@@ -710,19 +762,19 @@ class CoyoteOntologyStateManager:
                             uri, score, TOPIC_SCORE_THRESHOLD,
                         )
                         continue
-                    # Query or retrieve from cache
-                    from_cache = get_from_cache(uri, self._cache_db_path)
-                    if from_cache is None:
-                        # do batch query for just [uri]
-                        from_cache = batch_query_wikidata([uri], self._cache_db_path).get(uri, [])
-                    create_or_link_wikidata_ontology_node(
-                        session, node_id, uri, from_cache, timestamp, score, 1, visited_uris=[uri], cache_db_path=self._cache_db_path
+                    # Direct webpage->concept edge first (WDQS-free), then
+                    # best-effort ancestor enrichment. See
+                    # link_concept_and_ancestors for the WDQS-independence
+                    # rationale.
+                    link_concept_and_ancestors(
+                        session, node_id, uri, label, timestamp, score,
+                        self._cache_db_path,
                     )
                 if skipped_below_threshold:
                     logger.info(
                         "Threshold %.3f filtered %d/%d URIs for node %s",
                         TOPIC_SCORE_THRESHOLD, skipped_below_threshold,
-                        len(uri_score_pairs), node_id,
+                        len(uri_triples), node_id,
                     )
 
             # Once finished linking all nodes, set the event to "ontology_processed"
