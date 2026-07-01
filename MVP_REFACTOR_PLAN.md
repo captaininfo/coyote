@@ -6,6 +6,40 @@
 
 ---
 
+## 0. MVP LAUNCH SCOPE (ratified 2026-06-30 — Justin + CC + Sonnet)
+
+**This section supersedes the unit sequencing below for launch purposes.** Units 1/2/3/4/6/7/8 are CLOSED. The direct webpage→concept HAS_TOPIC edge (option-(a), `d018a8f`) makes disambiguated concepts land in the graph WDQS-free. What remains before an MVP launch was re-scoped in a three-way critical-path discussion against two governing ideas:
+
+- **Idea 1 (constraint): ship ASAP** — get Coyote into the zeitgeist; keep developing post-launch.
+- **Idea 2 (acceptance test): the MVP must be a *legible thought experiment*** — a trier should say "even though it doesn't perfectly do the use case yet, I can clearly see it WILL, and getting there is a doable amount of community work."
+
+MVP = the intersection: **the smallest system in which every pillar of the resonant pitch is either visibly working or visibly scaffolded.**
+
+**Governing architectural principle (now in CLAUDE.md Project Philosophy):** *LLMs verbalize; they do not compute the record.* The semantic record and all analyses over it stay deterministic, explainable, reproducible; LLMs are confined to the UI layer. (The thin MVP hero, source inference as `1 - cosine`, satisfies this by construction.)
+
+### Ratified launch tracks
+
+- **A — Ontology not embarrassing (the scaffold must be credible; a trier WILL open the graph).**
+  - **A1 — scholarly-article/journal pollution fix (was "Unit 9d").** Approach ratified: **description-string heuristic FIRST** (zero-network — the `wbsearchentities` `description` rides inline; catches "scholarly article / scientific article published in…"). Add a `wbgetentities` P31 claims-call fallback (non-throttled Action API, but real network) ONLY if the heuristic under-catches on the A4 clean replay. `wbsearchentities` never returns P31 (`_parse_wbsearchentities` returns only `label/concepturi/description`) — so a "carry P31, zero-network" framing is wrong; the zero-network option is the description heuristic, not P31.
+  - **A2 — bare-surname → wrong-human entity pollution.** Do NOT unilaterally fold into launch scope: it overlaps Unit 6's explicitly-closed carried debt (author-year `Schama 1989` sits *unmapped*, "not reopening Unit 6"). But there is a genuine distinction — a **bare surname** ("Fedorenko") is 100% alpha, passes `is_quality_token`, and *maps* to an arbitrary same-name human = a real polluting edge, which Unit 6 did NOT close. **Decision deferred to the A4 measurement:** size it from the clean replay's actual surname-edge share, then decide as a group whether to reopen.
+  - **A3 — per-Webpage HAS_TOPIC edge cap (was "Unit 9b"), N≈20.** Cheap deterministic backstop; ship alongside A1.
+  - **A4 — clean-replay measurement is a PREREQUISITE GATE, not just verification.** The "~half of edges are pollution" figure came from the *gate-mutated* graph; the robust figure (~26% of topic labels) came from WDQS-independent `Webpage.topics` JSON. One wipe + fresh browse + re-measure **sizes A1/A2/A3 before they are built** and resets the mutated graph. This is the **pre-A1 baseline** cohort.
+  - **A5 — post-A1 verification replay (closes the close-out hole, flagged by Sonnet 2026-06-30).** After A1 (+A3, +A2 if greenlit) is implemented, a **third clean-graph state** — wipe + replay — re-measures edge/topic pollution and compares it to the A4 baseline. This before/after-A1 delta is the actual proof A1 worked; without it, E's "Top-level Gates 1–5" has no edge-quality-improvement gate against an A1-enabled graph. **Methodology:** for an apples-to-apples delta, replay the **same URL cohort** as A4 (revisit the same pages) so the pollution change is attributable to A1, not to different content; if the cohort can only be approximated (manual browsing), treat the delta as directional and lean on the absolute post-A1 pollution rate + the §5 Gate 1 "no meta-class edges / top-5 edges semantically meaningful" checks.
+- **B — Hero pillar legible: source inference / input-output divergence** (the most resonant AND most bloggable AND most-already-scaffolded pillar; input+output embeddings + `content_role` labels already exist). **Decision: run the query BY HAND on the current graph first** (pre-wipe — needs only existing embeddings), then choose **Option X** (build a thin live demo — one canned insight + divergence number) vs **Option Y** (scaffold + blog the design, build X post-launch). NOTE (2026-06-30): the current graph has **no annotations** → probe #1 has no output corpus yet; Justin will wipe his orphaned dev Hypothes.is data and browse fresh **with annotations** so the by-hand probe has an input+output corpus.
+- **C — Contributability (the "community will build it" promise must be cashable).** CONTRIBUTING.md, a one-page architecture overview, the vision doc (Justin's pitch written down), and a roadmap of bite-sized "good first issue" pieces (flat→DAG ontology is a strong candidate). Parallel to A/B — no measurement dependency.
+- **D — Narrative.** README leading with the resonant pitch + Christmas-tree ontology framing + local-first differentiator; one launch post; one **screen recording of Coyote working a real example on Justin's own data** (not canned data; not a "GIF"). Parallel to A/B.
+- **E — Close-out.** **A5's post-A1 verification replay** (the edge-quality-improvement gate) + Top-level Gates 1–5 (§5) + full suite green → merge/tag `coyote-0.5`. E's edge-quality gate is explicitly measured against the A5 (A1-enabled) clean graph, compared to the A4 baseline — not against the gate-mutated graph.
+
+### Deferred to post-MVP (ratified)
+
+Unit 10 (MTEB embedder swap); Unit 5a (trafilatura metadata harvest — no hard MVP consumer); Unit 9a/9c/9e; the flat→DAG ontology refactor; WDQS ancestor-tree volume remedies; Phase B.5 (embed Purpose/SearchTerms — natural first post-launch milestone); Phase C v2 (1-hop context expansion); longitudinal concept-evolution modeling; annotation-path disambiguation; Purpose/SearchTerms ontology-link fix (see CLAUDE.md Known Issue — score-not-property-name, asymmetric topics/entities).
+
+### The linchpin sequence
+
+Three clean-graph states, two of them cheap probes that unblock the hardest decisions: **(1)** source-inference-by-hand on the current graph (pre-wipe) settles B's X/Y; **(2)** clean wipe + fresh browse *with annotations* + re-measure = the **A4 pre-A1 baseline** (settles A1's catch-rate and A2's surname share). Then build Track A on real numbers; C and D proceed in parallel. **(3)** After A1/A3(/A2) land, the **A5 post-A1 verification replay** proves the pollution reduction and feeds E's edge-quality gate. Then E closes/merges.
+
+---
+
 ## 1. Scope
 
 ### 1.1 In-scope
