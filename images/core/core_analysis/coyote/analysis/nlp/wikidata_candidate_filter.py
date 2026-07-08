@@ -91,7 +91,16 @@ _META_PATTERNS = (
     "article published in",
     "research article",
     "academic journal",
-    "peer-reviewed",
+    # Gate A1.0 adjudication (2026-07-08): the registered bare "peer-reviewed"
+    # flagged the Stanford Encyclopedia of Philosophy ("peer-reviewed website"),
+    # a genuinely high-value resource on this philosophy-heavy corpus. Narrowed
+    # to the journal phrasings per Fable's pre-registered F4 remedy — still
+    # catches British Journal of Haematology / Diabetes Care ("peer-reviewed
+    # scientific journal"), no other losses. SEP therefore becomes a documented
+    # A5 "expected survivor": measure_a4.py measures with the REGISTERED bare
+    # pattern, so it will still flag SEP while production keeps it.
+    "peer-reviewed journal",
+    "peer-reviewed scientific journal",
     "wikimedia",
     "wikipedia",
     "category",

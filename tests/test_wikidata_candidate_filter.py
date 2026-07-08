@@ -52,7 +52,7 @@ class TestClassify:
             "article published in 2019",
             "research article by Chen et al.",
             "academic journal",
-            "peer-reviewed website",
+            "peer-reviewed scientific journal",
             "Wikimedia list article",
             "article on Wikipedia",
             "grammatical category",
@@ -84,6 +84,15 @@ class TestClassify:
             "colonial authorities in West Africa",       # A2 lesson verbatim
         ):
             assert classify_candidate(_uri("Q999"), desc) is None, desc
+
+    def test_peer_reviewed_website_not_flagged_gate_a10(self):
+        # Gate A1.0 adjudication: bare "peer-reviewed" was narrowed to the
+        # journal phrasings so the Stanford Encyclopedia of Philosophy
+        # ("peer-reviewed website") is NOT filtered; the journals still are.
+        assert classify_candidate(_uri("Q824553"), "peer-reviewed website (1995-)") is None
+        assert classify_candidate(
+            _uri("Q4970200"), "peer-reviewed scientific journal"
+        )[0] == "meta"
 
     def test_secondary_set_deliberately_not_matched(self):
         # Registered-primary only in v1: episode-of / preprint / thesis junk
