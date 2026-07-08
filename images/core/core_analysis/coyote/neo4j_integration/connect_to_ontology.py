@@ -147,16 +147,17 @@ EVENTS_BATCH_SIZE = 5      # how many events to handle per cycle
 # even after P910 is removed (e.g., a non-category entity whose instance-of is
 # a Wikimedia meta-class). Filter at cache-write time so they never persist
 # and never get traversed. See Session 3 (MVP).
-WIKIMEDIA_META_QIDS = frozenset({
-    "Q4167836",   # Wikimedia category
-    "Q15184295",  # Wikimedia administration category
-    "Q4167410",   # Wikimedia disambiguation page
-    "Q14204246",  # Wikimedia project page
-    "Q11266439",  # Wikimedia template
-    "Q13406463",  # Wikimedia list article
-})
-WIKIMEDIA_META_URIS = frozenset(
-    f"http://www.wikidata.org/entity/{q}" for q in WIKIMEDIA_META_QIDS
+# Canonical home moved to wikidata_candidate_filter (Track A, 2026-07-08),
+# which ALSO applies the set as a mapping-stage QID blocklist — closing the
+# Gate B direct-path hole (Q4167410 landed as a direct concept in A4 because
+# this ancestor-walk post-filter was the only guard). The re-export keeps the
+# ancestor filter at batch_query_wikidata as defense-in-depth against WDQS
+# traversal re-introducing meta items as parents. Import direction
+# neo4j_integration -> analysis.nlp is acyclic (the filter module is pure
+# stdlib and imports nothing from coyote).
+from coyote.analysis.nlp.wikidata_candidate_filter import (  # noqa: E402
+    WIKIMEDIA_META_QIDS,
+    WIKIMEDIA_META_URIS,
 )
 
 # HAS_TOPIC edges with topic_score below this threshold are dropped at the

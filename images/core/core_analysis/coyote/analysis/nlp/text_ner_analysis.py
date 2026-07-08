@@ -66,13 +66,22 @@ def map_ner_to_wikidata(
     full-doc embedding), Unit 8 re-ranks each entity's candidate list by
     description<->context cosine and may DECLINE a mapping; when None (every
     other event path, or a webpage whose own embedding failed) the prominence
-    top-1 is used unchanged.
+    top-1 is used.
+
+    All paths first pass the candidate list through the A1 junk filter
+    (wikidata_candidate_filter): junk candidates are removed before selection,
+    and on the None-context path a name-marker/disambiguation #1 drops the
+    term entirely (no mapping).
 
     Returns:
         Dict[str, Dict[str, Any]]: Mapped entities with replacements, URIs, and labels (labels from WikiData).
     """
     # Function-local import: avoid enlarging this module's import surface / any cycle.
     from coyote.analysis.nlp.wikidata_disambiguation import select_best_candidate
+    from coyote.analysis.nlp.wikidata_candidate_filter import (
+        NO_CONTEXT_DROP_CLASSES,
+        filter_candidates,
+    )
     try:
         mapped_entities = {}
         for entity in entities:
@@ -81,15 +90,28 @@ def map_ner_to_wikidata(
             wikidata_result = query_wikidata(entity)
             if not wikidata_result:
                 continue
+            # A1: drop junk candidates before ANY selection (all event paths).
+            fr = filter_candidates(wikidata_result, term=entity)
             if context_embedding is not None:
                 selected = select_best_candidate(
-                    context_embedding, wikidata_result, term=entity
+                    context_embedding, fr.survivors, term=entity
                 )
                 if selected is None:
                     continue  # Unit 8 declined below threshold -> no mapping
                 wikidata_label, wikidata_uri = selected
             else:
-                wikidata_label, wikidata_uri, _ = wikidata_result[0]  # prominence top-1
+                if fr.top1_class in NO_CONTEXT_DROP_CLASSES:
+                    # name-marker/disambig #1 without context: the term is a
+                    # bare name / pure ambiguity — blind fallback to #2 would
+                    # mint unflaggable wrong-sense junk. No mapping.
+                    logger.debug(
+                        "A1 dropped term %r on no-context path (top1 class %s)",
+                        entity, fr.top1_class,
+                    )
+                    continue
+                if not fr.survivors:
+                    continue  # everything junk -> no mapping
+                wikidata_label, wikidata_uri, _ = fr.survivors[0]  # prominence top-1 survivor
             mapped_entities[entity] = {
                 'replacement': entity.replace(" ", "_"),
                 'uri': wikidata_uri,
