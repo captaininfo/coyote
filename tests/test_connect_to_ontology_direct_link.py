@@ -49,36 +49,47 @@ TS = "2026-06-26T01:00:00"
 
 
 # ---------------------------------------------------------------------------
-# extract_uris_from_node_data — (uri, label, score) triples
+# extract_uris_from_node_data — (uri, label, score, family) quads (A3)
 # ---------------------------------------------------------------------------
 
-class TestExtractTriples:
-    def test_pattern1_dict_carries_label_and_score(self):
+class TestExtractQuads:
+    def test_pattern1_dict_carries_label_score_and_topic_family(self):
         data = {
             "topics": '[{"topic": "pragmatism", "wikidata_uri": "%s", '
                       '"label": "%s", "score": 0.42}]' % (CONCEPT_URI, CONCEPT_LABEL),
         }
         out = target.extract_uris_from_node_data(data)
-        assert out == [(CONCEPT_URI, CONCEPT_LABEL, 0.42)]
+        assert out == [(CONCEPT_URI, CONCEPT_LABEL, 0.42, "topic")]
 
-    def test_entities_field_also_extracted(self):
+    def test_entities_field_tagged_entity_family(self):
         data = {
             "entities": '[{"entity": "Dewey", "wikidata_uri": "%s", '
                         '"label": "%s", "score": 1.1}]' % (CONCEPT_URI, CONCEPT_LABEL),
         }
         out = target.extract_uris_from_node_data(data)
-        assert out == [(CONCEPT_URI, CONCEPT_LABEL, 1.1)]
+        assert out == [(CONCEPT_URI, CONCEPT_LABEL, 1.1, "entity")]
+
+    def test_all_five_fields_map_to_their_family(self):
+        item = '[{"wikidata_uri": "%s", "label": "x", "score": 0.5}]' % CONCEPT_URI
+        families = {
+            "topics": "topic", "textTopics": "topic",
+            "entities": "entity", "annotationTextEntities": "entity",
+            "highlightedTextEntities": "entity",
+        }
+        for key, family in families.items():
+            out = target.extract_uris_from_node_data({key: item})
+            assert out == [(CONCEPT_URI, "x", 0.5, family)], key
 
     def test_missing_label_defaults_to_empty_string(self):
         data = {"topics": '[{"wikidata_uri": "%s", "score": 0.3}]' % CONCEPT_URI}
         out = target.extract_uris_from_node_data(data)
-        assert out == [(CONCEPT_URI, "", 0.3)]
+        assert out == [(CONCEPT_URI, "", 0.3, "topic")]
 
     def test_legacy_two_element_list_empty_label_zero_score(self):
         # pattern 2 — dropped by any positive threshold downstream.
         data = {"topics": '[["pragmatism", "%s"]]' % CONCEPT_URI}
         out = target.extract_uris_from_node_data(data)
-        assert out == [(CONCEPT_URI, "", 0.0)]
+        assert out == [(CONCEPT_URI, "", 0.0, "topic")]
 
     def test_legacy_uri_array_shares_label_and_score(self):
         # pattern 3 — shared label/score across the uri array.
@@ -88,8 +99,8 @@ class TestExtractTriples:
         }
         out = target.extract_uris_from_node_data(data)
         assert out == [
-            (CONCEPT_URI, "shared", 0.5),
-            (PARENT_URI, "shared", 0.5),
+            (CONCEPT_URI, "shared", 0.5, "topic"),
+            (PARENT_URI, "shared", 0.5, "topic"),
         ]
 
     def test_bad_json_skipped(self):

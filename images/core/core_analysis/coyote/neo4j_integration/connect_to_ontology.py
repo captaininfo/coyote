@@ -181,6 +181,35 @@ def _read_threshold_env() -> float:
 
 TOPIC_SCORE_THRESHOLD = _read_threshold_env()
 
+# A3 (Track A, 2026-07-08): per-page cap on DIRECT concept links, applied PER
+# STREAM FAMILY (top-N topics AND top-N entities independently — one knob,
+# hard total bound 2N/page). The families are capped separately because their
+# scores are incommensurable: webpage entity scores are ln(1+count) >= ln(3)
+# ~= 1.099 (2-mention mapping floor) while topic scores are KeyBERT cosines
+# <= 1.0, so a combined top-N would evict every topic exactly where it binds.
+# A4 baseline: topics self-limit (max 16/page); the entity stream is the
+# pathological tail (p90 46, max 81). A capped-out concept also skips its
+# WDQS ancestor walk, pruning the ancestor fan proportionally.
+# Unset => default 20. Set but blank/unparseable/<=0 => disabled (None),
+# mirroring ENTITY_MAP_CAP semantics. Read at import — restart to change.
+def _read_cap_env() -> Optional[int]:
+    raw = os.environ.get("ONTOLOGY_DIRECT_EDGE_CAP")
+    if raw is None:
+        return 20
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        cap = int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid ONTOLOGY_DIRECT_EDGE_CAP=%r; cap disabled", raw
+        )
+        return None
+    return cap if cap > 0 else None
+
+ONTOLOGY_DIRECT_EDGE_CAP = _read_cap_env()
+
 ################################################################################
 # Caching logic
 ################################################################################
@@ -405,25 +434,38 @@ def _coerce_score(raw: Any) -> float:
         return 0.0
 
 
-def extract_uris_from_node_data(data: Dict[str, Any]) -> List[Tuple[str, str, float]]:
+# Source-family per JSON field (A3): topic-stream and entity-stream direct
+# links are capped independently because their scores are incommensurable —
+# see ONTOLOGY_DIRECT_EDGE_CAP above.
+_KEY_TO_FAMILY = {
+    "topics": "topic",
+    "textTopics": "topic",
+    "entities": "entity",
+    "annotationTextEntities": "entity",
+    "highlightedTextEntities": "entity",
+}
+
+
+def extract_uris_from_node_data(data: Dict[str, Any]) -> List[Tuple[str, str, float, str]]:
     """
-    Extract (wikidata_uri, label, score) triples from a node's NLP-output JSON
-    fields.
+    Extract (wikidata_uri, label, score, family) quads from a node's
+    NLP-output JSON fields. `family` is "topic" or "entity" per the source
+    field (A3 per-stream cap input).
 
     Each item in the source JSON carries its own score (KeyBERT cosine for
     topics, NER mention-frequency for entities) and the disambiguated WikiData
     `label` resolved by the NLP stage via the Action API. The label is carried
     so `_process_single_event` can MERGE the concept node directly without a
     WDQS round-trip (the option-(a) direct webpage->concept edge). Returning
-    per-item triples replaces the previous broadcast-score behavior, where one
+    per-item quads replaces the previous broadcast-score behavior, where one
     scalar score from the first entity was applied to every HAS_TOPIC edge.
+
+    NOTE: entity-family JSON carries one object PER MENTION (known
+    duplicate-rows debt), so the same URI may appear many times; downstream
+    consumers must dedupe (select_direct_link_targets does).
     """
-    triples: List[Tuple[str, str, float]] = []
-    keys = [
-        "entities", "topics", "textTopics",
-        "annotationTextEntities", "highlightedTextEntities"
-    ]
-    for key in keys:
+    quads: List[Tuple[str, str, float, str]] = []
+    for key, family in _KEY_TO_FAMILY.items():
         raw = data.get(key, "[]")
         try:
             items = json.loads(raw)
@@ -438,14 +480,14 @@ def extract_uris_from_node_data(data: Dict[str, Any]) -> List[Tuple[str, str, fl
                 uri = item["wikidata_uri"]
                 if isinstance(uri, str) and uri.startswith("http"):
                     label = item.get("label") or ""
-                    triples.append((uri, label, _coerce_score(item.get("score"))))
+                    quads.append((uri, label, _coerce_score(item.get("score")), family))
 
             # pattern 2 – legacy two‑element lists; no per-item score/label,
             # default to ("" , 0.0). Dropped by any positive threshold.
             elif isinstance(item, list) and len(item) == 2:
                 uri = item[1]
                 if isinstance(uri, str) and uri.startswith("http"):
-                    triples.append((uri, "", 0.0))
+                    quads.append((uri, "", 0.0, family))
 
             # pattern 3 – legacy schema using 'uri'‑array; one shared score and
             # label per item dict, applied to all URIs it contains
@@ -454,9 +496,75 @@ def extract_uris_from_node_data(data: Dict[str, Any]) -> List[Tuple[str, str, fl
                 shared_label = item.get("label") or ""
                 for u in item["uri"]:
                     if isinstance(u, str) and u.startswith("http"):
-                        triples.append((u, shared_label, shared_score))
+                        quads.append((u, shared_label, shared_score, family))
 
-    return triples
+    return quads
+
+
+def select_direct_link_targets(
+    uri_quads: List[Tuple[str, str, float, str]],
+    threshold: float,
+    cap: Optional[int],
+) -> Tuple[List[Tuple[str, str, float]], Dict[str, Any]]:
+    """
+    A3 selection: threshold-filter, per-family URI dedupe, then per-family cap.
+    Pure (host-testable); _process_single_event owns the logging.
+
+    Order of operations (plan-ratified):
+      1. drop items with score < threshold (same gate as before A3);
+      2. dedupe DISTINCT URIs within each family, keep-first (entity JSON is
+         one object per mention, all sharing the score — without dedupe a
+         "top 20" would be ~5 distinct entities on a heavy page; dedupe also
+         removes the previously-redundant re-MERGE per mention);
+      3. if `cap` is set and a family has more than `cap` distinct URIs, keep
+         the top `cap` sorted by (-score, uri) — score descending, URI
+         ascending as the deterministic tie-break (log-scores tie whenever
+         mention counts tie). A URI capped out of the entity family still
+         links if it independently earned topic status (dedupe is per family).
+
+    Returns (targets, stats): `targets` = (uri, label, score) to link, topics
+    first; `stats` = {"skipped_below_threshold": int (counted per raw quad,
+    pre-dedupe, preserving the pre-A3 log meaning), "capped": {family:
+    (distinct_before, kept, dropped_score_lo, dropped_score_hi)} for each
+    family where the cap actually bound}.
+    """
+    per_family: Dict[str, List[Tuple[str, str, float]]] = {}
+    seen: Dict[str, set] = {}
+    skipped_below_threshold = 0
+
+    for uri, label, score, family in uri_quads:
+        if score < threshold:
+            skipped_below_threshold += 1
+            logger.debug(
+                "Skipping low-importance topic uri=%s score=%.4f < threshold=%.3f",
+                uri, score, threshold,
+            )
+            continue
+        family_seen = seen.setdefault(family, set())
+        if uri in family_seen:
+            continue
+        family_seen.add(uri)
+        per_family.setdefault(family, []).append((uri, label, score))
+
+    capped: Dict[str, Tuple[int, int, float, float]] = {}
+    targets: List[Tuple[str, str, float]] = []
+    # Topic family first (stable output order; no behavioral significance).
+    for family in sorted(per_family, key=lambda f: (f != "topic", f)):
+        items = per_family[family]
+        if cap is not None and len(items) > cap:
+            items = sorted(items, key=lambda t: (-t[2], t[0]))
+            dropped = items[cap:]
+            items = items[:cap]
+            capped[family] = (
+                len(items) + len(dropped), len(items),
+                min(s for _, _, s in dropped), max(s for _, _, s in dropped),
+            )
+        targets.extend(items)
+
+    return targets, {
+        "skipped_below_threshold": skipped_below_threshold,
+        "capped": capped,
+    }
 
 def create_or_link_wikidata_ontology_node(
     session: Session,
@@ -748,21 +856,26 @@ class CoyoteOntologyStateManager:
 
             # Process all URIs with per-item scores
             for node_id, data in nodes_data.items():
-                uri_triples = extract_uris_from_node_data(data)
-                if not uri_triples:
+                uri_quads = extract_uris_from_node_data(data)
+                if not uri_quads:
                     logger.info(f"No URIs found for node {node_id}")
                     continue
 
                 timestamp = data.get('timestamp', '')
-                skipped_below_threshold = 0
-                for uri, label, score in uri_triples:
-                    if score < TOPIC_SCORE_THRESHOLD:
-                        skipped_below_threshold += 1
-                        logger.debug(
-                            "Skipping low-importance topic uri=%s score=%.4f < threshold=%.3f",
-                            uri, score, TOPIC_SCORE_THRESHOLD,
-                        )
-                        continue
+                # A3: threshold -> per-family dedupe -> per-family cap. A
+                # capped-out concept never reaches link_concept_and_ancestors,
+                # so it also skips its WDQS ancestor walk.
+                targets, stats = select_direct_link_targets(
+                    uri_quads, TOPIC_SCORE_THRESHOLD, ONTOLOGY_DIRECT_EDGE_CAP
+                )
+                for family, (before, kept, lo, hi) in stats["capped"].items():
+                    logger.info(
+                        "Direct-edge cap (%d) bound for node %s: %s stream "
+                        "%d -> %d distinct URIs (dropped tail scores %.4f-%.4f)",
+                        ONTOLOGY_DIRECT_EDGE_CAP, node_id, family,
+                        before, kept, lo, hi,
+                    )
+                for uri, label, score in targets:
                     # Direct webpage->concept edge first (WDQS-free), then
                     # best-effort ancestor enrichment. See
                     # link_concept_and_ancestors for the WDQS-independence
@@ -771,11 +884,11 @@ class CoyoteOntologyStateManager:
                         session, node_id, uri, label, timestamp, score,
                         self._cache_db_path,
                     )
-                if skipped_below_threshold:
+                if stats["skipped_below_threshold"]:
                     logger.info(
                         "Threshold %.3f filtered %d/%d URIs for node %s",
-                        TOPIC_SCORE_THRESHOLD, skipped_below_threshold,
-                        len(uri_triples), node_id,
+                        TOPIC_SCORE_THRESHOLD, stats["skipped_below_threshold"],
+                        len(uri_quads), node_id,
                     )
 
             # Once finished linking all nodes, set the event to "ontology_processed"
