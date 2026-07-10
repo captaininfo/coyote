@@ -194,14 +194,22 @@ Default volume paths assume `NEO4J_DATA_DIR` and `COYOTE_USER_DATA` env vars are
 cd compose
 docker compose --profile core --profile llm --profile agent down
 sudo rm -rf ./volumes/neo4j
+# no-sudo alternative (docker group):
+#   docker run --rm -v "$PWD/volumes/neo4j:/wipe" --entrypoint sh neo4j:5.26 -c 'rm -rf /wipe/*'
+# WITHOUT the next line the graph stays empty forever: the SQLite dedup
+# tables (Events / Annotations / EventStaging) block all reprocessing —
+# see the corrected note below the recipe.
+rm -f ./volumes/coyote/coyote_event_data.db* ./volumes/coyote/coyote_event_staging.db*
 # wikidata_cache.db holds both the URI cache (wikidata_cache table)
 # and the term cache (wikidata_term_cache table) — one rm wipes both.
+# OPTIONAL: keeping it is a pure speed win (rate-safe; Track A closed).
 rm -f ./volumes/coyote/wikidata_cache.db
+# NEVER rm coyote_state.db or coyote_*_key.key (Fernet-encrypted creds).
 docker compose --profile core --profile llm --profile agent up -d --build
 cd ..
 ```
 All three profiles are required: `bot` (agent profile) has a hard `depends_on: llm`, so omitting `--profile llm` triggers `service "bot" depends on undefined service "llm": invalid compose project`. Same combination as `ui/coyote_ui_server.py:327`.
-Vector indexes are (re)created by the **bot** at startup (`create_vector_index`, `images/agent/app/utils.py:33` called from `bot.py:78`, `IF NOT EXISTS`, dim 384 cosine) — i.e. on the first chat-UI (Streamlit) session, NOT by Core node inserts. They are therefore absent until the bot/chat UI is first opened after a wipe; that is expected, not breakage (do not diagnose "missing `webpage_embedding`/`annotation_embedding` indexes" as a fault before the bot has run). SQLite source-of-truth is untouched; Webpage/Annotation/Purpose/SearchTerms nodes rebuild from event data on next NLP cycle. Tier 0 starts cold (Webpage embeddings repopulate as new browsing comes in) — acceptable per data-expendable invariant.
+Vector indexes are (re)created by the **bot** at startup (`create_vector_index`, `images/agent/app/utils.py:33` called from `bot.py:78`, `IF NOT EXISTS`, dim 384 cosine) — i.e. on the first chat-UI (Streamlit) session, NOT by Core node inserts. They are therefore absent until the bot/chat UI is first opened after a wipe; that is expected, not breakage (do not diagnose "missing `webpage_embedding`/`annotation_embedding` indexes" as a fault before the bot has run). **A Neo4j-only wipe does NOT rebuild the graph** (corrected 2026-07-09 — the previous claim here that nodes "rebuild from event data on next NLP cycle" was wrong and has misled three diagnoses): the SQLite dedup tables mark processed items and BLOCK reprocessing — `Events` (browser events, checked by `fetch_next_event`) and `Annotations` + in-flight `EventStaging` (Hypothesis, checked by `_annotation_already_seen`, `coyote_event_writer.py:29`). After wiping only the graph, browsing events will not re-drain and Integrations→Fetch Data fetches all annotations but skips every one as "already seen." **For a full graph rebuild, also delete `coyote_event_staging.db` and `coyote_event_data.db`** (schemas recreate on startup) **and clear `event_queue`/`node_processing_queue` in `coyote_state.db` — but NEVER delete `coyote_state.db` itself or the `coyote_*_key.key` files** (`user_settings` holds the Fernet-encrypted Neo4j/Hypothes.is creds). Then: annotations re-import in full via Fetch Data (source of truth is Hypothes.is); browsing history must be re-browsed or re-staged; Hypothesis-only Webpage nodes carry no embeddings, so annotation source pages need a real (re-)browse to be embedded. Tier 0 starts cold — acceptable per data-expendable invariant.
 
 **Verification gates** (run 2hr post-deploy after some browsing):
 - Gate A — material reduction in avg HAS_TOPIC edges/page from ~37 baseline (24hr pre-Session-3 window): `MATCH (w:Webpage)-[r:HAS_TOPIC]->() WHERE datetime(w.timestamp) > datetime() - duration({hours: 2}) WITH w, count(r) AS edges_per_page RETURN avg(edges_per_page) AS avg_edges, count(w) AS webpages;`
