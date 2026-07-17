@@ -22,6 +22,7 @@ from coyote.demos.source_inference import (  # noqa: E402
     dedupe_pages_by_url,
     is_pointer_note,
     rank_pages,
+    resolve_source_embedding,
 )
 
 
@@ -120,6 +121,26 @@ def test_blind_rank_finds_source():
 def test_blind_rank_absent_source_is_none():
     ranked = rank_pages([1.0, 0.0], [_page("https://a")])
     assert blind_rank_of_source(ranked, "https://missing") is None
+
+
+# ── resolve_source_embedding (duplicate-Webpage twin fallback) ───────────
+
+def test_resolve_prefers_edge_embedding_when_present():
+    pages = [_page("https://src", emb=(0.0, 1.0))]
+    assert resolve_source_embedding("https://src", [1.0, 0.0], pages) == [1.0, 0.0]
+
+
+def test_resolve_falls_back_to_corpus_copy_by_url():
+    pages = [_page("https://other"), _page("https://src", emb=(0.0, 1.0))]
+    assert resolve_source_embedding("https://src", None, pages) == [0.0, 1.0]
+
+
+def test_resolve_returns_none_when_url_absent_from_corpus():
+    assert resolve_source_embedding("https://src", None, [_page("https://other")]) is None
+
+
+def test_resolve_handles_none_source_url():
+    assert resolve_source_embedding(None, None, [_page("https://a")]) is None
 
 
 # ── pointer-note boundary ────────────────────────────────────────────────

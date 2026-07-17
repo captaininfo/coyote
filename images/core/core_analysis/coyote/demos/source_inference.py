@@ -109,6 +109,22 @@ def is_pointer_note(prose):
     return len((prose or "").strip()) < PROSE_MIN_CHARS
 
 
+def resolve_source_embedding(source_url, source_embedding, pages):
+    """
+    The HAS_ANNOTATION edge can sit on an unembedded duplicate of the source
+    page (Hypothesis-created twin — see the duplicate-Webpage Known Issue in
+    CLAUDE.md) while an embedded copy of the same URL exists in the corpus.
+    Webpage identity is the URL, not the node: fall back to the corpus copy
+    so divergence reflects the page, not which twin holds the edge.
+    """
+    if source_embedding:
+        return source_embedding
+    for p in pages:
+        if p.get("url") == source_url:
+            return p.get("embedding")
+    return None
+
+
 # ── graph access (container-only imports kept out of module top-level) ───
 
 def _connect():
@@ -189,7 +205,9 @@ def build_evidence(annotation, pages, top_k):
 
     ranked = rank_pages(query_vec, pages)
     source_url = annotation.get("source_url")
-    source_emb = annotation.get("source_embedding")
+    source_emb = resolve_source_embedding(
+        source_url, annotation.get("source_embedding"), pages
+    )
 
     if source_emb:
         result["divergence_from_source"] = round(1.0 - cosine(query_vec, source_emb), 4)
