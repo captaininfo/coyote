@@ -21,6 +21,7 @@ from coyote.demos.source_inference import (  # noqa: E402
     cosine,
     dedupe_pages_by_url,
     is_pointer_note,
+    normalize_url,
     rank_pages,
     resolve_source_embedding,
 )
@@ -121,6 +122,55 @@ def test_blind_rank_finds_source():
 def test_blind_rank_absent_source_is_none():
     ranked = rank_pages([1.0, 0.0], [_page("https://a")])
     assert blind_rank_of_source(ranked, "https://missing") is None
+
+
+# ── normalize_url (tracking-param / fragment variants) ──────────────────
+
+def test_normalize_strips_fragment():
+    assert normalize_url("https://a.com/p#ref-CR33") == "https://a.com/p"
+
+
+def test_normalize_strips_tracking_params():
+    assert normalize_url("https://a.com/p?srsltid=Afm123") == "https://a.com/p"
+    assert normalize_url("https://a.com/p?utm_source=getftr&utm_medium=x") == "https://a.com/p"
+
+
+def test_normalize_keeps_identity_params():
+    # libguides-style URLs where the query IS the page identity
+    url = "https://guides.lib.berkeley.edu/c.php?g=1262657&p=9256364"
+    assert normalize_url(url) == url
+
+
+def test_normalize_mixed_query_keeps_only_identity():
+    assert (
+        normalize_url("https://a.com/p?g=7&utm_source=x&srsltid=Afm")
+        == "https://a.com/p?g=7"
+    )
+
+
+def test_normalize_handles_none_and_empty():
+    assert normalize_url(None) is None
+    assert normalize_url("") == ""
+
+
+def test_dedupe_collapses_variants_of_same_page():
+    bare = _page("https://a.com/p", ts="2026-01-01T00:00:00", emb=(1.0, 0.0))
+    tracked = _page("https://a.com/p?srsltid=Afm", ts="2026-02-01T00:00:00", emb=(0.0, 1.0))
+    out = dedupe_pages_by_url([bare, tracked])
+    assert len(out) == 1
+    assert out[0]["embedding"] == [0.0, 1.0]  # most recent visit wins
+
+
+def test_blind_rank_matches_across_variants():
+    query = [1.0, 0.0]
+    pages = [_page("https://src?srsltid=Afm", emb=(1.0, 0.0))]
+    ranked = rank_pages(query, pages)
+    assert blind_rank_of_source(ranked, "https://src") == 1
+
+
+def test_resolve_matches_across_variants():
+    pages = [_page("https://src?srsltid=Afm", emb=(0.0, 1.0))]
+    assert resolve_source_embedding("https://src#quote", None, pages) == [0.0, 1.0]
 
 
 # ── resolve_source_embedding (duplicate-Webpage twin fallback) ───────────

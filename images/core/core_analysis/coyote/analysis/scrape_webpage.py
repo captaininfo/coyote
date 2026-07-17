@@ -23,7 +23,11 @@ _FETCH_HEADERS = {
 }
 # (connect, read) — separates handshake stall from slow streaming.
 # .05 on connect avoids landing on a TCP SYN retry boundary.
-_FETCH_TIMEOUT = (3.05, 10)
+# Read raised 10 -> 30 (2026-07-17): slow-but-healthy hosts were dying at
+# 10s (pressbooks.bccampus.ca serves 200 in ~15.5s); the NLP drain is
+# single-threaded serial, so the worst case is one slow page stalling the
+# queue by 30s, not a concurrency pile-up.
+_FETCH_TIMEOUT = (3.05, 30)
 
 # Bot/anti-DDoS interstitial detection.
 #

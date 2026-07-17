@@ -54,6 +54,7 @@ import logging
 import math
 import sys
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 # Pointer-note boundary used by the ground-truth instrument: notes with
 # less prose than this carry their meaning in the quote, not the prose.
@@ -61,6 +62,34 @@ PROSE_MIN_CHARS = 15
 
 
 # ── pure functions (stdlib only; unit-tested host-side) ──────────────────
+
+# Click-tracking query params that vary per visit without changing which
+# page was read (Google adds srsltid to organic results; utm_* / gclid /
+# fbclid are campaign trackers). Only these are stripped — other params
+# can BE the page identity (e.g. libguides ?g=...&p=...).
+_TRACKING_PARAMS = ("srsltid", "gclid", "fbclid")
+
+
+def normalize_url(url):
+    """
+    Canonical page identity for dedupe and source matching: drop the
+    fragment and click-tracking query params. The same article browsed via
+    a Google result (?srsltid=...), a campaign link (?utm_source=...), or
+    an in-page anchor (#ref-CR33) must count as one page, or variants
+    occupy ranking slots and exact-URL source matching silently fails.
+    """
+    if not url:
+        return url
+    parts = urlsplit(url)
+    kept = [
+        (k, v)
+        for k, v in parse_qsl(parts.query, keep_blank_values=True)
+        if k not in _TRACKING_PARAMS and not k.startswith("utm_")
+    ]
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(kept), "")
+    )
+
 
 def cosine(a, b):
     """Cosine similarity of two equal-length vectors; 0.0 if either is degenerate."""
@@ -74,13 +103,14 @@ def cosine(a, b):
 
 def dedupe_pages_by_url(pages):
     """
-    One entry per URL, keeping the most recent visit. Revisit nodes carry
-    near-identical embeddings; without dedupe they distort every rank.
+    One entry per normalized URL, keeping the most recent visit. Revisit
+    nodes and tracking-param/fragment variants carry near-identical
+    embeddings; without dedupe they distort every rank.
     `pages` = iterable of dicts with url/title/timestamp/embedding.
     """
     best = {}
     for p in pages:
-        url = p.get("url")
+        url = normalize_url(p.get("url"))
         if not url or not p.get("embedding"):
             continue
         ts = p.get("timestamp") or ""
@@ -98,8 +128,9 @@ def rank_pages(query_vec, pages):
 
 def blind_rank_of_source(ranked, source_url):
     """1-based rank of the known source in a ranked list, or None if absent."""
+    target = normalize_url(source_url)
     for i, (_, page) in enumerate(ranked, start=1):
-        if page["url"] == source_url:
+        if normalize_url(page["url"]) == target:
             return i
     return None
 
@@ -119,8 +150,9 @@ def resolve_source_embedding(source_url, source_embedding, pages):
     """
     if source_embedding:
         return source_embedding
+    target = normalize_url(source_url)
     for p in pages:
-        if p.get("url") == source_url:
+        if normalize_url(p.get("url")) == target:
             return p.get("embedding")
     return None
 
@@ -223,7 +255,7 @@ def build_evidence(annotation, pages, top_k):
             "rank": i,
             "cosine": round(score, 4),
             "divergence": round(1.0 - score, 4),
-            "is_known_source": page["url"] == source_url,
+            "is_known_source": normalize_url(page["url"]) == normalize_url(source_url),
             "title": page.get("title"),
             "url": page["url"],
         }
