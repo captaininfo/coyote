@@ -629,9 +629,20 @@ def bot_url():
 @app.route('/api/search/init', methods=['POST'])
 def api_search_init():
     """
-    Accept Purpose + Search Terms from the Flask-served new_tab and
-    best-effort forward to Core's /init_search to keep the pipeline consistent.
+    MVP: DISABLED. The Coyote Search box is hidden for the MVP because it minted
+    Purpose/SearchTerms even when the extension was paused or in a private window
+    (privacy-expectation violation — see Known Issue). This endpoint no longer
+    forwards to Core, so a direct POST (e.g. a bookmarked /static/new_tab.html)
+    records nothing. Restore post-MVP behind a shared pause/consent gate the UI
+    server can honor.
+
+    RESTORE: delete the two lines below (the log + the 410 return). The original
+    forwarding behavior is preserved intact underneath and becomes reachable again.
     """
+    logger.info("Search init received but DISABLED for MVP; nothing recorded.")
+    return jsonify({"ok": False, "disabled": True}), 410
+
+    # --- ORIGINAL BEHAVIOR (preserved for post-MVP restore; unreachable while disabled) ---
     try:
         payload = flask_request.get_json(silent=True) or {}
         data = {

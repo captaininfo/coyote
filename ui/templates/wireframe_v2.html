@@ -1305,7 +1305,11 @@
 </svg>      </div>
 
       <!-- NL Input Row -->
-      <div class="nl-row">
+      <!-- MVP: hidden. This natural-language → Cypher → custom-graph field is not currently
+           working; hidden for the demo to avoid explaining an intended-but-broken feature.
+           Elements kept in DOM so the existing submit/keydown listeners do not hit null.
+           Restore when NL→Cypher graph queries are reliable again. -->
+      <div class="nl-row" style="display:none">
         <textarea id="nl-input" class="nl-input" rows="1"
           placeholder="Ask Coyote something…"></textarea>
         <button class="nl-submit" id="nl-submit-btn">Submit</button>
@@ -1322,7 +1326,11 @@
   <!-- ===== Slide-Out Drawer ===== -->
   <nav class="drawer" id="drawer">
     <span class="drawer-section-label">Your World</span>
-    <div class="drawer-cta">
+    <!-- MVP: Coyote Search hidden. The search box minted Purpose/SearchTerms even when the
+         extension was paused or in a private window (privacy-expectation violation — see
+         Known Issue). Restore post-MVP behind a pause/consent gate. Element kept in DOM so
+         the existing listener does not hit null. -->
+    <div class="drawer-cta" style="display:none">
       <button class="cta-search" id="drawer-search-btn">Start Coyote Search</button>
     </div>
     <div class="drawer-nav-item active" data-target="sky-overview">Knowledge Graph</div>
@@ -1343,6 +1351,10 @@
   <script>
     // ============== Readiness-gated "Open Coyote Search" ==============
     async function openCoyoteSearch() {
+      // MVP: Coyote Search is hidden (privacy remediation — see the hidden drawer button
+      // above and the disabled /api/search/init endpoint). No-op so no remaining call path
+      // (e.g. the setup-modal Retry) can open the recording search page. Restore post-MVP.
+      return;
       try {
         var readiness = await getReadiness();
         if (readiness.ready) {
