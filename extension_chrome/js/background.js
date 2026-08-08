@@ -25,6 +25,67 @@ const SESSION_ID = (() => {
   }
 })();
 
+// ============ CAPTURE PAUSE ============
+// User-facing kill switch, toggled from the toolbar button. Persisted because
+// the MV3 service worker is torn down and restarted constantly.
+
+const PAUSE_KEY = 'coyote_paused';
+let isPaused = false;
+
+/**
+ * Reads the persisted pause flag into memory and syncs the toolbar button.
+ * Awaited by the message handler so a message that wakes the service worker
+ * can never be captured while the user has capture paused.
+ * @returns {Promise<void>}
+ */
+async function loadPauseState() {
+  try {
+    const stored = await extBrowser.storage.local.get(PAUSE_KEY);
+    isPaused = Boolean(stored && stored[PAUSE_KEY]);
+  } catch (error) {
+    console.error('Could not read pause state; defaulting to paused:', error);
+    isPaused = true; // fail closed: never capture on an unknown state
+  }
+  updatePauseIndicator();
+}
+
+/** Reflects the current pause state in the toolbar button. */
+function updatePauseIndicator() {
+  const title = isPaused
+    ? 'Coyote — capture PAUSED (click to resume)'
+    : 'Coyote — capturing (click to pause)';
+  try {
+    extBrowser.action.setTitle({ title });
+    extBrowser.action.setBadgeText({ text: isPaused ? 'OFF' : '' });
+    extBrowser.action.setBadgeBackgroundColor({ color: '#b3261e' });
+  } catch (error) {
+    console.debug('Could not update the toolbar indicator:', error);
+  }
+}
+
+const pauseReady = loadPauseState();
+
+// Keep memory in sync if the flag is changed elsewhere (e.g. a second window).
+extBrowser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && Object.prototype.hasOwnProperty.call(changes, PAUSE_KEY)) {
+    isPaused = Boolean(changes[PAUSE_KEY].newValue);
+    updatePauseIndicator();
+  }
+});
+
+/** Action (toolbar) click: toggle capture. */
+extBrowser.action.onClicked.addListener(async () => {
+  await pauseReady;
+  isPaused = !isPaused;
+  try {
+    await extBrowser.storage.local.set({ [PAUSE_KEY]: isPaused });
+  } catch (error) {
+    console.error('Could not persist pause state:', error);
+  }
+  updatePauseIndicator();
+  console.log(isPaused ? 'Coyote capture paused.' : 'Coyote capture resumed.');
+});
+
 /** Return a human-friendly browser name for diagnostics. */
 function getBrowserName() {
   const ua = (self.navigator && self.navigator.userAgent) || '';
@@ -53,11 +114,6 @@ async function isCoreAvailable() {
   return _coreUp;
 }
 
-/** Shorthand so existing callers keep working. */
-function generateSessionId() {
-  return SESSION_ID;
-}
-
 /** Persist status to storage.local (MV3 SW cannot use localStorage). */
 async function updateLocalStatus() {
   const statusData = {
@@ -71,13 +127,6 @@ async function updateLocalStatus() {
     await extBrowser.storage.local.set({ coyote_extension_status: statusData });
   } catch (e) {
     console.error('Could not write to storage.local:', e);
-  }
-}
-async function clearLocalStatus() {
-  try {
-    await extBrowser.storage.local.remove('coyote_extension_status');
-  } catch (e) {
-    console.error('Could not clear storage.local:', e);
   }
 }
 
@@ -127,14 +176,14 @@ async function sendDataToServer(data, endpoint) {
       if (extBrowser.notifications && extBrowser.notifications.create) {
         await extBrowser.notifications.create({
           type: 'basic',
-          iconUrl: extBrowser.runtime.getURL('icons/coyote-75.png'),
+          iconUrl: extBrowser.runtime.getURL('icons/coyote-128.png'),
           title: 'Coyote Extension Error',
           message: 'Failed to send data to the server. Please ensure the server is running.'
         });
       } else if (self.registration && self.registration.showNotification) {
         await self.registration.showNotification('Coyote Extension Error', {
           body: 'Failed to send data to the server. Please ensure the server is running.',
-          icon: extBrowser.runtime.getURL('icons/coyote-75.png')
+          icon: extBrowser.runtime.getURL('icons/coyote-128.png')
         });
       }
     } catch (e) {
@@ -142,54 +191,6 @@ async function sendDataToServer(data, endpoint) {
     }
   }
 }
-
-/** Build context menus (call after removeAll to avoid duplicates). */
-function createContextMenus() {
-  // In MV3, use "action" instead of "browser_action" as a context.
-  extBrowser.contextMenus.create({
-    id: "coyote-search",
-    title: "Coyote search",
-    contexts: ["page", "action"]
-  });
-  extBrowser.contextMenus.create({
-    id: "coyote-search-new-tab",
-    title: "Coyote search in new tab",
-    contexts: ["page", "action"]
-  });
-  extBrowser.contextMenus.create({
-    id: "connect-hypothesis",
-    title: "Connect to Hypothes.is",
-    contexts: ["action"]
-  });
-}
-
-/** Rebuild menus on install/startup (SW can restart many times). */
-async function rebuildContextMenus() {
-  try {
-    // Chrome 123+ returns a Promise for removeAll()
-    await extBrowser.contextMenus.removeAll();
-  } catch { /* ignore */ }
-  createContextMenus();
-}
-
-// Handle context menu clicks
-extBrowser.contextMenus.onClicked.addListener((info, tab) => {
-  switch (info.menuItemId) {
-    case "coyote-search":
-      if (tab && tab.id != null) {
-        extBrowser.tabs.update(tab.id, { url: extBrowser.runtime.getURL("html/new_tab.html") });
-      } else {
-        extBrowser.tabs.create({ url: extBrowser.runtime.getURL("html/new_tab.html") });
-      }
-      break;
-    case "coyote-search-new-tab":
-      extBrowser.tabs.create({ url: extBrowser.runtime.getURL("html/new_tab.html") });
-      break;
-    case "connect-hypothesis":
-      extBrowser.tabs.create({ url: extBrowser.runtime.getURL("html/connect_hypothesis.html") });
-      break;
-  }
-});
 
 /** Message bridge */
 extBrowser.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -200,6 +201,11 @@ extBrowser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     isInitialized = true;
   }
   (async () => {
+    await pauseReady;
+    if (isPaused) {
+      finish('Capture paused; data discarded');
+      return;
+    }
     switch (message.type) {
       case 'pageLoaded':
         await sendDataToServer(message.data, 'webpage_visit');
@@ -207,31 +213,11 @@ extBrowser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'hyperlinkClicked':
         await sendDataToServer(message.data, 'hyperlink_click');
         break;
-      case 'searchInitiated':
-        await sendDataToServer(message.data, 'init_search');
-        break;
-      case 'fetchHypothesisData':
-        try {
-          const r = await fetch('http://127.0.0.1:5000/fetch_hypothesis_data', { method: 'GET' });
-          console.log('Fetched Hypothesis data:', await r.json().catch(() => ({})));
-        } catch (e) {
-          console.error('Error fetching data:', e);
-        }
-        break;
-      case 'coyote-track':
-        // TODO: forward to Coyote Core API or buffer locally
-        // e.g., fetch('http://127.0.0.1:5000/track', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(message.payload) })
-        break;
     }
     finish('OK');
   })();
 
   return true; // async response
-});
-
-/** Action (toolbar) click: open new_tab page.  MV3 uses `action` API; keep fallback for Firefox. */
-(extBrowser.action || extBrowser.browserAction).onClicked.addListener(() => {
-  extBrowser.tabs.create({ url: extBrowser.runtime.getURL("html/new_tab.html") });
 });
 
 /** Heartbeat: use alarms instead of setInterval (SW may sleep). */
@@ -242,7 +228,7 @@ async function sendHeartbeat() {
   // Always write status to storage
   await updateLocalStatus();
 
-  // Ping UI and Core if UI server is reachable
+  // Ping the UI server if it is reachable
   if (await checkServerAvailability()) {
     const payload = {
       extensionId: SESSION_ID,
@@ -258,12 +244,6 @@ async function sendHeartbeat() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      // Best-effort to Core as well
-      fetch('http://127.0.0.1:5000/extension_heartbeat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      }).catch(() => {});
     } catch (error) {
       console.debug('Server heartbeat failed, but storage was updated');
     }
@@ -293,14 +273,12 @@ function initializeExtension() {
 }
 initializeExtension();
 
-// Maintain menus & schedule heartbeats across SW lifecycles.
+// Re-arm heartbeats across SW lifecycles.
 extBrowser.runtime.onInstalled.addListener(() => {
-  rebuildContextMenus();
   scheduleHeartbeat();
   sendHeartbeat();
 });
 extBrowser.runtime.onStartup.addListener(() => {
-  rebuildContextMenus();
   scheduleHeartbeat();
   sendHeartbeat();
 });

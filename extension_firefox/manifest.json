@@ -1,21 +1,29 @@
 {
     "manifest_version": 2,
-    "name": "Coyote V2",
+    "name": "Coyote Browser Extension",
     "version": "2.0.0",
-    "description": "A browser extension to enhance user search experience by tracking search purposes and interactions.",
+    "description": "Records the pages you visit and links you click, sending them only to your local Coyote app (127.0.0.1)—nothing leaves your device.",
+    "browser_specific_settings": {
+        "gecko": {
+            "id": "{427e88ec-ce90-4ca0-a573-c3c09dda4810}",
+            "strict_min_version": "140.0",
+            "data_collection_permissions": {
+                "required": ["browsingActivity", "websiteContent"],
+                "optional": ["technicalAndInteraction"]
+            }
+        }
+    },
     "icons": {
-        "16": "icons/coyote-50.png",
-        "48": "icons/coyote-75.png",
-        "128": "icons/coyote-100.png"
+        "16": "icons/coyote-16.png",
+        "32": "icons/coyote-32.png",
+        "48": "icons/coyote-48.png",
+        "128": "icons/coyote-128.png"
     },
     "permissions": [
-        "tabs",
-        "activeTab",
         "storage",
-        "webNavigation",
-        "contextMenus",
         "notifications",
-        "*://*/*"  
+        "http://127.0.0.1/*",
+        "http://localhost/*"
     ],
     "background": {
         "scripts": ["js/background.js"],
@@ -29,21 +37,10 @@
     ],
     "browser_action": {
         "default_icon": {
-            "16": "icons/icon16.png",
-            "48": "icons/icon48.png"
+            "16": "icons/coyote-16.png",
+            "32": "icons/coyote-32.png",
+            "48": "icons/coyote-48.png"
         },
-        "default_title": "Coyote V2"
-    },
-    "web_accessible_resources": [
-        "html/new_tab.html",
-        "html/connect_hypothesis.html",
-        "css/new_tab.css",
-        "js/new_tab.js",
-        "js/connect_hypothesis.js",
-        "images/*"
-    ],
-    "options_ui": {
-        "page": "html/options.html",
-        "chrome_style": true
+        "default_title": "Coyote — capturing (click to pause)"
     }
 }

@@ -19,6 +19,71 @@ const extBrowser = getBrowserNamespace();
 
 let isInitialized = false;
 
+// ============ CAPTURE PAUSE ============
+// User-facing kill switch, toggled from the toolbar button. Persisted so the
+// choice survives an event-page suspend/wake cycle.
+
+const PAUSE_KEY = 'coyote_paused';
+let isPaused = false;
+
+/**
+ * Reads the persisted pause flag into memory and syncs the toolbar button.
+ * Awaited by the message handler so a message arriving during a cold wake-up
+ * can never be captured while the user has capture paused.
+ * @returns {Promise<void>}
+ */
+async function loadPauseState() {
+    try {
+        const stored = await extBrowser.storage.local.get(PAUSE_KEY);
+        isPaused = Boolean(stored && stored[PAUSE_KEY]);
+    } catch (error) {
+        console.error('Could not read pause state; defaulting to paused:', error);
+        isPaused = true; // fail closed: never capture on an unknown state
+    }
+    updatePauseIndicator();
+}
+
+/**
+ * Reflects the current pause state in the toolbar button.
+ */
+function updatePauseIndicator() {
+    const title = isPaused
+        ? 'Coyote — capture PAUSED (click to resume)'
+        : 'Coyote — capturing (click to pause)';
+    try {
+        extBrowser.browserAction.setTitle({ title });
+        extBrowser.browserAction.setBadgeText({ text: isPaused ? 'OFF' : '' });
+        extBrowser.browserAction.setBadgeBackgroundColor({ color: '#b3261e' });
+    } catch (error) {
+        console.debug('Could not update the toolbar indicator:', error);
+    }
+}
+
+const pauseReady = loadPauseState();
+
+// Keep memory in sync if the flag is changed elsewhere (e.g. a second window).
+extBrowser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && Object.prototype.hasOwnProperty.call(changes, PAUSE_KEY)) {
+        isPaused = Boolean(changes[PAUSE_KEY].newValue);
+        updatePauseIndicator();
+    }
+});
+
+/**
+ * Handles clicks on the extension's browser action icon: toggles capture.
+ */
+extBrowser.browserAction.onClicked.addListener(async () => {
+    await pauseReady;
+    isPaused = !isPaused;
+    try {
+        await extBrowser.storage.local.set({ [PAUSE_KEY]: isPaused });
+    } catch (error) {
+        console.error('Could not persist pause state:', error);
+    }
+    updatePauseIndicator();
+    console.log(isPaused ? 'Coyote capture paused.' : 'Coyote capture resumed.');
+});
+
 /**
  * Sends data to the local server endpoint.
  * Provides user feedback if the data transmission fails.
@@ -58,7 +123,7 @@ async function sendDataToServer(data, endpoint) {
         // Provide user feedback if data transmission fails
         extBrowser.notifications.create({
             type: 'basic',
-            iconUrl: extBrowser.runtime.getURL('icons/coyote-75.png'),
+            iconUrl: extBrowser.runtime.getURL('icons/coyote-128.png'),
             title: 'Coyote Extension Error',
             message: 'Failed to send data to the server. Please ensure the server is running.',
         });
@@ -66,84 +131,33 @@ async function sendDataToServer(data, endpoint) {
 }
 
 /**
- * Creates context menu items for the extension.
- */
-function createContextMenus() {
-    extBrowser.contextMenus.create({
-        id: "coyote-search",
-        title: "Coyote search",
-        contexts: ["tab", "browser_action"],
-    });
-    extBrowser.contextMenus.create({
-        id: "coyote-search-new-tab",
-        title: "Coyote search in new tab",
-        contexts: ["tab", "browser_action"],
-    });
-    // Add Connect to Hypothes.is menu item
-    extBrowser.contextMenus.create({
-        id: "connect-hypothesis",
-        title: "Connect to Hypothes.is",
-        contexts: ["browser_action"],
-    });
-}
-
-// Handle clicks on context menu items
-extBrowser.contextMenus.onClicked.addListener((info, tab) => {
-    switch (info.menuItemId) {
-        case "coyote-search":
-            extBrowser.tabs.update(tab.id, { url: extBrowser.runtime.getURL("html/new_tab.html") });
-            break;
-        case "coyote-search-new-tab":
-            extBrowser.tabs.create({ url: extBrowser.runtime.getURL("html/new_tab.html") });
-            break;
-        case "connect-hypothesis":
-            // Open a new tab for Hypothes.is connection setup
-            extBrowser.tabs.create({ url: extBrowser.runtime.getURL("html/connect_hypothesis.html") });
-            break;
-    }
-});
-
-createContextMenus();
-
-/**
  * Listens for messages from other extension scripts and handles them accordingly.
  */
 extBrowser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (!isInitialized) {
-        sendResponse({ status: 'Extension initializing, data ignored' });
-        return true; // Indicates asynchronous response
-    }
+    (async () => {
+        if (!isInitialized) {
+            sendResponse({ status: 'Extension initializing, data ignored' });
+            return;
+        }
 
-    switch (message.type) {
-        case 'pageLoaded':
-            sendDataToServer(message.data, 'webpage_visit');
-            break;
-        case 'hyperlinkClicked':
-            sendDataToServer(message.data, 'hyperlink_click');
-            break;
-        case 'searchInitiated':
-            sendDataToServer(message.data, 'init_search');
-            break;
-        case 'fetchHypothesisData':
-            // Make a GET request to fetch data from Hypothes.is
-            fetch('http://127.0.0.1:5000/fetch_hypothesis_data', {
-                method: 'GET'
-            })
-            .then(response => response.json())
-            .then(data => console.log('Fetched Hypothesis data:', data))
-            .catch(error => console.error('Error fetching data:', error));
-            break;
-    }
-    sendResponse({ status: 'Data sent to server' });
+        await pauseReady;
+        if (isPaused) {
+            sendResponse({ status: 'Capture paused; data discarded' });
+            return;
+        }
+
+        switch (message.type) {
+            case 'pageLoaded':
+                sendDataToServer(message.data, 'webpage_visit');
+                break;
+            case 'hyperlinkClicked':
+                sendDataToServer(message.data, 'hyperlink_click');
+                break;
+        }
+        sendResponse({ status: 'Data sent to server' });
+    })();
+
     return true; // Indicates asynchronous response
-});
-
-/**
- * Handles clicks on the extension's browser action icon.
- * Opens the 'new_tab.html' page in a new browser tab.
- */
-extBrowser.browserAction.onClicked.addListener(() => {
-    extBrowser.tabs.create({ url: extBrowser.runtime.getURL("html/new_tab.html") });
 });
 
 /**
@@ -166,7 +180,6 @@ initializeExtension();
 const HEARTBEAT_INTERVAL = 5000;
 const LOCALSTORAGE_KEY = 'coyote_extension_status';
 let heartbeatTimer = null;
-let serverAvailable = false;
 
 
 // --- Stable per-runtime session ID ---
@@ -183,13 +196,6 @@ const SESSION_ID = (() => {
 })();
 
 /**
- * A wrapper so existing calls still work.
- */
-function generateSessionId() {
-  return SESSION_ID;
-}
-
-/**
  * Return a human-friendly browser name for diagnostics.
  */
 function getBrowserName() {
@@ -199,6 +205,24 @@ function getBrowserName() {
     if (ua.includes('Chrome')) return 'Chrome';
     if (ua.includes('Safari')) return 'Safari';
     return 'Unknown';
+}
+
+/**
+ * Whether the user has granted the optional `technicalAndInteraction` data
+ * collection permission. Firefox shows this as a toggle at install time and in
+ * about:addons; declining it must not break anything, so only the diagnostic
+ * FIELDS of the heartbeat are gated on it — never the request itself.
+ * @returns {Promise<boolean>}
+ */
+async function hasTechnicalDataConsent() {
+    try {
+        const granted = await extBrowser.permissions.getAll();
+        return Array.isArray(granted && granted.data_collection)
+            && granted.data_collection.includes('technicalAndInteraction');
+    } catch (error) {
+        console.debug('Could not read data-collection permissions; assuming declined:', error);
+        return false; // fail closed
+    }
 }
 
 /**
@@ -237,15 +261,13 @@ function clearLocalStatus() {
  */
 async function checkServerAvailability() {
     try {
-        const response = await fetch('http://127.0.0.1:8080/', {
+        await fetch('http://127.0.0.1:8080/', {
             method: 'GET',
             mode: 'no-cors', // Avoid CORS issues for simple check
             signal: AbortSignal.timeout(1000) // 1 second timeout
         });
-        serverAvailable = true;
         return true;
     } catch {
-        serverAvailable = false;
         return false;
     }
 }
@@ -283,27 +305,24 @@ async function sendHeartbeat() {
     // Send to UI server (for the System Status light)
     if (await checkServerAvailability()) {
         try {
+            // The status light keys off this POST arriving at all, so the bare
+            // body below is sufficient on its own.
             const payload = {
-                extensionId: SESSION_ID,
-                version: extBrowser.runtime.getManifest().version,
-                browserName: getBrowserName(),
                 timestamp: new Date().toISOString(),
-                status: 'active',
-                initialized: isInitialized
+                status: 'active'
             };
+            if (await hasTechnicalDataConsent()) {
+                payload.extensionId = SESSION_ID;
+                payload.version = extBrowser.runtime.getManifest().version;
+                payload.browserName = getBrowserName();
+                payload.initialized = isInitialized;
+            }
             // Hit the UI so the dashboard can see us
             await fetch('http://127.0.0.1:8080/extension_heartbeat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-
-            fetch('http://127.0.0.1:5000/extension_heartbeat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            }).catch(() => {});
-
         } catch (error) {
             console.debug('Server heartbeat failed, but localStorage updated');
         }
@@ -337,14 +356,6 @@ function stopHeartbeat() {
     }
     clearLocalStatus();
 }
-
-browser.runtime.onMessage.addListener((msg, sender) => {
-  if (msg && msg.type === 'coyote-track') {
-    // TODO: forward to Coyote Core API or buffer locally
-    // Example:
-    // fetch('http://localhost:5000/track', { method:'POST', body: JSON.stringify(msg.payload) })
-  }
-});
 
 // Start on load
 startHeartbeat();
