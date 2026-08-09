@@ -73,7 +73,8 @@ Everything that answers those questions came from *your* data, processed *on you
 **1. Confirm requirements** — Docker Desktop (or Engine + Compose) and Firefox are installed.
 
 **2. Download and unpack Coyote**
-Get [`coyote-download-0.4.0.zip`](https://github.com/captaininfo/coyote/releases/tag/v0.4.0-beta.1) from the Releases section of this repository. Unzip it somewhere you have write permissions (e.g., your Documents folder).
+From the [latest release](https://github.com/captaininfo/coyote/releases/latest), download the **Source code** archive — `.zip` (Windows) or `.tar.gz` (macOS/Linux) — and unpack it somewhere you have write permissions (e.g., your Documents folder). Open a terminal in the unpacked folder for the steps below.
+> *Prefer git?* `git clone https://github.com/captaininfo/coyote.git && cd coyote && git checkout v0.5.0`
 
 **3. Make launch files executable** *(Linux and macOS only)*
 ```bash
@@ -91,8 +92,10 @@ Double-click the launcher for your OS. The Coyote dashboard opens at `http://loc
 - *(Optional)* **Start LLM Service** — downloads and runs Ollama with `qwen2.5-coder:3b` locally.
 - *(Optional)* **Start All Services** — adds the GraphRAG Chat Assistant.
 
-**6. Load the Firefox extension**
-In Firefox, go to `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…** → select `manifest.json` from `coyote-download-0.4.0/extension/`. When connected, the UI's System Status tab will show **Browser Extension: Online**.
+**6. Install the Firefox extension**
+Download **`coyote_browser_extension-2.0.0.xpi`** from the [latest release](https://github.com/captaininfo/coyote/releases/latest). In Firefox, open `about:addons` → the gear icon ⚙ → **Install Add-on From File…** → choose the `.xpi` (or simply drag the `.xpi` onto the `about:addons` page). It's signed by Mozilla, so it installs permanently — no developer mode or temporary loading needed.
+
+Then **pin it to your toolbar** so the Pause button is reachable: click the Extensions puzzle-piece icon → the gear next to **Coyote Browser Extension** → **Pin to Toolbar**. When connected, the UI's System Status tab shows **Browser Extension: Online**.
 
 **7. Browse normally.** Coyote captures your activity in the background. Your graph begins building automatically.
 
@@ -170,7 +173,7 @@ Coyote was designed from the start around a specific premise: **your learning da
 
 **Where are the logs?**
 - Core: `compose/volumes/coyote/logs/coyote_server.log` (inside container: `/app/data/logs/`)
-- UI server: `coyote_0.4/data/logs/coyote_ui_*.log`
+- UI server: `data/logs/coyote_ui_*.log` (under the unpacked Coyote folder)
 
 **Duplicate Hypothes.is annotations**
 → Expected behavior. The event writer detects duplicates and marks them `"duplicate"` — they are skipped by NLP and do not enter the graph.
@@ -182,7 +185,7 @@ Coyote was designed from the start around a specific premise: **your learning da
 The UI's Start/Stop buttons are wrappers around standard `docker compose` commands. If you prefer the terminal or need to script deployments:
 
 ```bash
-cd coyote_0.4/compose
+cd compose        # run from inside the unpacked Coyote folder
 
 # Start Core (Neo4j + Coyote Core)
 COMPOSE_PROFILES=core docker compose -p coyote -f compose.yaml up -d --pull=missing

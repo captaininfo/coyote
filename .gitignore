@@ -34,6 +34,10 @@ images/**/*.tar
 *.zip
 *.tar
 *.tar.gz
+*.xpi
+
+# Extension build / signing artifacts (distributed as GitHub release assets, not committed)
+web-ext-artifacts/
 
 # Superseded / local-only docs
 README2025.md
