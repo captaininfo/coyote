@@ -36,7 +36,6 @@ Now, a month later, you can:
 - **Ask your local LLM:** *"What did I read about carbon markets? What am I probably missing based on what I've covered?"*
 - **Explore visually:** See a graph of how your understanding formed — pages connecting to the topics and real-world concepts they contained, and to the passages you annotated
 - **Query directly:** *"Show me everything I annotated in the last 30 days related to machine learning"*
-- **Check your rhythms:** When do you do your best exploratory learning? When do you go deep vs. skim?
 
 Everything that answers those questions came from *your* data, processed *on your machine*, by tools you can inspect.
 
@@ -45,11 +44,11 @@ Everything that answers those questions came from *your* data, processed *on you
 ## What's Included (v0.5 MVP)
 
 - **Browser extension (Firefox).** Captures the pages you visit and the links you click — staged automatically into the local pipeline. (Annotations arrive via the optional Hypothes.is importer; the in-browser search box that also captured a stated *purpose* + search terms is disabled this release — see "Not in this release" below.)
-- **Double-click UI.** A lightweight dashboard starts/stops all services, shows container health, and surfaces Insights, Visual Explorer, and Chat Assistant. No terminal required for normal use.
+- **Double-click UI.** A lightweight dashboard starts/stops all services, shows container health, and surfaces the Visual Explorer and Chat Assistant. No terminal required for normal use. (A Learning Insights panel is present as a "coming post-MVP" placeholder.)
 - **Local NLP pipeline (auditable).** Scraper → summarizer → topic extraction (KeyBERT) → named entity recognition → Wikidata concept linking. Every step is logged; failures are captured with status codes, not silent drops.
 - **Neo4j knowledge graph.** Your browsing data lands in a structured graph of `Webpage` and `Annotation` nodes with `Topic` and `WikiDataOntology` concepts attached. Fully inspectable via the Neo4j browser. (The schema also models `Purpose` and `SearchTerms` from the search box, dormant this release.)
 - **GraphRAG chat assistant.** Three-tier hybrid retrieval: parameterized Cypher for topic/term queries → LLM-generated analytical Cypher → time-window fallback. Schema-gated and read-only by design.
-- **Learning Insights.** Built-in panels for New Topics (first-seen concepts over time) and Learning Rhythms (hour-of-day activity patterns). (Sensemaking Rate — how often searches lead to annotations — returns with the search box.)
+- **Learning Insights (coming post-MVP).** A placeholder panel today; the planned analytics — topic frequency, sensemaking rate over time, and browsing rhythms by hour — land in a later release.
 - **Hypothes.is importer (optional).** One-click fetch from the UI; token stored encrypted locally.
 - **Wikidata ontology linking (optional).** Automatically attaches parent concepts (subclass of, instance of) with caching and depth limits.
 
@@ -73,7 +72,7 @@ Everything that answers those questions came from *your* data, processed *on you
 **1. Confirm requirements** — Docker Desktop (or Engine + Compose) and Firefox are installed.
 
 **2. Download and unpack Coyote**
-From the [latest release](https://github.com/captaininfo/coyote/releases/latest), download the **Source code** archive — `.zip` (Windows) or `.tar.gz` (macOS/Linux) — and unpack it somewhere you have write permissions (e.g., your Documents folder). Open a terminal in the unpacked folder for the steps below.
+From the [latest release](https://github.com/captaininfo/coyote/releases/latest), download the **Source code** archive — `.zip` (Windows) or `.tar.gz` (macOS/Linux) — and unpack it somewhere you have write permissions (e.g., your Documents folder).
 > *Prefer git?* `git clone https://github.com/captaininfo/coyote.git && cd coyote && git checkout v0.5.0`
 
 **3. Make launch files executable** *(Linux and macOS only)*
@@ -83,6 +82,8 @@ chmod +x 'launch/Start Coyote on Linux.desktop'
 chmod +x 'launch/Start Coyote on Mac.command'
 ```
 On Windows, no extra step is needed.
+
+> *Prefer not to touch a terminal?* On Linux, do this in your file manager: right-click each file → **Properties → Permissions → Allow executing file as program**. On macOS, if a launcher won't open, right-click it → **Open** to clear Gatekeeper (the `chmod` line above is the quickest fallback if it still won't run). This is the only place a command might be needed — everything after is buttons in the dashboard.
 
 **4. Launch the UI**
 Double-click the launcher for your OS. The Coyote dashboard opens at `http://localhost:8080`. On first run, it auto-generates `compose/.env` (chmod 600) with a strong Neo4j password and sensible defaults.
@@ -131,7 +132,7 @@ Understanding the pipeline helps you trust it — and debug it when something lo
 1. **Capture → Staging (SQLite).** Events from the extension and Hypothes.is land in `EventStaging`. A centralized `event_queue` in `coyote_state.db` drives all downstream processing.
 2. **Ingest → Event DB.** Core normalizes staged rows into typed tables: `Events`, `WebpageLoads`, `HyperlinkClicks`, `Annotations`, `Topics`, `Entities`, `EventTracking`.
 3. **NLP (auditable).** For each content page: scrape → summarize → topic extraction (KeyBERT) → named entity recognition → Wikidata mapping. Topic and entity scores are persisted per context; failures write a status row rather than silently dropping data.
-4. **Write → Neo4j.** A background manager reads `nlp_processed` events and writes the graph: `Purpose → SearchTerms`, `Webpage`, `Annotation`, `Topic`, ontology links. Marks `neo4j_done` when complete.
+4. **Write → Neo4j.** A background manager reads `nlp_processed` events and writes the graph: `Webpage`, `Annotation`, `Topic`, and ontology links (plus `Purpose`/`SearchTerms` when a search is recorded — dormant this release). Marks `neo4j_done` when complete.
 5. **Ontology linking (optional).** A separate manager attaches Wikidata parent concepts with caching and configurable depth limits.
 6. **Janitor.** Periodic cleanup removes terminal-state events and prunes stale cache entries.
 
@@ -139,15 +140,15 @@ Understanding the pipeline helps you trust it — and debug it when something lo
 
 ---
 
-## Learning Insights
+## Learning Insights (coming post-MVP)
 
-Three lightweight analytics panels are built into the UI:
+The dashboard reserves a **Learning Insights** panel; in this release it shows a "coming post-MVP" placeholder. The planned analytics — deliberately simple and transparent, meant to prompt reflection rather than score you — are:
 
-- **New Topics** — First-seen topics across Webpages and Annotations over a configurable time window. A map of your conceptual frontier.
-- **Sensemaking Rate** — Ratio of SERPs to Annotations within a time window following each search. A rough proxy for how often your exploration produces something worth capturing. *(Dormant this release — it depends on the search box, and returns with it.)*
-- **Learning Rhythms** — Hour-of-day activity patterns (active seconds where available, interaction counts otherwise). When do you actually learn?
+- **Topic frequency** — the concepts your reading returns to most.
+- **Sensemaking rate** — how often exploration produces something you annotate (returns with the search box).
+- **Browsing rhythms** — when in the day you do your deep vs. skim learning.
 
-These are MVP panels — deliberately simple, deliberately transparent. The goal is to prompt reflection, not to score you.
+The record already captures what these need; wiring up the panels is a good first contribution.
 
 ---
 
@@ -155,8 +156,8 @@ These are MVP panels — deliberately simple, deliberately transparent. The goal
 
 Coyote was designed from the start around a specific premise: **your learning data is yours, and it should never leave your machine without your explicit action.**
 
-- **Local-first.** All databases and logs live under `compose/volumes/` on your own disk (mounted to `/app/data` in containers). Nothing is transmitted externally.
-- **Encrypted secrets.** Your Neo4j password and Hypothes.is token are stored encrypted in Core's state database using a per-install Fernet key. They are never written to plaintext config files.
+- **Local-first.** All databases and logs live under `compose/volumes/` on your own disk (mounted to `/app/data` in containers). Your browsing history, embeddings, graph, and the local model that answers your questions never leave your machine. The only outbound calls are the disclosed WikiData concept lookups (individual extracted terms — never your pages, URLs, or history) and, if you connect Hypothes.is, its own servers.
+- **Encrypted secrets.** Credentials you enter in the UI — a custom Neo4j login and your Hypothes.is token — are Fernet-encrypted (per-install key) in Core's state database. One honest exception: the Neo4j password is *also* written to `compose/.env` in plaintext, because Docker Compose reads it to start the database. That file is created `chmod 600` (owner-only) and is git-ignored, so it stays on your machine and out of version control — but, unlike the state-DB secrets, it is not encrypted at rest.
 - **Read-only LLM queries.** Natural language → Cypher translation is enforced as read-only via a blocklist validator. The LLM cannot modify your graph.
 - **Schema-gated queries.** Cypher execution is gated against the live graph schema — the LLM cannot hallucinate node types or relationships that don't exist.
 - **Your control.** You can stop all services from the UI at any time, inspect or delete your local databases directly, or browse in a separate Firefox profile to keep specific activity out of Coyote.
@@ -223,7 +224,7 @@ make sync-shared                  # sync nl2cypher.py before docker builds
 
 **Good first contributions:**
 - Additional connectors (YouTube transcripts, Obsidian vault importer, Zotero)
-- Richer Insights panels
+- Build out the Learning Insights panels (currently a post-MVP stub)
 - Improved topic and entity thresholds and weighting
 - Simplified onboarding documentation and setup experience
 
@@ -237,7 +238,7 @@ Questions, ideas, and PRs are welcome.
 
 Near-term priorities:
 - UI "Update images" action and image pinning
-- Richer Insight panels with configurable time windows
+- Ship the Learning Insights panels (topic frequency, sensemaking rate, browsing rhythms) with configurable time windows
 - More connectors: YouTube transcripts, Obsidian, Zotero
 - Richer semantic-search surfacing in Explore and Chat (the embeddings pipeline and Tier-0 vector retrieval already ship; deeper context expansion is next)
 - Simplified onboarding for non-Docker users
