@@ -740,10 +740,10 @@
             </div>
 
             <div class="setup-step">
-              <h3>3. Run Coyote's Browser Extension</h3>
-              <p>Coyote's extension is not an official Firefox extension, so you must run it as a temporary add-on.</p>
-              <p>Open a new Firefox tab and navigate to: <a href="about:debugging#/runtime/this-firefox" target="_blank">about:debugging#/runtime/this-firefox</a></p>
-              <p>Click "Load Temporary Add-on..." and select <code style="color:var(--accent-warm);">coyote_0.4/extension/manifest.json</code></p>
+              <h3>3. Install Coyote's Browser Extension</h3>
+              <p>Coyote's extension is signed by Mozilla, so it installs permanently. Download <code style="color:var(--accent-warm);">coyote_browser_extension-2.0.0.xpi</code> from the <a href="https://github.com/captaininfo/coyote/releases/latest" target="_blank" rel="noopener">latest release</a>.</p>
+              <p>In Firefox, open <a href="about:addons" target="_blank">about:addons</a> &rarr; the gear icon &#9881; &rarr; "Install Add-on From File&hellip;" and choose the <code>.xpi</code> (or drag the file onto the about:addons page).</p>
+              <p>Then pin it to your toolbar so the Pause button is reachable: the Extensions puzzle-piece icon &rarr; the gear next to Coyote &rarr; "Pin to Toolbar."</p>
               <p><strong>Coyote is now ready to record your web-browsing data.</strong></p>
             </div>
 
@@ -762,8 +762,8 @@
             </div>
 
             <div class="setup-step">
-              <h3>6. Start a search to record your data</h3>
-              <p>Navigate to the Knowledge Graph tab, then use the natural language input to begin exploring your data.</p>
+              <h3>6. Browse normally &mdash; Coyote records automatically</h3>
+              <p>With Core Services running and the extension installed, Coyote captures the pages you visit and links you click in the background. There's nothing to start. Open the Knowledge Graph tab and use the built-in queries to explore what it has captured.</p>
               <button class="btn-status btn-status-primary" onclick="window.switchSection('browse')">Open Knowledge Graph</button>
             </div>
           </div>
@@ -1434,7 +1434,7 @@
         '    <p style="margin-top:12px;">What to do next:</p>' +
         '    <ol style="margin-left:18px;">' +
         '      <li>Open the <em>System Status</em> tab and click <strong>Start Core</strong> (or <strong>Start Everything</strong>).</li>' +
-        '      <li>If the extension shows "Offline", follow the <em>Setup Guide</em> to load the temporary add-on in Firefox.</li>' +
+        '      <li>If the extension shows "Offline", follow the <em>Setup Guide</em> to install the signed Coyote extension in Firefox.</li>' +
         '    </ol>' +
         '    <p style="font-size:12px;color:#555;margin-top:12px;">Tip: After starting services, the indicators should turn green within ~10s.</p>' +
         '  </div>' +

@@ -83,14 +83,14 @@
     </p>
 
     <h2 id="setup-prereqs">Prerequisites</h2>
-    <p>For Coyote to track and analyze your learning data, the **Browser Extension** and the **Core services** (Coyote Core + Neo4j) must be running. To use the chat assistant and NL→Cypher, also start the **Agent/Bot** and **Ollama/LLM** services.</p>
+    <p>For Coyote to track and analyze your learning data, the <strong>Browser Extension</strong> and the <strong>Core services</strong> (Coyote Core + Neo4j) must be running. To use the chat assistant, also start the <strong>Agent/Bot</strong> and <strong>Ollama/LLM</strong> services.</p>
     <div class="grid">
       <div>
         <h4>Software</h4>
         <ul>
           <li>Docker Desktop/Engine + Compose v2</li>
           <li>Python 3.10+</li>
-          <li>Firefox (temporary add‑on flow in 0.4)</li>
+          <li>Firefox 140+ (installs the Mozilla-signed extension)</li>
         </ul>
         <h4>Hardware</h4>
         <ul>
@@ -130,12 +130,12 @@
     <hr>
 
     <h2 id="setup-extension">Coyote Browser Extension (Firefox)</h2>
-    <p>The extension records search intent, SERP visits, pages read, and connects them to annotations. In 0.4 you’ll load it as a temporary add‑on.</p>
+    <p>The extension records the pages you visit and the links you click. It is signed by Mozilla, so it installs permanently (annotations are imported separately via Hypothes.is; see below).</p>
     <ol class="step">
-      <li>Open a new tab and go to <code>about:debugging#/runtime/this-firefox</code>.</li>
-      <li>Click <strong>Load Temporary Add‑on…</strong>.</li>
-      <li>Select <code>Coyote_0.4/extension/manifest.json</code>.</li>
-      <li>Keep this tab open while testing; temporary add‑ons unload when Firefox restarts.</li>
+      <li>Download <code>coyote_browser_extension-2.0.0.xpi</code> from the <a href="https://github.com/captaininfo/coyote/releases/latest" target="_blank" rel="noopener">latest release</a>.</li>
+      <li>Open a new tab and go to <code>about:addons</code>.</li>
+      <li>Click the gear icon &#9881; &rarr; <strong>Install Add-on From File&hellip;</strong> and choose the <code>.xpi</code> (or drag the file onto the page).</li>
+      <li>Pin it to your toolbar (Extensions puzzle-piece icon &rarr; gear next to Coyote &rarr; <strong>Pin to Toolbar</strong>) so the Pause button is reachable.</li>
     </ol>
     <div class="callout ok small"><strong>Success check:</strong> On <em>System Status</em>, “Browser Extension” turns <em>Online/green</em> within a few seconds (heartbeats drive the status).</div>
     <hr>
@@ -160,7 +160,7 @@
     <div class="callout small">
       The default model in Compose is <code>qwen2.5-coder:3b</code> (configurable). You can also start only the LLM via <strong>Start LLM Service</strong>.
     </div>
-    <div class="callout ok small"><strong>Success check:</strong> “Open Coyote Search” works without the LLM, but the Chat Assistant and NL→Cypher require the LLM and Agent.</div>
+    <div class="callout ok small"><strong>Success check:</strong> Core Services capture your browsing without the LLM; the Chat Assistant requires the LLM and Agent services.</div>
     <hr>
 
     <h2 id="setup-hypothesis">Hypothes.is Integration</h2>
@@ -213,8 +213,8 @@
 
     <h4>Browser Extension shows “Offline”</h4>
     <ul>
-      <li>Reopen <code>about:debugging#/runtime/this-firefox</code> and ensure the temporary add‑on is loaded.</li>
-      <li>Reload the add‑on after a Firefox restart (temporary add‑ons do not persist). The indicator should turn green within ~10s.</li>
+      <li>Open <code>about:addons</code> and confirm <strong>Coyote Browser Extension</strong> is installed and enabled.</li>
+      <li>Make sure Core Services are running (System Status), then reload a normal web page. The indicator should turn green within ~10s.</li>
     </ul>
 
     <hr>

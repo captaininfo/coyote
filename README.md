@@ -62,7 +62,7 @@ Everything that answers those questions came from *your* data, processed *on you
 | | |
 |---|---|
 | **OS** | Windows 10/11 (WSL2), macOS 12+, Linux x86_64/aarch64 |
-| **Software** | [Docker Desktop](https://docs.docker.com/desktop/) (Windows/macOS) or [Docker Engine](https://docs.docker.com/engine/install/) + [Compose v2 plugin](https://docs.docker.com/compose/install/linux/) (Linux); [Firefox](https://www.firefox.com/en-US/) |
+| **Software** | [Docker Desktop](https://docs.docker.com/desktop/) (Windows/macOS) or [Docker Engine](https://docs.docker.com/engine/install/) + [Compose v2 plugin](https://docs.docker.com/compose/install/linux/) (Linux); [Firefox](https://www.firefox.com/en-US/) 140+; Python 3.10+ (runs the launcher + dashboard on your machine) |
 | **RAM** | 8 GB for Core services; 16 GB recommended if running LLM + Agent |
 | **Disk** | ~8–15 GB for images + Neo4j data + optional model cache |
 
