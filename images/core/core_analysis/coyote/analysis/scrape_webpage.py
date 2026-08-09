@@ -196,7 +196,15 @@ def should_exempt_url(url: str) -> bool:
     - The local configure page
     - Click-tracking redirects and link shorteners (see _REDIRECT_HOST_PATTERNS)
     """
-    # Original Google SERP check
+    # Original Google SERP check.
+    #
+    # KNOWN ISSUE — this is NOT a Google dependency, and Coyote does not expect or
+    # prefer that users search with Google. Coyote works with any search engine; this
+    # only skips scraping a Google *results* page (navigation, not content worth
+    # embedding). Non-Google results pages are not yet recognized here, so they get
+    # scraped as ordinary pages — a data-quality wrinkle, not a requirement to use
+    # Google. Post-MVP: replace with a shared is_serp_url() predicate covering the
+    # major engines (see CLAUDE.md Known Issue: "isSERP detector is Google-only").
     if "google.com/search" in url:
         return True
 

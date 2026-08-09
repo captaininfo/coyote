@@ -67,8 +67,21 @@ document.addEventListener("DOMContentLoaded", () => {
     // fire-and-forget server submission
     await postInit(purpose, terms);
 
-    // navigate
-    window.location.href = `https://www.google.com/search?q=${encodeURIComponent(terms)}`;
+    // NAVIGATION DISABLED FOR MVP (privacy + de-Google).
+    //
+    // This previously redirected the typed query to Google Search. It was removed
+    // because (a) the whole Coyote Search box is disabled for the MVP — it recorded
+    // Purpose/SearchTerms even when capture was paused or in a private window (see
+    // the CLAUDE.md search-box Known Issue), and its server endpoint now returns 410
+    // (ui/coyote_ui_server.py :: api_search_init); and (b) hardcoding one search
+    // engine is a poor fit for a privacy-first tool.
+    //
+    // RESTORE (post-MVP, behind the Option-4' pause/consent gate): re-enable the
+    // endpoint (see its RESTORE note), unhide the button in wireframe_v2.html, then
+    // reinstate navigation here as a USER-CONFIGURABLE engine — a registry of
+    // name->URL-template plus a custom-template field for self-hosted engines
+    // (e.g. SearXNG) — never a hardcoded redirect. The capture logic above
+    // (saveRecent + postInit) is preserved intact for that restoration.
   }
 
   // wire up
