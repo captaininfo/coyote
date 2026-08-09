@@ -3,7 +3,7 @@
 
 ---
 
-Every search you run, every page you read, every passage you highlight — these are evidence of your mind at work. Most of that evidence evaporates: your browser history is noise, your bookmarks are a graveyard, and your notes capture conclusions but not the messy, productive trail that led there.
+Every page you read, every link you follow, every passage you highlight — these are evidence of your mind at work. Most of that evidence evaporates: your browser history is noise, your bookmarks are a graveyard, and your notes capture conclusions but not the messy, productive trail that led there.
 
 **Coyote captures that trail. Locally. Privately. And makes it queryable.**
 
@@ -29,7 +29,7 @@ Coyote is for people who **learn seriously** and want something to show for it:
 
 ## What It Looks Like in Practice
 
-Imagine you spent three weeks going deep on a topic — climate policy, a new programming language, a medical diagnosis, a historical event. You ran searches, followed links, read papers, highlighted passages. Coyote was building a graph of that work the whole time: which topics clustered together, what you returned to repeatedly, how your searches evolved, which pages produced annotations versus dead ends.
+Imagine you spent three weeks going deep on a topic — climate policy, a new programming language, a medical diagnosis, a historical event. You followed links, read papers, highlighted passages. Coyote was building a graph of that work the whole time: which topics clustered together, what you returned to repeatedly, which pages produced annotations versus dead ends.
 
 Now, a month later, you can:
 
@@ -118,7 +118,7 @@ All ports are configurable via `compose/.env`.
 
 ## Explore & Chat
 
-**Explore Visually** — Run canned queries or type natural language; Coyote translates to Cypher, enforces read-only access and schema gating, and renders your graph. A good starting point for orienting yourself to the shape of your own learning.
+**Explore Visually** — Run built-in queries over your graph; Coyote enforces read-only access and schema gating and renders the results visually. A good starting point for orienting yourself to the shape of your own learning. (For free-form natural-language questions, use the Chat Assistant below.)
 
 **Chat Assistant (GraphRAG)** — Ask questions about what you've read and learned. The agent uses a three-tier hybrid retrieval strategy: parameterized Cypher for topic and term matching, LLM-generated Cypher for analytical questions, and a time-window fallback so you always get something. The same schema guards used in Explore apply here.
 
