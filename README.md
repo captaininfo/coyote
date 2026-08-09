@@ -7,9 +7,9 @@ Every search you run, every page you read, every passage you highlight — these
 
 **Coyote captures that trail. Locally. Privately. And makes it queryable.**
 
-It runs quietly in the background while you browse, logs the structure of your learning (your intentions, searches, the pages you read, the passages you annotated), and builds a semantic knowledge graph on your own machine. No cloud. No algorithm deciding what matters. Then it lets you explore, visualize, and converse with that graph using a local LLM — so the AI answering your questions is drawing on *your* learning history, not someone else's data.
+It runs quietly in the background while you browse, logs the structure of your learning (the pages you read, the links you followed, the passages you annotated), and builds a semantic knowledge graph on your own machine. No cloud. No algorithm deciding what matters. Then it lets you explore, visualize, and converse with that graph using a local LLM — so the AI answering your questions is drawing on *your* learning history, not someone else's data.
 
-Coyote treats your mind like a classic **black box flight recorder**: study the inputs (what you sought, read, and clicked) and the outputs (what you highlighted and wrote), use transparent NLP to map both to real-world concepts, and surface the patterns you couldn't see while you were in the middle of learning. The result is a private, auditable *learning ledger* — something you can inspect, query, and build on over time.
+Coyote treats your mind like a classic **black box flight recorder**: study the inputs (what you read and clicked) and the outputs (what you highlighted and wrote), use transparent NLP to map both to real-world concepts, and surface the patterns you couldn't see while you were in the middle of learning. The result is a private, auditable *learning ledger* — something you can inspect, query, and build on over time.
 
 > *In Neal Stephenson's* The Diamond Age*, a girl is raised partly by an AI book called the Young Lady's Illustrated Primer — a personal tutor that knows her, challenges her at the edge of her understanding, and grows with her. Coyote won't write you stories. But the idea of a personal AI that understands your learning trajectory, built from your data, owned entirely by you? That's the north star.*
 
@@ -34,7 +34,7 @@ Imagine you spent three weeks going deep on a topic — climate policy, a new pr
 Now, a month later, you can:
 
 - **Ask your local LLM:** *"What did I read about carbon markets? What am I probably missing based on what I've covered?"*
-- **Explore visually:** See a graph of how your understanding formed — purposes connecting to searches, searches to pages, pages to the topics and real-world concepts they contained
+- **Explore visually:** See a graph of how your understanding formed — pages connecting to the topics and real-world concepts they contained, and to the passages you annotated
 - **Query directly:** *"Show me everything I annotated in the last 30 days related to machine learning"*
 - **Check your rhythms:** When do you do your best exploratory learning? When do you go deep vs. skim?
 
@@ -42,16 +42,18 @@ Everything that answers those questions came from *your* data, processed *on you
 
 ---
 
-## What's Included (v0.4 MVP)
+## What's Included (v0.5 MVP)
 
-- **Browser extension (Firefox).** Captures purpose + search terms, SERPs, visited pages, hyperlink clicks, and annotations — staged automatically into the local pipeline.
+- **Browser extension (Firefox).** Captures the pages you visit and the links you click — staged automatically into the local pipeline. (Annotations arrive via the optional Hypothes.is importer; the in-browser search box that also captured a stated *purpose* + search terms is disabled this release — see "Not in this release" below.)
 - **Double-click UI.** A lightweight dashboard starts/stops all services, shows container health, and surfaces Insights, Visual Explorer, and Chat Assistant. No terminal required for normal use.
-- **Local NLP pipeline (auditable).** Scraper → summarizer → topic extraction (BERTopic with TF-IDF fallback) → named entity recognition → Wikidata concept linking. Every step is logged; failures are captured with status codes, not silent drops.
-- **Neo4j knowledge graph.** Your browsing data lands in a structured graph: `Purpose → SearchTerms → Webpage → Annotation`, with `Topic` and `WikiDataOntology` nodes attached. Fully inspectable via the Neo4j browser.
+- **Local NLP pipeline (auditable).** Scraper → summarizer → topic extraction (KeyBERT) → named entity recognition → Wikidata concept linking. Every step is logged; failures are captured with status codes, not silent drops.
+- **Neo4j knowledge graph.** Your browsing data lands in a structured graph of `Webpage` and `Annotation` nodes with `Topic` and `WikiDataOntology` concepts attached. Fully inspectable via the Neo4j browser. (The schema also models `Purpose` and `SearchTerms` from the search box, dormant this release.)
 - **GraphRAG chat assistant.** Three-tier hybrid retrieval: parameterized Cypher for topic/term queries → LLM-generated analytical Cypher → time-window fallback. Schema-gated and read-only by design.
-- **Learning Insights.** Built-in panels for New Topics (first-seen concepts over time), Sensemaking Rate (how often searches lead to annotations), and Learning Rhythms (hour-of-day activity patterns).
+- **Learning Insights.** Built-in panels for New Topics (first-seen concepts over time) and Learning Rhythms (hour-of-day activity patterns). (Sensemaking Rate — how often searches lead to annotations — returns with the search box.)
 - **Hypothes.is importer (optional).** One-click fetch from the UI; token stored encrypted locally.
 - **Wikidata ontology linking (optional).** Automatically attaches parent concepts (subclass of, instance of) with caching and depth limits.
+
+**Not in this release.** The in-browser **search box** — which captured a stated *purpose* alongside your search terms — is disabled while it's reworked behind a proper pause/consent gate (it previously recorded even when capture was paused or in a private window). So this release captures the pages you visit, the links you click, and your Hypothes.is annotations; `Purpose`/`SearchTerms` nodes and the Sensemaking-Rate insight return once the search box does.
 
 ---
 
@@ -86,7 +88,7 @@ Double-click the launcher for your OS. The Coyote dashboard opens at `http://loc
 
 **5. Start services** (UI → System Status)
 - **Start Core Services** — Neo4j + Coyote Core. This is all you need to begin capturing browsing data.
-- *(Optional)* **Start LLM Service** — downloads and runs Ollama with `mistral:7b-instruct` locally.
+- *(Optional)* **Start LLM Service** — downloads and runs Ollama with `qwen2.5-coder:3b` locally.
 - *(Optional)* **Start All Services** — adds the GraphRAG Chat Assistant.
 
 **6. Load the Firefox extension**
@@ -125,7 +127,7 @@ Understanding the pipeline helps you trust it — and debug it when something lo
 
 1. **Capture → Staging (SQLite).** Events from the extension and Hypothes.is land in `EventStaging`. A centralized `event_queue` in `coyote_state.db` drives all downstream processing.
 2. **Ingest → Event DB.** Core normalizes staged rows into typed tables: `Events`, `WebpageLoads`, `HyperlinkClicks`, `Annotations`, `Topics`, `Entities`, `EventTracking`.
-3. **NLP (auditable).** For each content page: scrape → summarize → topic extraction (BERTopic + TF-IDF) → named entity recognition → Wikidata mapping. TF-IDF scores are persisted per context; failures write a status row rather than silently dropping data.
+3. **NLP (auditable).** For each content page: scrape → summarize → topic extraction (KeyBERT) → named entity recognition → Wikidata mapping. Topic and entity scores are persisted per context; failures write a status row rather than silently dropping data.
 4. **Write → Neo4j.** A background manager reads `nlp_processed` events and writes the graph: `Purpose → SearchTerms`, `Webpage`, `Annotation`, `Topic`, ontology links. Marks `neo4j_done` when complete.
 5. **Ontology linking (optional).** A separate manager attaches Wikidata parent concepts with caching and configurable depth limits.
 6. **Janitor.** Periodic cleanup removes terminal-state events and prunes stale cache entries.
@@ -139,7 +141,7 @@ Understanding the pipeline helps you trust it — and debug it when something lo
 Three lightweight analytics panels are built into the UI:
 
 - **New Topics** — First-seen topics across Webpages and Annotations over a configurable time window. A map of your conceptual frontier.
-- **Sensemaking Rate** — Ratio of SERPs to Annotations within a time window following each search. A rough proxy for how often your exploration produces something worth capturing.
+- **Sensemaking Rate** — Ratio of SERPs to Annotations within a time window following each search. A rough proxy for how often your exploration produces something worth capturing. *(Dormant this release — it depends on the search box, and returns with it.)*
 - **Learning Rhythms** — Hour-of-day activity patterns (active seconds where available, interaction counts otherwise). When do you actually learn?
 
 These are MVP panels — deliberately simple, deliberately transparent. The goal is to prompt reflection, not to score you.
@@ -168,7 +170,7 @@ Coyote was designed from the start around a specific premise: **your learning da
 
 **Where are the logs?**
 - Core: `compose/volumes/coyote/logs/coyote_server.log` (inside container: `/app/data/logs/`)
-- UI server: `Coyote_0.4/data/logs/coyote_ui_*.log`
+- UI server: `coyote_0.4/data/logs/coyote_ui_*.log`
 
 **Duplicate Hypothes.is annotations**
 → Expected behavior. The event writer detects duplicates and marks them `"duplicate"` — they are skipped by NLP and do not enter the graph.
@@ -180,7 +182,7 @@ Coyote was designed from the start around a specific premise: **your learning da
 The UI's Start/Stop buttons are wrappers around standard `docker compose` commands. If you prefer the terminal or need to script deployments:
 
 ```bash
-cd Coyote_0.4/compose
+cd coyote_0.4/compose
 
 # Start Core (Neo4j + Coyote Core)
 COMPOSE_PROFILES=core docker compose -p coyote -f compose.yaml up -d --pull=missing
@@ -204,7 +206,7 @@ Coyote is GPL-v3 licensed and designed to be hackable. The codebase is intention
 **Run from source:**
 ```bash
 # Core API + background managers
-python -m coyote.coyote_server    # see images/core/requirements.txt
+python -m coyote.coyote_server    # see images/core/core_analysis/requirements.txt
 
 # UI server
 python ui/coyote_ui_server.py     # serves dashboard at :8080
@@ -212,7 +214,7 @@ python ui/coyote_ui_server.py     # serves dashboard at :8080
 
 **Run tests:**
 ```bash
-python -m pytest tests/ -v        # 43 tests (security, sync checks)
+python -m pytest tests/ -v        # 300+ tests (security, NLP, WikiData breakers, embeddings, source inference)
 make sync-shared                  # sync nl2cypher.py before docker builds
 ```
 
@@ -234,12 +236,12 @@ Near-term priorities:
 - UI "Update images" action and image pinning
 - Richer Insight panels with configurable time windows
 - More connectors: YouTube transcripts, Obsidian, Zotero
-- Vector search activation (indexes exist; embeddings pipeline not yet wired)
+- Richer semantic-search surfacing in Explore and Chat (the embeddings pipeline and Tier-0 vector retrieval already ship; deeper context expansion is next)
 - Simplified onboarding for non-Docker users
 
 Longer horizon:
 - Local Wikidata embedding index (ChromaDB/Qdrant) as a privacy-preserving alternative to external API lookups for concept mapping
-- Configurable privacy profiles (exclude domains, pause capture, etc.)
+- Configurable privacy profiles (per-domain exclusion, capture rules) — a Pause toggle already ships in the extension
 - Export formats for interoperability with other PKM tools
 
 ---
