@@ -40,6 +40,16 @@ LOG_DIR = current_dir.parent / 'data' / 'logs'
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / f'coyote_ui_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
 
+# Force UTF-8 on the console streams. Windows consoles default to a legacy
+# code page (e.g. cp1252) that cannot encode non-ASCII log characters like
+# "✓" or "…", which otherwise raise UnicodeEncodeError in the StreamHandler
+# and dump a logging-error traceback as the first thing a user sees.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # Python 3.7+
+    except (AttributeError, ValueError):
+        pass
+
 # Configure logging with both file and console output
 # Use COYOTE_LOG_LEVEL env var (default: INFO) to control verbosity
 _log_level_name = os.environ.get("COYOTE_LOG_LEVEL", "INFO").upper()
@@ -48,7 +58,7 @@ logging.basicConfig(
     level=_log_level,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(LOG_FILE),
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
         logging.StreamHandler()
     ]
 )
@@ -115,6 +125,63 @@ HEARTBEAT_TIMEOUT = 15  # seconds
 DOCKER_BIN = os.environ.get("DOCKER_BIN", "docker")
 PROJECT_NAME = "coyote"  # Fixed project name
 
+
+class DockerUnavailable(Exception):
+    """Raised when the docker CLI is missing or the engine isn't reachable.
+
+    Carries a plain-English `user_message` safe to return straight to the UI,
+    so endpoints surface actionable guidance instead of a raw
+    ``[WinError 2]``/``Cannot connect to the Docker daemon`` traceback.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.user_message = message
+
+
+DOCKER_MISSING_MSG = (
+    "Docker not found. Install Docker Desktop (Windows/macOS) or Docker "
+    "Engine + Compose (Linux) and make sure it's running, then try again."
+)
+DOCKER_ENGINE_DOWN_MSG = (
+    "Docker is installed but the engine isn't running. Start Docker Desktop "
+    "(on Windows, also confirm virtualization / WSL2 is enabled), wait for it "
+    "to report \"running\", then try again."
+)
+
+
+def _looks_like_engine_down(text) -> bool:
+    """True if `text` (a command's stderr) reads like an unreachable daemon."""
+    if not text or not isinstance(text, str):
+        return False
+    t = text.lower()
+    return (
+        "cannot connect to the docker daemon" in t
+        or "error during connect" in t
+        or "the docker daemon is not running" in t
+        or "is the docker daemon running" in t
+    )
+
+
+def _docker_run(cmd, **kwargs):
+    """Run a docker CLI command, translating two environment failures into a
+    :class:`DockerUnavailable` carrying a user-facing message:
+
+      * missing binary (``FileNotFoundError`` / Windows ``WinError 2``)
+      * engine not running (non-zero exit whose stderr names the daemon)
+
+    Every other outcome (including ordinary non-zero exits) is returned as the
+    normal ``subprocess.run`` result. All raw ``DOCKER_BIN`` calls route through
+    here so the translation lives in exactly one place.
+    """
+    try:
+        result = subprocess.run(cmd, **kwargs)
+    except FileNotFoundError:
+        raise DockerUnavailable(DOCKER_MISSING_MSG)
+    if getattr(result, "returncode", 0) != 0 and _looks_like_engine_down(getattr(result, "stderr", None)):
+        raise DockerUnavailable(DOCKER_ENGINE_DOWN_MSG)
+    return result
+
 # Compose location (ui/ -> ../compose)
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_COMPOSE_DIR = BASE_DIR / "compose"
@@ -163,7 +230,7 @@ def run_compose_command(args, timeout=120):
     logger.debug(f"Working directory: {COMPOSE_DIR}")
     
     try:
-        result = subprocess.run(
+        result = _docker_run(
             cmd,
             cwd=str(COMPOSE_DIR),
             capture_output=True,
@@ -171,14 +238,18 @@ def run_compose_command(args, timeout=120):
             timeout=timeout,
             env=get_compose_env()
         )
-        
+
         logger.debug(f"Command exit code: {result.returncode}")
         if result.stdout:
             logger.debug(f"stdout: {result.stdout}")
         if result.stderr:
             logger.debug(f"stderr: {result.stderr}")
-            
+
         return result
+    except DockerUnavailable as e:
+        # Expected environment failure — log a one-liner, not a scary traceback.
+        logger.warning(f"Docker unavailable: {e.user_message}")
+        raise
     except subprocess.TimeoutExpired as e:
         logger.error(f"Command timed out after {timeout} seconds")
         raise
@@ -309,6 +380,8 @@ def start_core():
             'returncode': result.returncode
         })
         
+    except DockerUnavailable as e:
+        return jsonify({'status': 'error', 'message': e.user_message}), 503
     except Exception as e:
         logger.error(f"Error starting core: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -344,6 +417,8 @@ def start_all():
             'returncode': result.returncode
         })
         
+    except DockerUnavailable as e:
+        return jsonify({'status': 'error', 'message': e.user_message}), 503
     except Exception as e:
         logger.error(f"Error starting all: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -370,6 +445,8 @@ def start_llm():
             'stderr': result.stderr,
             'returncode': result.returncode
         })
+    except DockerUnavailable as e:
+        return jsonify({'status': 'error', 'message': e.user_message}), 503
     except Exception as e:
         logger.error(f"Error starting LLM: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -401,26 +478,26 @@ def stop_services():
             
             # Get container names for force cleanup
             list_cmd = [DOCKER_BIN, 'ps', '-a', '--filter', f'label=com.docker.compose.project={PROJECT_NAME}', '--format', '{{.Names}}']
-            list_result = subprocess.run(list_cmd, capture_output=True, text=True, timeout=5)
-            
+            list_result = _docker_run(list_cmd, capture_output=True, text=True, timeout=5)
+
             if list_result.returncode == 0 and list_result.stdout:
                 containers = list_result.stdout.strip().split('\n')
                 logger.info(f"Force stopping containers: {containers}")
-                
+
                 for container in containers:
                     if container:
                         # Force stop with short timeout
                         stop_cmd = [DOCKER_BIN, 'stop', '-t', '5', container]
-                        stop_result = subprocess.run(stop_cmd, capture_output=True, text=True, timeout=10)
-                        
+                        stop_result = _docker_run(stop_cmd, capture_output=True, text=True, timeout=10)
+
                         if stop_result.returncode != 0:
                             # If stop fails, kill it
                             kill_cmd = [DOCKER_BIN, 'kill', container]
-                            subprocess.run(kill_cmd, capture_output=True, text=True, timeout=5)
-                        
+                            _docker_run(kill_cmd, capture_output=True, text=True, timeout=5)
+
                         # Force remove
                         rm_cmd = [DOCKER_BIN, 'rm', '-f', container]
-                        subprocess.run(rm_cmd, capture_output=True, text=True, timeout=5)
+                        _docker_run(rm_cmd, capture_output=True, text=True, timeout=5)
                         
                         logger.info(f"Force stopped container: {container}")
                 
@@ -442,6 +519,8 @@ def stop_services():
             'stderr': result.stderr
         })
         
+    except DockerUnavailable as e:
+        return jsonify({'status': 'error', 'message': e.user_message}), 503
     except Exception as e:
         logger.error(f"Error stopping services: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -453,7 +532,7 @@ def force_cleanup():
     try:
         # Get all containers with the project name
         list_cmd = [DOCKER_BIN, 'ps', '-a', '--filter', f'label=com.docker.compose.project={PROJECT_NAME}', '--format', '{{.Names}}']
-        list_result = subprocess.run(list_cmd, capture_output=True, text=True)
+        list_result = _docker_run(list_cmd, capture_output=True, text=True)
         
         if list_result.returncode == 0 and list_result.stdout:
             containers = list_result.stdout.strip().split('\n')
@@ -463,11 +542,11 @@ def force_cleanup():
                 if container:
                     # Force stop
                     stop_cmd = [DOCKER_BIN, 'stop', '-t', '5', container]
-                    subprocess.run(stop_cmd, capture_output=True, text=True)
-                    
+                    _docker_run(stop_cmd, capture_output=True, text=True)
+
                     # Force remove
                     rm_cmd = [DOCKER_BIN, 'rm', '-f', container]
-                    subprocess.run(rm_cmd, capture_output=True, text=True)
+                    _docker_run(rm_cmd, capture_output=True, text=True)
                     
                     logger.info(f"Cleaned up container: {container}")
             
@@ -482,6 +561,8 @@ def force_cleanup():
                 'message': 'No containers to clean up'
             })
             
+    except DockerUnavailable as e:
+        return jsonify({'status': 'error', 'message': e.user_message}), 503
     except Exception as e:
         logger.error(f"Error in force cleanup: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -490,21 +571,22 @@ def force_cleanup():
 def get_status():
     """Get status of all containers"""
     try:
-        # Check if Docker is available
-        docker_check = subprocess.run(
+        # Check if Docker is available (missing binary -> DockerUnavailable below).
+        # Engine-down is caught later when `compose ps` reaches the daemon.
+        docker_check = _docker_run(
             [DOCKER_BIN, '--version'],
             capture_output=True,
             text=True,
             timeout=5
         )
-        
+
         if docker_check.returncode != 0:
             logger.warning("Docker not available")
             return jsonify({
                 'status': 'error',
-                'message': 'Docker not available',
+                'message': DOCKER_MISSING_MSG,
                 'services': []
-            })
+            }), 503
         
         if not COMPOSE_FILE.exists():
             logger.warning(f"Compose file not found: {COMPOSE_FILE}")
@@ -552,6 +634,12 @@ def get_status():
                 'message': 'No services running'
             })
             
+    except DockerUnavailable as e:
+        return jsonify({
+            'status': 'error',
+            'message': e.user_message,
+            'services': []
+        }), 503
     except Exception as e:
         logger.error(f"Error getting status: {e}", exc_info=True)
         return jsonify({
@@ -1330,7 +1418,16 @@ USER QUESTION: {nl_question}
 
 
 if __name__ == '__main__':
-    print(f"Starting Coyote UI Server on http://localhost:8080")
+    # Local-first by default: bind to loopback so the dashboard is not exposed
+    # on the LAN (it is unauthenticated and orchestrates Docker). Windows
+    # Firewall does not filter loopback, so localhost access still works and no
+    # firewall prompt appears. Power users can opt into a LAN bind via
+    # COYOTE_UI_HOST. Debug (Werkzeug interactive debugger + reloader) is OFF
+    # unless FLASK_DEBUG=1 — never ship an interactive debugger on by default.
+    _ui_host = os.environ.get("COYOTE_UI_HOST", "127.0.0.1")
+    _ui_port = int(os.environ.get("COYOTE_UI_PORT", "8080"))
+    _ui_debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    print(f"Starting Coyote UI Server on http://localhost:{_ui_port}")
     print(f"Compose directory: {COMPOSE_DIR}")
     print(f"Compose file: {COMPOSE_FILE}")
     print(f"Project name: {PROJECT_NAME}")
@@ -1351,4 +1448,4 @@ if __name__ == '__main__':
     except Exception as e:
         logger.debug("Pre-startup container check skipped: %s", e)
     
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(host=_ui_host, port=_ui_port, debug=_ui_debug)

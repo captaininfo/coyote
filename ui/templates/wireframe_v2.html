@@ -1891,7 +1891,11 @@
           if (data.status === 'success') {
             updateStatusDisplay(data.services || []);
           } else {
+            // e.g. Docker not installed / engine not running — surface the
+            // server's plain-English reason instead of silently showing
+            // everything Offline with no explanation.
             updateStatusDisplay([]);
+            if (data.message) setSummary('Error: ' + data.message);
           }
         }).catch(function () {
           updateStatusDisplay([]);
