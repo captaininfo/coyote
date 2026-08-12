@@ -109,3 +109,56 @@ def test_status_endpoint_reports_engine_down_friendly():
     assert payload["status"] == "error"
     assert payload["message"] == m.DOCKER_ENGINE_DOWN_MSG
     assert payload["services"] == []
+
+
+# --- compose-failure stderr surfacing (gate fix #2) -------------------------
+
+# A realistic multi-line compose/BuildKit failure: the decisive error is at
+# the END, mirroring the Mac install-gate transcript.
+_MULTILINE_STDERR = (
+    "#10 ERROR: No matching distribution found for torch==2.5.1+cpu\n"
+    "------\n"
+    'failed to solve: process "/bin/sh -c pip install ..." did not '
+    "complete successfully: exit code: 1\n"
+)
+
+
+def test_compose_error_tail_returns_end_of_text():
+    r = mock.Mock(stderr=("x" * 1000) + "TAIL_MARKER", stdout="")
+    out = m._compose_error_tail(r, max_len=50)
+    assert out.endswith("TAIL_MARKER")
+    assert out.startswith("...")
+    assert len(out) <= 53  # "..." + max_len
+
+
+def test_compose_error_tail_falls_back_to_stdout():
+    r = mock.Mock(stderr="", stdout="some stdout detail")
+    assert m._compose_error_tail(r) == "some stdout detail"
+
+
+def _post_start_core(result_mock):
+    """POST /api/start-core with subprocess/compose env/COMPOSE_FILE stubbed."""
+    fake_compose_file = mock.MagicMock()
+    fake_compose_file.exists.return_value = True
+    with mock.patch.object(m.subprocess, "run", return_value=result_mock), \
+         mock.patch.object(m, "get_compose_env", return_value={}), \
+         mock.patch.object(m, "COMPOSE_FILE", new=fake_compose_file):
+        client = m.app.test_client()
+        return client.post("/api/start-core")
+
+
+def test_start_core_failure_puts_stderr_tail_in_message():
+    result = mock.Mock(returncode=1, stdout="", stderr=_MULTILINE_STDERR)
+    payload = _post_start_core(result).get_json()
+    assert payload["status"] == "error"
+    # The decisive tail line is surfaced to the dashboard...
+    assert "failed to solve" in payload["message"]
+    # ...and newlines survive (rendered by the #status-summary pre-wrap rule).
+    assert "\n" in payload["message"]
+
+
+def test_start_core_success_message_unchanged():
+    result = mock.Mock(returncode=0, stdout="ok", stderr="")
+    payload = _post_start_core(result).get_json()
+    assert payload["status"] == "success"
+    assert payload["message"] == "Core services starting"

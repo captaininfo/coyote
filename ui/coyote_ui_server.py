@@ -222,6 +222,23 @@ def get_compose_env():
     env['COMPOSE_FILE'] = str(COMPOSE_FILE)
     return env
 
+def _compose_error_tail(result, max_len=800):
+    """Return a trimmed tail of a failed compose result's output for display.
+
+    The decisive BuildKit/compose error (``failed to solve ... exit code: 1``
+    and the pip/network cause above it) sits at the END of stderr, so we tail
+    rather than head. Falls back to stdout when stderr is empty. The full
+    output is logged separately; this is only the short version surfaced in
+    the dashboard status message.
+    """
+    text = (getattr(result, "stderr", "") or "").strip()
+    if not text:
+        text = (getattr(result, "stdout", "") or "").strip()
+    if len(text) > max_len:
+        text = "..." + text[-max_len:]
+    return text
+
+
 def run_compose_command(args, timeout=120):
     """Run a docker compose command with consistent settings"""
     cmd = [DOCKER_BIN, 'compose', '-p', PROJECT_NAME, '-f', str(COMPOSE_FILE)] + args
@@ -244,6 +261,17 @@ def run_compose_command(args, timeout=120):
             logger.debug(f"stdout: {result.stdout}")
         if result.stderr:
             logger.debug(f"stderr: {result.stderr}")
+
+        # On failure, surface the reason at ERROR so it lands in the log file
+        # (the DEBUG lines above are invisible at the default INFO level, which
+        # is why a failed "Start" previously logged only a return code).
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            if detail:
+                logger.error(
+                    "Compose command failed (exit %s): %s",
+                    result.returncode, detail,
+                )
 
         return result
     except DockerUnavailable as e:
@@ -370,7 +398,9 @@ def start_core():
             message = 'Core services starting'
         else:
             logger.error(f"Failed to start core services. Return code: {result.returncode}")
-            message = 'Failed to start core services'
+            tail = _compose_error_tail(result)
+            message = f'Failed to start core services.\n{tail}' if tail else \
+                'Failed to start core services — see the Coyote UI log for details.'
         
         return jsonify({
             'status': 'success' if result.returncode == 0 else 'error',
@@ -407,7 +437,9 @@ def start_all():
             message = 'All services starting'
         else:
             logger.error(f"Failed to start all services. Return code: {result.returncode}")
-            message = f'Failed to start: {result.stderr[:200] if result.stderr else "Unknown error"}'
+            tail = _compose_error_tail(result)
+            message = f'Failed to start all services.\n{tail}' if tail else \
+                'Failed to start all services — see the Coyote UI log for details.'
         
         return jsonify({
             'status': 'success' if result.returncode == 0 else 'error',
@@ -438,9 +470,17 @@ def start_llm():
             timeout=240
         )
 
+        if result.returncode == 0:
+            message = 'LLM services starting'
+        else:
+            logger.error(f"Failed to start LLM services. Return code: {result.returncode}")
+            tail = _compose_error_tail(result)
+            message = f'LLM services failed to start.\n{tail}' if tail else \
+                'LLM services failed to start — see the Coyote UI log for details.'
+
         return jsonify({
             'status': 'success' if result.returncode == 0 else 'error',
-            'message': 'LLM services starting' if result.returncode == 0 else 'Failed to start LLM services',
+            'message': message,
             'stdout': result.stdout,
             'stderr': result.stderr,
             'returncode': result.returncode

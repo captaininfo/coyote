@@ -504,6 +504,10 @@
       color: var(--text-secondary);
       margin-top: 0.8rem;
       min-height: 1.2em;
+      /* Preserve newlines in multi-line error tails (set via textContent);
+         break long unbroken tokens (paths/URLs) instead of overflowing. */
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
 
     /* ===== sky-chat ===== */
