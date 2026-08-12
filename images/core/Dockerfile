@@ -20,8 +20,21 @@ RUN apt-get update && apt-get install -y \
 # labels inside requirements.txt alongside a standard index is
 # unpredictable. Two-step install is deterministic.
 # Do NOT add torch to requirements.txt.
-RUN pip install --no-cache-dir torch==2.5.1+cpu \
-      --extra-index-url https://download.pytorch.org/whl/cpu
+#
+# Architecture-aware: the `+cpu` local-version wheels are published only for
+# x86_64 / Windows. On arm64 (e.g. Apple Silicon, where Docker builds a
+# linux/arm64 image) that wheel does not exist, so we install the plain
+# manylinux aarch64 wheel — which is already CPU-only. TARGETARCH is a
+# BuildKit built-in build arg ("arm64" / "amd64"); the amd64 branch is
+# identical to the previous single-line install.
+ARG TARGETARCH
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+      pip install --no-cache-dir torch==2.5.1 \
+        --extra-index-url https://download.pytorch.org/whl/cpu; \
+    else \
+      pip install --no-cache-dir torch==2.5.1+cpu \
+        --extra-index-url https://download.pytorch.org/whl/cpu; \
+    fi
 
 # Copy requirements first for better layer caching
 COPY requirements.txt /app/requirements.txt
