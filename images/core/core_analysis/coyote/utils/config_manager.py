@@ -370,6 +370,60 @@ def connect_to_neo4j() -> Driver:
         raise
 
 
+def seed_neo4j_credentials_from_env() -> None:
+    """
+    First-run bootstrap for Neo4j credentials.
+
+    Core reads its Neo4j credentials exclusively from the encrypted `user_settings`
+    store (see `connect_to_neo4j`). On a fresh install nothing has written them yet,
+    so every background manager fails to connect and the graph stays empty. The UI
+    auto-generates a strong password into `compose/.env`, which Docker Compose passes
+    to this container as NEO4J_URI / NEO4J_USERNAME / NEO4J_PASSWORD. This function
+    seeds `user_settings` from those environment variables so the zero-config path
+    works without a manual Configure step.
+
+    Idempotent and first-run-only: if a Neo4j password is already stored (e.g. the
+    user set custom credentials via the Configure page), this does nothing and never
+    overwrites them.
+    """
+    try:
+        if get_setting('neo4j_password') is not None:
+            logger.debug(
+                "Neo4j credentials already present in user_settings; skipping environment seed."
+            )
+            return
+
+        uri = os.environ.get('NEO4J_URI')
+        username = os.environ.get('NEO4J_USERNAME')
+        password = os.environ.get('NEO4J_PASSWORD')
+        if not uri or not username or not password:
+            logger.warning(
+                "Neo4j credentials not seeded from environment: one or more of "
+                "NEO4J_URI / NEO4J_USERNAME / NEO4J_PASSWORD is missing. Core will be "
+                "unable to connect until credentials are set via the Configure page."
+            )
+            return
+
+        store_setting('neo4j_uri', uri, encrypt=False)
+        store_setting('neo4j_username', username, encrypt=False)
+        store_setting('neo4j_password', password, encrypt=True)
+
+        # store_setting swallows its own exceptions (logs, does not raise), so confirm
+        # the write actually landed before reporting success.
+        if get_setting('neo4j_password') is None:
+            logger.error(
+                "Neo4j credential seed FAILED: password not present after write "
+                "(see store_setting errors above). Core will be unable to connect."
+            )
+            return
+
+        logger.info(
+            "Seeded Neo4j credentials into user_settings from environment (first-run bootstrap)."
+        )
+    except Exception as e:
+        logger.error(f"Error seeding Neo4j credentials from environment: {e}", exc_info=True)
+
+
 def close_db_connections(exception: Optional[Exception] = None) -> None:
     """
     Close all database connections at the end of the request.

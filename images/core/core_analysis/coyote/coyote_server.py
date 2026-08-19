@@ -26,9 +26,10 @@ from coyote.neo4j_integration.connect_to_ontology import CoyoteOntologyStateMana
 from coyote.utils.database_cleanup_manager import CoyoteDatabaseCleanupManager
 from coyote.utils.event_status import insert_event_status
 from coyote.utils.config_manager import (
-    store_setting, 
+    store_setting,
+    seed_neo4j_credentials_from_env,
     load_setting,
-    load_secret_key, 
+    load_secret_key,
     load_credentials,
     get_event_data_db_connection
 )
@@ -537,6 +538,11 @@ def main() -> None:
     """
     # Initialize databases
     initialize_databases()
+
+    # First-run bootstrap: seed Neo4j credentials from the environment (compose/.env)
+    # into user_settings so the background managers can connect on a fresh install.
+    # Idempotent: does nothing if credentials were already set via the Configure page.
+    seed_neo4j_credentials_from_env()
 
     # Start the CoyoteNLPStateManager in a background thread
     state_manager_thread = Thread(target=start_coyote_nlp_state_manager, daemon=True)
