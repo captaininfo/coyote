@@ -30,7 +30,7 @@ if not defined PY_EXE (
 if not defined PY_EXE (
   echo Error: No usable Python found.
   echo  - Turn OFF the "python.exe" alias: Settings > Apps > App execution aliases
-  echo  - Or install Python 3.11 with "Install launcher" and "Add python.exe to PATH"
+  echo  - Or install Python 3.10 or newer with "Install launcher" and "Add python.exe to PATH"
   pause
   exit /b 1
 )

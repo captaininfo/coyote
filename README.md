@@ -61,37 +61,48 @@ Everything that answers those questions came from *your* data, processed *on you
 | | |
 |---|---|
 | **OS** | Windows 10/11 (WSL2), macOS 12+, Linux x86_64/aarch64 |
-| **Software** | [Docker Desktop](https://docs.docker.com/desktop/) (Windows/macOS) or [Docker Engine](https://docs.docker.com/engine/install/) + [Compose v2 plugin](https://docs.docker.com/compose/install/linux/) (Linux); [Firefox](https://www.firefox.com/en-US/) 140+; Python 3.10+ (runs the launcher + dashboard on your machine) |
-| **RAM** | 8 GB for Core services; 16 GB recommended if running LLM + Agent |
+| **Software** | **Docker** — [Docker Desktop](https://docs.docker.com/desktop/) (Windows/macOS; on a Mac, choose the installer matching your chip — **Apple Silicon** or **Intel**) or [Docker Engine](https://docs.docker.com/engine/install/) + [Compose v2 plugin](https://docs.docker.com/compose/install/linux/) (Linux). On older macOS the latest Docker Desktop may refuse to open — install a version matching your macOS from [Docker's release notes](https://docs.docker.com/desktop/release-notes/). **·** [**Firefox**](https://www.firefox.com/en-US/) 140+. **·** [**Python**](https://www.python.org/downloads/) 3.10+ (runs the launcher + dashboard on your machine). |
+| **RAM** | 8 GB runs Core capture; **16 GB recommended** for the Chat Assistant (LLM + Agent) — 8 GB is not enough to run Chat well |
 | **Disk** | ~8–15 GB for images + Neo4j data + optional model cache |
 
 ---
 
 ## Quick Start (No Terminal Required)
 
-**1. Confirm requirements** — Docker Desktop (or Engine + Compose) and Firefox are installed.
+**1. Confirm requirements** — Docker (Desktop, or Engine + Compose on Linux), Python 3.10+, and Firefox 140+ are installed. On a Mac, check your chip first (Apple menu → **About This Mac**) so you download the matching Docker installer, and verify Python with `python3 --version`.
 
 **2. Download and unpack Coyote**
 From the [latest release](https://github.com/captaininfo/coyote/releases/latest), download the **Source code** archive — `.zip` (Windows) or `.tar.gz` (macOS/Linux) — and unpack it somewhere you have write permissions (e.g., your Documents folder).
 > *Prefer git?* `git clone https://github.com/captaininfo/coyote.git && cd coyote && git checkout v0.5.0`
 
-**3. Make launch files executable** *(Linux and macOS only)*
+**3. Make launch files executable** *(Linux and macOS only — skip on Windows)*
+Open a terminal **in the unpacked `coyote` folder** (the one containing the `launch/` folder), then run:
 ```bash
-chmod +x 'launch/start_coyote_mac_linux.sh'
-chmod +x 'launch/Start Coyote on Linux.desktop'
-chmod +x 'launch/Start Coyote on Mac.command'
+chmod +x launch/start_coyote_mac_linux.sh
+chmod +x launch/Start-Coyote-on-Linux.desktop
+chmod +x launch/Start-Coyote-on-Mac.command
 ```
-On Windows, no extra step is needed.
 
-> *Prefer not to touch a terminal?* On Linux, do this in your file manager: right-click each file → **Properties → Permissions → Allow executing file as program**. On macOS, if a launcher won't open, right-click it → **Open** to clear Gatekeeper (the `chmod` line above is the quickest fallback if it still won't run). This is the only place a command might be needed — everything after is buttons in the dashboard.
+> *Prefer not to touch a terminal?* On Linux, do this in your file manager: right-click each file → **Properties → Permissions → Allow executing file as program**. On macOS the terminal `chmod` above is the reliable path (double-clicking these files just opens them in a text editor). This is the only place a command might be needed — everything after is buttons in the dashboard.
 
 **4. Launch the UI**
-Double-click the launcher for your OS. The Coyote dashboard opens at `http://localhost:8080`. On first run, it auto-generates `compose/.env` (chmod 600) with a strong Neo4j password and sensible defaults.
+Double-click the launcher **for your OS** (inside the `launch/` folder):
+- **macOS** → **`Start-Coyote-on-Mac.command`** *(not `start_coyote_mac_linux.sh` — that's the underlying script; double-clicking it just opens a text editor)*
+- **Linux** → **`Start-Coyote-on-Linux.desktop`**
+- **Windows** → **`Start-Coyote.cmd`**
+
+**macOS first launch:** Gatekeeper blocks it with an *"unidentified developer"* message that only offers **OK** — that's a dead end. Instead of double-clicking, **right-click the file → Open**, then click **Open** in the dialog that follows (this one *does* have an Open button). macOS remembers the choice, so later double-clicks work.
+
+The dashboard opens at `http://localhost:8080` in your **default** browser. If that's Safari or Chrome and you see *"can't connect to the server,"* the dashboard may still be starting — wait a few seconds and refresh, or open `http://localhost:8080` in **Firefox** (the browser the extension runs in). On first run the launcher auto-generates `compose/.env` (chmod 600) with a strong Neo4j password and sensible defaults.
 
 **5. Start services** (UI → System Status)
 - **Start Core Services** — Neo4j + Coyote Core. This is all you need to begin capturing browsing data.
 - *(Optional)* **Start LLM Service** — downloads and runs Ollama with `qwen2.5-coder:3b` locally.
-- *(Optional)* **Start All Services** — adds the GraphRAG Chat Assistant.
+- *(Optional)* **Start All Services** — adds Coyote's GraphRAG **Chat Assistant**. *To use Chat you need this, not just Start Core.*
+
+> **The first build is slow and quiet — this is normal.** The very first **Start Core Services** downloads and builds the container images, commonly **10–30 minutes** depending on your machine and connection. During that time the status may sit at **"0 of N services running" with little visible progress. Don't quit or assume it has hung** — subsequent starts are fast.
+>
+> *(macOS)* You may get a pop-up asking to install the **Command Line Tools** for `git`. Click **Cancel** — it's Docker capturing build metadata and isn't required.
 
 **6. Install the Firefox extension**
 Download **`coyote_browser_extension-2.0.0.xpi`** from the [latest release](https://github.com/captaininfo/coyote/releases/latest). In Firefox, open `about:addons` → the gear icon ⚙ → **Install Add-on From File…** → choose the `.xpi` (or simply drag the `.xpi` onto the `about:addons` page). It's signed by Mozilla, so it installs permanently — no developer mode or temporary loading needed.
@@ -168,6 +179,9 @@ Coyote was designed from the start around a specific premise: **your learning da
 
 **Neo4j "Unauthorized" error**
 → UI → Configure → Test Connection → Save → Restart Services
+
+**Docker won't open on older macOS** — *"You can't use this version of Docker.app with this version of macOS."*
+→ The latest Docker Desktop supports only recent macOS releases. Install an older version matching your macOS from [Docker's release notes](https://docs.docker.com/desktop/release-notes/) (each release lists Intel and Apple-Silicon downloads).
 
 **Containers won't stop**
 → UI → Force Cleanup (falls back to `docker stop / kill / rm`)
