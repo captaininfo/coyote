@@ -1903,7 +1903,19 @@
           }
         }).catch(function () {
           updateStatusDisplay([]);
-        });
+        }).then(function () {
+          // Overlay the background LLM model-pull progress on the summary line
+          // while it's active, so the (multi-minute, 2 GB) first-run download
+          // isn't silent. Defers to the normal "N of M services" line otherwise.
+          return fetch('/api/llm/pull-status').then(function (r) { return r.json(); }).then(function (p) {
+            if (!p) return;
+            if (p.status === 'pulling') {
+              setSummary('Downloading language model… ' + (p.detail || 'starting'));
+            } else if (p.status === 'error' && p.detail) {
+              setSummary('Language model download failed: ' + p.detail);
+            }
+          });
+        }).catch(function () {});
       }
 
       function checkExtensionStatus() {
