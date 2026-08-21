@@ -287,6 +287,13 @@ def chat_input():
             except Exception as e:
                 logger.exception("chat pipeline error")
                 output = f"Something went wrong running your request: {e}"
+                # Render the error on THIS turn. display_chat() runs before
+                # chat_input() on each rerun, and the LLM/GraphRAG modes render
+                # only via the streaming callback — so an immediate failure (e.g.
+                # model-not-found 404, which never streams a token) would leave an
+                # empty assistant bubble, the error surfacing only on the next
+                # interaction via history replay.
+                st.error(output)
 
             st.session_state.setdefault("user_input", []).append(user_input)
             st.session_state.setdefault("generated", []).append(output)
