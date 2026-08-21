@@ -491,6 +491,10 @@ def _model_ensure_tick():
     """One ensure iteration (extracted so tests can drive it without the loop)."""
     model = _parse_env_file().get("LLM", "qwen2.5-coder:3b")   # re-read each tick
     base = _ollama_base()
+    with _model_pull_lock:
+        # Keep the model reported by /api/llm/pull-status current — it is a forensic
+        # field (which model the daemon is ensuring); nothing else writes it.
+        _model_pull_state["model"] = model
     if not (model and _ollama_reachable(base)):
         return  # llm profile not up yet (or no model configured) — nothing to do
     if _model_present(base, model):

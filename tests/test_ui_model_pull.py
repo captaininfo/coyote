@@ -177,6 +177,15 @@ def test_tick_unreachable_does_not_pull(monkeypatch):
     assert fake.post_called is False
 
 
+def test_tick_reports_current_model_even_when_unreachable(monkeypatch):
+    # The pull-status "model" field is a forensic field — it should reflect the
+    # configured model each tick regardless of whether Ollama is up.
+    monkeypatch.setattr(cus, "_parse_env_file", _env("some-model:7b"))
+    monkeypatch.setattr(cus, "requests", FakeRequests(reachable=False))
+    cus._model_ensure_tick()
+    assert cus._model_pull_state["model"] == "some-model:7b"
+
+
 # --- backoff, keyed to the failed model --------------------------------------
 
 def test_tick_backoff_suppresses_recent_same_model_failure(monkeypatch):
