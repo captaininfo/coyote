@@ -1,11 +1,14 @@
-"""Host-side tests for the UI server's background Ollama model-pull.
+"""Host-side tests for the UI server's background Ollama model-ensure daemon.
 
-Fresh installs have no LLM model in Ollama (compose pulls the image, not the
-model), so Chat failed with "model not found". `_trigger_model_pull_async` +
-`_pull_model_worker` pull it in the background. These tests cover the properties
-that matter: single-flight (double-click safe), idempotent (skip when present),
-and a tolerant NDJSON parser (status lines without byte counts, blanks, errors).
-No Docker/Ollama required — `requests` is faked.
+A fresh install has no LLM model in Ollama (compose pulls the image, not the
+model), so Chat failed with "model not found". The `_model_ensure_*` daemon keeps
+the configured model present whenever Ollama is up — decoupled from `compose up`
+returning 0 (an earlier trigger-on-`up` design silently failed when the cold
+first build outran its timeout). These tests cover the properties that matter:
+idempotence (skip when present), recovery (a prior error flips to done once the
+model appears — e.g. via a manual `ollama pull`), a tolerant NDJSON parser, and a
+retry backoff keyed to the specific model that failed. No Docker/Ollama required
+— `requests` is faked.
 """
 
 import sys
@@ -52,12 +55,15 @@ class _Stream:
 
 
 class FakeRequests:
-    def __init__(self, tags=None, post_lines=None):
+    def __init__(self, reachable=True, tags=None, post_lines=None):
+        self.reachable = reachable
         self.tags = tags or []
         self.post_lines = post_lines or []
         self.post_called = False
 
     def get(self, url, timeout=None):
+        if not self.reachable:
+            raise ConnectionError("connection refused")
         if url.endswith("/api/version"):
             return _Resp({})
         if url.endswith("/api/tags"):
@@ -71,36 +77,29 @@ class FakeRequests:
 
 @pytest.fixture(autouse=True)
 def _reset_state():
-    cus._set_pull_state("idle", "")
+    def _clean():
+        with cus._model_pull_lock:
+            cus._model_pull_state.clear()
+            cus._model_pull_state.update(status="idle", detail="", model=None)
+    _clean()
     yield
-    cus._set_pull_state("idle", "")
+    _clean()
 
 
-def _fake_thread(counter):
-    class FakeThread:
-        def __init__(self, *a, **k):
-            pass
-
-        def start(self):
-            counter.append(1)
-    return FakeThread
+def _env(model="qwen2.5-coder:3b"):
+    return lambda: {"LLM": model, "OLLAMA_PORT": "11434"}
 
 
-def test_single_flight_guard_blocks_second_pull(monkeypatch):
-    started = []
-    monkeypatch.setattr(cus.threading, "Thread", _fake_thread(started))
-    cus._set_pull_state("pulling", "downloading 10%")
-    cus._trigger_model_pull_async()
-    assert started == []   # already pulling -> no second worker
+# --- primitives --------------------------------------------------------------
+
+def test_ollama_reachable_true(monkeypatch):
+    monkeypatch.setattr(cus, "requests", FakeRequests(reachable=True))
+    assert cus._ollama_reachable("http://x") is True
 
 
-def test_trigger_spawns_worker_when_idle(monkeypatch):
-    started = []
-    monkeypatch.setattr(cus.threading, "Thread", _fake_thread(started))
-    cus._set_pull_state("idle", "")
-    cus._trigger_model_pull_async()
-    assert started == [1]
-    assert cus._model_pull_state["status"] == "pulling"
+def test_ollama_reachable_false(monkeypatch):
+    monkeypatch.setattr(cus, "requests", FakeRequests(reachable=False))
+    assert cus._ollama_reachable("http://x") is False
 
 
 def test_model_present_parses_tags(monkeypatch):
@@ -110,16 +109,9 @@ def test_model_present_parses_tags(monkeypatch):
     assert cus._model_present("http://x", "absent:9b") is False
 
 
-def test_worker_skips_pull_when_model_present(monkeypatch):
-    fake = FakeRequests(tags=[{"name": "qwen2.5-coder:3b"}])
-    monkeypatch.setattr(cus, "requests", fake)
-    monkeypatch.setattr(cus, "_wait_for_ollama", lambda base, timeout=60: True)
-    cus._pull_model_worker("qwen2.5-coder:3b", "http://localhost:11434")
-    assert cus._model_pull_state["status"] == "done"
-    assert fake.post_called is False   # idempotent: no re-download
+# --- the pull itself ---------------------------------------------------------
 
-
-def test_worker_parses_mixed_ndjson_and_completes(monkeypatch):
+def test_do_model_pull_parses_mixed_ndjson_and_completes(monkeypatch):
     lines = [
         '{"status":"pulling manifest"}',                     # no byte counts
         "",                                                   # blank keep-alive
@@ -128,27 +120,91 @@ def test_worker_parses_mixed_ndjson_and_completes(monkeypatch):
         '{"status":"verifying sha256 digest"}',              # no byte counts
         '{"status":"success"}',
     ]
-    fake = FakeRequests(tags=[], post_lines=lines)
+    fake = FakeRequests(post_lines=lines)
     monkeypatch.setattr(cus, "requests", fake)
-    monkeypatch.setattr(cus, "_wait_for_ollama", lambda base, timeout=60: True)
-    cus._pull_model_worker("qwen2.5-coder:3b", "http://localhost:11434")
+    cus._do_model_pull("qwen2.5-coder:3b", "http://x")
     assert fake.post_called is True
     assert cus._model_pull_state["status"] == "done"
 
 
-def test_worker_reports_error_line(monkeypatch):
-    fake = FakeRequests(tags=[], post_lines=['{"error":"pull access denied"}'])
+def test_do_model_pull_error_line_stamps_model(monkeypatch):
+    fake = FakeRequests(post_lines=['{"error":"pull access denied"}'])
     monkeypatch.setattr(cus, "requests", fake)
-    monkeypatch.setattr(cus, "_wait_for_ollama", lambda base, timeout=60: True)
-    cus._pull_model_worker("qwen2.5-coder:3b", "http://localhost:11434")
+    cus._do_model_pull("qwen2.5-coder:3b", "http://x")
     assert cus._model_pull_state["status"] == "error"
     assert "denied" in cus._model_pull_state["detail"]
+    assert cus._model_pull_state.get("error_model") == "qwen2.5-coder:3b"
 
 
-def test_worker_errors_when_ollama_unreachable(monkeypatch):
-    fake = FakeRequests()
+# --- the ensure tick ---------------------------------------------------------
+
+def test_tick_model_present_flips_idle_to_done(monkeypatch):
+    monkeypatch.setattr(cus, "_parse_env_file", _env())
+    fake = FakeRequests(reachable=True, tags=[{"name": "qwen2.5-coder:3b"}])
     monkeypatch.setattr(cus, "requests", fake)
-    monkeypatch.setattr(cus, "_wait_for_ollama", lambda base, timeout=60: False)
-    cus._pull_model_worker("qwen2.5-coder:3b", "http://localhost:11434")
-    assert cus._model_pull_state["status"] == "error"
+    cus._model_ensure_tick()
+    assert cus._model_pull_state["status"] == "done"
+    assert fake.post_called is False   # already present -> no re-download
+
+
+def test_tick_model_present_flips_error_to_done(monkeypatch):
+    # A prior failed attempt, then the model becomes present by another route
+    # (e.g. the `docker exec ollama pull` unblock) -> status must recover to done,
+    # not stay stuck showing "download failed" while Chat actually works.
+    monkeypatch.setattr(cus, "_parse_env_file", _env())
+    cus._set_pull_state("error", "boom", model="qwen2.5-coder:3b")
+    fake = FakeRequests(reachable=True, tags=[{"name": "qwen2.5-coder:3b"}])
+    monkeypatch.setattr(cus, "requests", fake)
+    cus._model_ensure_tick()
+    assert cus._model_pull_state["status"] == "done"
     assert fake.post_called is False
+
+
+def test_tick_model_absent_pulls(monkeypatch):
+    monkeypatch.setattr(cus, "_parse_env_file", _env())
+    fake = FakeRequests(reachable=True, tags=[], post_lines=['{"status":"success"}'])
+    monkeypatch.setattr(cus, "requests", fake)
+    cus._model_ensure_tick()
+    assert fake.post_called is True
+    assert cus._model_pull_state["status"] == "done"
+
+
+def test_tick_unreachable_does_not_pull(monkeypatch):
+    monkeypatch.setattr(cus, "_parse_env_file", _env())
+    fake = FakeRequests(reachable=False)
+    monkeypatch.setattr(cus, "requests", fake)
+    cus._model_ensure_tick()
+    assert fake.post_called is False
+
+
+# --- backoff, keyed to the failed model --------------------------------------
+
+def test_tick_backoff_suppresses_recent_same_model_failure(monkeypatch):
+    monkeypatch.setattr(cus, "_parse_env_file", _env("qwen2.5-coder:3b"))
+    cus._set_pull_state("error", "boom", model="qwen2.5-coder:3b")   # error_at = now
+    fake = FakeRequests(reachable=True, tags=[], post_lines=['{"status":"success"}'])
+    monkeypatch.setattr(cus, "requests", fake)
+    cus._model_ensure_tick()
+    assert fake.post_called is False   # within cooldown -> no hammering
+
+
+def test_tick_backoff_expired_retries(monkeypatch):
+    monkeypatch.setattr(cus, "_parse_env_file", _env("qwen2.5-coder:3b"))
+    cus._set_pull_state("error", "boom", model="qwen2.5-coder:3b")
+    with cus._model_pull_lock:
+        cus._model_pull_state["error_at"] = 0   # long ago -> cooldown elapsed
+    fake = FakeRequests(reachable=True, tags=[], post_lines=['{"status":"success"}'])
+    monkeypatch.setattr(cus, "requests", fake)
+    cus._model_ensure_tick()
+    assert fake.post_called is True
+
+
+def test_tick_backoff_does_not_suppress_different_model(monkeypatch):
+    # Settings changed the model right after a *different* model failed; the new
+    # model's first attempt must not inherit the old model's cooldown.
+    monkeypatch.setattr(cus, "_parse_env_file", _env("newmodel:7b"))
+    cus._set_pull_state("error", "boom", model="oldmodel:3b")
+    fake = FakeRequests(reachable=True, tags=[], post_lines=['{"status":"success"}'])
+    monkeypatch.setattr(cus, "requests", fake)
+    cus._model_ensure_tick()
+    assert fake.post_called is True

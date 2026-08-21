@@ -385,21 +385,34 @@ def extension_status():
         'extensions': active_extensions
     })
 
-# --- Ollama model pull (background, single-flight) ---------------------------
+# --- Ollama model-ensure daemon ----------------------------------------------
 # A fresh install has NO LLM model in Ollama: compose pulls the ollama *image*
-# (`--pull=missing`) but never the model, so Chat / NL-query fail with
-# "model not found" until it is pulled. This machinery pulls the configured
-# model in the background, triggered from the two start paths that bring up the
-# `llm` profile (start_all + start_llm) via the shared _trigger_model_pull_async
-# helper — never inlined per-endpoint, so neither caller can silently miss it.
+# (`--pull=missing`) but never the model, so Chat / NL-query fail with "model
+# not found" until it is pulled. A background daemon keeps the configured model
+# present whenever Ollama is up. It is DECOUPLED from `compose up` returning 0 —
+# an earlier design triggered the pull only after a successful `up`, which on a
+# cold install silently failed: the first `up` builds images + pulls the 5.6 GB
+# ollama image and outran its timeout, so the trigger was never reached even
+# though the containers came up moments later (Windows gate, 2026-08-21). The
+# daemon instead self-heals across a cold-build timeout, a UI-server restart,
+# Start LLM vs Start All, or a manually-removed model, and re-reads .env each
+# tick so a Settings model change is picked up without a restart.
+_MODEL_ENSURE_INTERVAL = 10        # seconds between ensure-loop ticks
+_MODEL_ENSURE_ERROR_BACKOFF = 300  # seconds to wait after a failed pull before retrying it
 _model_pull_lock = threading.Lock()
 _model_pull_state = {"status": "idle", "detail": "", "model": None}  # status: idle|pulling|done|error
 
 
-def _set_pull_state(status, detail=""):
+def _set_pull_state(status, detail="", model=None):
     with _model_pull_lock:
         _model_pull_state["status"] = status
         _model_pull_state["detail"] = detail
+        if status == "error":
+            # Stamp WHICH model failed and when, so the retry backoff is keyed to
+            # that model — a Settings change to a different model is not throttled
+            # by the old model's cooldown.
+            _model_pull_state["error_at"] = time.time()
+            _model_pull_state["error_model"] = model
 
 
 def _ollama_base():
@@ -407,20 +420,13 @@ def _ollama_base():
     return f"http://localhost:{port}"
 
 
-def _wait_for_ollama(base, timeout=60):
-    """Poll Ollama's HTTP API until it answers or `timeout` seconds elapse.
-
-    `compose up` returns before Ollama's server is listening, so the worker must
-    wait — but bounded, with an explicit failure, so it can never hang forever.
-    """
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            requests.get(f"{base}/api/version", timeout=3)
-            return True
-        except Exception:
-            time.sleep(2)
-    return False
+def _ollama_reachable(base):
+    """Quick check that Ollama's HTTP server is answering (fast-fails when down)."""
+    try:
+        requests.get(f"{base}/api/version", timeout=2)
+        return True
+    except Exception:
+        return False
 
 
 def _model_present(base, model):
@@ -433,21 +439,23 @@ def _model_present(base, model):
         return False
 
 
-def _pull_model_worker(model, base):
+def _do_model_pull(model, base):
+    """Pull `model` into Ollama, streaming progress into _model_pull_state.
+
+    Logs start / ~10%-milestones / done / error to coyote_ui_*.log — the earlier
+    worker was silent, which is exactly why a fresh-install pull failure was
+    invisible until Ollama's own container log was read by hand.
+    """
+    _set_pull_state("pulling", "starting")
+    logger.info("Model-ensure: pulling '%s' from %s", model, base)
     try:
-        if not _wait_for_ollama(base, timeout=60):
-            _set_pull_state("error", "Ollama did not become reachable")
-            return
-        if _model_present(base, model):
-            _set_pull_state("done", "model already present")
-            return
-        _set_pull_state("pulling", "starting")
         # `timeout` is a per-read timeout, NOT a total cap: a legitimate
         # multi-minute 2 GB pull keeps bytes flowing, so it only fires on a
         # genuine stall.
         with requests.post(f"{base}/api/pull", json={"name": model},
                            stream=True, timeout=(10, 120)) as r:
             r.raise_for_status()
+            last_logged = -10
             for line in r.iter_lines(decode_unicode=True):
                 if not line:            # skip blank keep-alive lines
                     continue
@@ -456,7 +464,8 @@ def _pull_model_worker(model, base):
                 except ValueError:      # a non-JSON keep-alive: ignore, don't error
                     continue
                 if obj.get("error"):
-                    _set_pull_state("error", str(obj["error"]))
+                    _set_pull_state("error", str(obj["error"]), model=model)
+                    logger.error("Model-ensure: pull of '%s' failed: %s", model, obj["error"])
                     return
                 status = obj.get("status", "")
                 # total/completed appear ONLY on layer-download lines; status
@@ -464,29 +473,57 @@ def _pull_model_worker(model, base):
                 # neither, so both are treated as optional.
                 total, completed = obj.get("total"), obj.get("completed")
                 if total and completed is not None:
-                    _set_pull_state("pulling", f"{status} {int(completed * 100 / total)}%")
+                    pct = int(completed * 100 / total)
+                    _set_pull_state("pulling", f"{status} {pct}%")
+                    if pct >= last_logged + 10:   # log every ~10%
+                        logger.info("Model-ensure: %s %d%%", status, pct)
+                        last_logged = pct
                 else:
                     _set_pull_state("pulling", status or "working")
         _set_pull_state("done", "model ready")
+        logger.info("Model-ensure: '%s' ready", model)
     except Exception as e:
-        _set_pull_state("error", str(e))
+        _set_pull_state("error", str(e), model=model)
+        logger.exception("Model-ensure: pull of '%s' errored", model)
 
 
-def _trigger_model_pull_async():
-    """Ensure the configured LLM model is present in Ollama, in the background.
-
-    Single-flight: a re-click while a pull is already in flight is a no-op
-    (testers double-click Start buttons). Idempotent: the worker skips the pull
-    when the model is already present. Called from BOTH start_all() and
-    start_llm().
-    """
-    model = _parse_env_file().get("LLM", "qwen2.5-coder:3b")
+def _model_ensure_tick():
+    """One ensure iteration (extracted so tests can drive it without the loop)."""
+    model = _parse_env_file().get("LLM", "qwen2.5-coder:3b")   # re-read each tick
     base = _ollama_base()
-    with _model_pull_lock:
-        if _model_pull_state["status"] == "pulling":
-            return  # single-flight guard
-        _model_pull_state.update(status="pulling", detail="starting", model=model)
-    threading.Thread(target=_pull_model_worker, args=(model, base), daemon=True).start()
+    if not (model and _ollama_reachable(base)):
+        return  # llm profile not up yet (or no model configured) — nothing to do
+    if _model_present(base, model):
+        # Model is present by any route (daemon pull, or a manual `ollama pull`).
+        # Flip out of a stale idle/error/pulling so the UI stops showing a
+        # download-in-progress / failed message while Chat actually works.
+        if _model_pull_state.get("status") != "done":
+            _set_pull_state("done", "model ready")
+        return
+    # Model absent: retry, but don't hammer /api/pull + the log every tick after a
+    # recent failure of THIS model (permanent failures — bad model name, no route
+    # to the registry, disk full — would otherwise spam indefinitely).
+    if (_model_pull_state.get("status") == "error"
+            and _model_pull_state.get("error_model") == model
+            and time.time() - _model_pull_state.get("error_at", 0) < _MODEL_ENSURE_ERROR_BACKOFF):
+        return
+    _do_model_pull(model, base)
+
+
+def _model_ensure_loop():
+    """Daemon body: ensure the configured model is present whenever Ollama is up.
+
+    One loop thread, so only one pull runs at a time (the pull blocks the tick).
+    Started from __main__ (not at import) so importing this module for tests does
+    not spawn a network-polling thread.
+    """
+    logger.info("Model-ensure daemon started (interval=%ss)", _MODEL_ENSURE_INTERVAL)
+    while True:
+        try:
+            _model_ensure_tick()
+        except Exception:
+            logger.exception("Model-ensure loop tick failed")
+        time.sleep(_MODEL_ENSURE_INTERVAL)
 
 
 @app.route('/api/llm/pull-status', methods=['GET'])
@@ -528,6 +565,14 @@ def start_core():
             'returncode': result.returncode
         })
         
+    except subprocess.TimeoutExpired:
+        # A cold first build can outrun the timeout while docker keeps building in
+        # the background — the containers still come up. Surface a calm message
+        # instead of a raw 500/traceback (the status poll reflects real state).
+        logger.warning("start-core: compose up timed out; build likely still running in background")
+        return jsonify({'status': 'success',
+                        'message': 'Core services are still starting — the first build can take '
+                                   '10–30+ minutes. Watch System Status; they will come Online when ready.'}), 200
     except DockerUnavailable as e:
         return jsonify({'status': 'error', 'message': e.user_message}), 503
     except Exception as e:
@@ -553,13 +598,12 @@ def start_all():
         if result.returncode == 0:
             logger.info("All services started successfully")
             message = 'All services starting'
-            _trigger_model_pull_async()  # bring the LLM model down in the background
         else:
             logger.error(f"Failed to start all services. Return code: {result.returncode}")
             tail = _compose_error_tail(result)
             message = f'Failed to start all services.\n{tail}' if tail else \
                 'Failed to start all services — see the Coyote UI log for details.'
-        
+
         return jsonify({
             'status': 'success' if result.returncode == 0 else 'error',
             'message': message,
@@ -567,7 +611,16 @@ def start_all():
             'stderr': result.stderr,
             'returncode': result.returncode
         })
-        
+
+    except subprocess.TimeoutExpired:
+        # Cold first build (image build + 5.6 GB ollama image pull) can outrun the
+        # timeout while docker keeps building in the background — the containers
+        # still come up. The model-ensure daemon fetches the LLM once Ollama is up.
+        logger.warning("start-all: compose up timed out; build likely still running in background")
+        return jsonify({'status': 'success',
+                        'message': 'Services are still starting — the first build can take 10–30+ minutes. '
+                                   'The language model downloads automatically in the background once Ollama '
+                                   'is up; watch System Status.'}), 200
     except DockerUnavailable as e:
         return jsonify({'status': 'error', 'message': e.user_message}), 503
     except Exception as e:
@@ -576,7 +629,8 @@ def start_all():
 
 @app.route('/api/start-llm', methods=['POST'])
 def start_llm():
-    """Start just the LLM profile (Ollama + pull-model)"""
+    """Start just the LLM profile (Ollama). The model itself is fetched by the
+    background model-ensure daemon once Ollama is reachable."""
     logger.info("Starting LLM services...")
     try:
         if not COMPOSE_FILE.exists():
@@ -591,7 +645,6 @@ def start_llm():
 
         if result.returncode == 0:
             message = 'LLM services starting'
-            _trigger_model_pull_async()  # bring the LLM model down in the background
         else:
             logger.error(f"Failed to start LLM services. Return code: {result.returncode}")
             tail = _compose_error_tail(result)
@@ -605,6 +658,14 @@ def start_llm():
             'stderr': result.stderr,
             'returncode': result.returncode
         })
+    except subprocess.TimeoutExpired:
+        # Cold-pulling the 5.6 GB ollama image can outrun the timeout on a slow
+        # connection while docker keeps pulling in the background.
+        logger.warning("start-llm: compose up timed out; image pull likely still running in background")
+        return jsonify({'status': 'success',
+                        'message': 'The LLM service is still starting — Ollama\'s image download can take a few '
+                                   'minutes on a slow connection. The model then downloads automatically; '
+                                   'watch System Status.'}), 200
     except DockerUnavailable as e:
         return jsonify({'status': 'error', 'message': e.user_message}), 503
     except Exception as e:
@@ -1607,5 +1668,9 @@ if __name__ == '__main__':
         run_compose_command(['ps', '--format', 'json'], timeout=5)
     except Exception as e:
         logger.debug("Pre-startup container check skipped: %s", e)
-    
+
+    # Keep the configured LLM model present in Ollama whenever it is up. Started
+    # here (not at import) so tests importing this module don't spawn the thread.
+    threading.Thread(target=_model_ensure_loop, daemon=True).start()
+
     app.run(host=_ui_host, port=_ui_port, debug=_ui_debug)
