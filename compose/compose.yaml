@@ -131,11 +131,19 @@ services:
     volumes:
       - ${AGENT_LOG_DIR-./volumes/agent_logs}:/app/logs
     depends_on:
-      # Bot waits for Neo4j *and* the LLM model to be present
       database:
         condition: service_healthy
+      # Bot waits only for the llm CONTAINER to start, NOT for it to be healthy.
+      # The llm healthcheck (`ollama show "$LLM"`) stays unhealthy until the model
+      # is pulled, but that pull is kicked off by the UI server AFTER `compose up`
+      # returns 0. Gating on service_healthy here deadlocks "Start All": up would
+      # block on the never-healthy llm, exit non-zero, and the UI's returncode==0
+      # guard would never fire the pull. service_started lets up return 0, the pull
+      # start, and the bot boot immediately; it connects to Ollama lazily per-query,
+      # so a Chat query during the (multi-minute) download briefly fails and then
+      # self-heals once the pull completes.
       llm:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent http://localhost:8501/_stcore/health || exit 1"]
       <<: *webcheck

@@ -98,7 +98,7 @@ The dashboard opens at `http://localhost:8080` in your **default** browser. If t
 **5. Start services** (UI → System Status)
 - **Start Core Services** — Neo4j + Coyote Core. This is all you need to begin capturing browsing data.
 - *(Optional)* **Start LLM Service** — runs Ollama and, on first run, downloads the `qwen2.5-coder:3b` model (~2 GB, several minutes). The System Status line shows *"Downloading language model…"* with progress; Chat isn't ready until it finishes.
-- *(Optional)* **Start All Services** — adds Coyote's GraphRAG **Chat Assistant** and pulls the same model. *To use Chat you need this, not just Start Core.*
+- *(Optional)* **Start All Services** — adds Coyote's GraphRAG **Chat Assistant** and pulls the same model. *To use Chat you need this, not just Start Core.* On first run the model downloads in the background (~2 GB, several minutes); the System Status line shows *"Downloading language model…"* with progress. The dashboard and services come up right away, but if you open Chat before the download finishes it will report that the model isn't ready — just wait for the progress line to complete, then try again.
 
 > **The first build is slow and quiet — this is normal.** The very first **Start Core Services** downloads and builds the container images, commonly **10–30 minutes** depending on your machine and connection. During that time the status may sit at **"0 of N services running" with little visible progress. Don't quit or assume it has hung** — subsequent starts are fast.
 >
