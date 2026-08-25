@@ -537,144 +537,152 @@ def llm_pull_status():
         return jsonify(dict(_model_pull_state))
 
 
+# --- Background compose-up runner --------------------------------------------
+# `docker compose up` on a cold install (image build + multi-GB image pulls) can
+# run FAR longer than any reasonable HTTP request. The earlier design ran it
+# INSIDE the request under `subprocess.run(timeout=N)`; when the timeout fired it
+# KILLED compose mid-build, so on modest hardware / slow links the images never
+# finished tagging and nothing came up — while the UI optimistically reported
+# "still starting in the background" (MacBook gate, 2026-08-24: a cold Core build
+# + ~160s image export + a 326s ollama-image pull blew past the 420s cap). The
+# start endpoints below now DISPATCH the `up` to this background worker and return
+# immediately; `/api/status` reflects real container state as it completes,
+# `/api/compose-status` surfaces progress/failure, and the model-ensure daemon
+# pulls the LLM once Ollama answers. Mirrors the model-ensure decoupling above.
+#
+# The only timeout is a generous BACKSTOP against a genuinely wedged process —
+# set far above any legitimate cold build so it never re-introduces the kill-mid-
+# build bug. Override with COMPOSE_UP_TIMEOUT (seconds) for an unusually slow box.
+COMPOSE_UP_TIMEOUT = int(os.environ.get("COMPOSE_UP_TIMEOUT", "3600"))
+_compose_op_lock = threading.Lock()
+_compose_op_state = {"status": "idle", "detail": "", "profiles": [],
+                     "returncode": None, "error_tail": ""}
+# status: idle | running | done | error
+
+
+def _set_compose_op_state(**kw):
+    with _compose_op_lock:
+        _compose_op_state.update(kw)
+
+
+def _run_compose_up_bg(profiles, label):
+    """Thread body: run `compose <profiles> up -d --pull=missing` to completion.
+
+    No request-bound timeout — a cold build/pull is ALLOWED to take as long as it
+    needs. Any real failure (pip/network build error, bad compose) is captured
+    into _compose_op_state and the log, so it stays visible instead of vanishing
+    into a detached thread.
+    """
+    args = []
+    for p in profiles:
+        args += ['--profile', p]
+    args += ['up', '-d', '--pull=missing']
+    _set_compose_op_state(status="running", detail=f"{label} — building/pulling as needed",
+                          profiles=list(profiles), returncode=None, error_tail="")
+    logger.info("compose-up (%s): starting in background", label)
+    try:
+        result = run_compose_command(args, timeout=COMPOSE_UP_TIMEOUT)
+        if result.returncode == 0:
+            _set_compose_op_state(status="done", detail=f"{label} started",
+                                  returncode=0, error_tail="")
+            logger.info("compose-up (%s): completed", label)
+        else:
+            tail = _compose_error_tail(result)
+            _set_compose_op_state(status="error", detail=f"{label} failed",
+                                  returncode=result.returncode, error_tail=tail)
+            logger.error("compose-up (%s): failed (exit %s): %s", label, result.returncode, tail)
+    except subprocess.TimeoutExpired:
+        _set_compose_op_state(status="error", detail=f"{label}: timed out", returncode=None,
+                              error_tail=f"compose up exceeded the {COMPOSE_UP_TIMEOUT}s backstop")
+        logger.error("compose-up (%s): exceeded %ss backstop", label, COMPOSE_UP_TIMEOUT)
+    except DockerUnavailable as e:
+        _set_compose_op_state(status="error", detail=e.user_message,
+                              returncode=None, error_tail=e.user_message)
+        logger.warning("compose-up (%s): docker unavailable: %s", label, e.user_message)
+    except Exception as e:
+        _set_compose_op_state(status="error", detail=str(e), returncode=None, error_tail=str(e))
+        logger.exception("compose-up (%s): errored", label)
+
+
+def _preflight_docker():
+    """Fast, synchronous Docker-liveness check so 'Docker isn't running' still
+    surfaces immediately on the button click (raising DockerUnavailable), rather
+    than only via a poll after the background worker starts. A stalled/slow daemon
+    (TimeoutExpired) is NOT treated as down — proceed and let the worker report."""
+    try:
+        run_compose_command(['ps', '-q'], timeout=15)
+    except subprocess.TimeoutExpired:
+        logger.warning("docker preflight slow; proceeding to background start")
+
+
+def _dispatch_compose_up(profiles, label):
+    """Kick off a background `up` unless one is already running. Non-blocking.
+
+    Returns (json_dict, http_status). Docker-down is surfaced synchronously via
+    the preflight; the long build/pull runs detached.
+    """
+    if not COMPOSE_FILE.exists():
+        return {'status': 'error', 'message': f'Compose file not found: {COMPOSE_FILE}'}, 404
+    try:
+        _preflight_docker()
+    except DockerUnavailable as e:
+        return {'status': 'error', 'message': e.user_message}, 503
+    except Exception as e:
+        logger.error("start preflight error: %s", e, exc_info=True)
+        return {'status': 'error', 'message': str(e)}, 500
+
+    with _compose_op_lock:
+        if _compose_op_state["status"] == "running":
+            running = _compose_op_state.get("detail") or "Services are already starting"
+            return {'status': 'success', 'message': f'{running} — watch System Status.'}, 202
+        # Claim the slot synchronously so a rapid second click can't spawn a
+        # second worker before the thread sets its own state.
+        _compose_op_state.update(status="running", detail=f"{label} — starting",
+                                 profiles=list(profiles), returncode=None, error_tail="")
+    try:
+        threading.Thread(target=_run_compose_up_bg, args=(list(profiles), label),
+                         daemon=True).start()
+    except Exception as e:
+        _set_compose_op_state(status="error", detail="could not start worker", error_tail=str(e))
+        return {'status': 'error', 'message': f'Could not start services: {e}'}, 500
+
+    return {'status': 'success',
+            'message': (f'{label} — watch System Status. A fresh first-time build can take '
+                        '10–30+ minutes (later starts are quick); the language model then '
+                        'downloads automatically once Ollama is up.')}, 202
+
+
+@app.route('/api/compose-status', methods=['GET'])
+def compose_status():
+    """Current background compose-up state, polled by the System Status panel."""
+    with _compose_op_lock:
+        return jsonify(dict(_compose_op_state))
+
+
 @app.route('/api/start-core', methods=['POST'])
 def start_core():
-    """Start core services (Neo4j + Coyote Core)"""
+    """Start core services (Neo4j + Coyote Core) — dispatched to a background
+    worker so a long cold build is never killed by a request timeout."""
     logger.info("Starting core services...")
-    try:
-        if not COMPOSE_FILE.exists():
-            error_msg = f'Compose file not found: {COMPOSE_FILE}'
-            logger.error(error_msg)
-            return jsonify({'status': 'error', 'message': error_msg}), 404
-        
-        result = run_compose_command(
-            ['--profile', 'core', 'up', '-d', '--pull=missing'],
-            timeout=180
-        )
-        
-        if result.returncode == 0:
-            logger.info("Core services started successfully")
-            message = 'Core services starting'
-        else:
-            logger.error(f"Failed to start core services. Return code: {result.returncode}")
-            tail = _compose_error_tail(result)
-            message = f'Failed to start core services.\n{tail}' if tail else \
-                'Failed to start core services — see the Coyote UI log for details.'
-        
-        return jsonify({
-            'status': 'success' if result.returncode == 0 else 'error',
-            'message': message,
-            'stdout': result.stdout,
-            'stderr': result.stderr,
-            'returncode': result.returncode
-        })
-        
-    except subprocess.TimeoutExpired:
-        # A cold first build can outrun the timeout while docker keeps building in
-        # the background — the containers still come up. Surface a calm message
-        # instead of a raw 500/traceback (the status poll reflects real state).
-        logger.warning("start-core: compose up timed out; build likely still running in background")
-        return jsonify({'status': 'success',
-                        'message': 'Core services are still starting — the first build can take '
-                                   '10–30+ minutes. Watch System Status; they will come Online when ready.'}), 200
-    except DockerUnavailable as e:
-        return jsonify({'status': 'error', 'message': e.user_message}), 503
-    except Exception as e:
-        logger.error(f"Error starting core: {e}", exc_info=True)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    body, code = _dispatch_compose_up(['core'], 'Core services starting')
+    return jsonify(body), code
+
 
 @app.route('/api/start-all', methods=['POST'])
 def start_all():
-    """Start all services (Core + LLM + Agent)"""
+    """Start all services (Core + LLM + Agent) — background dispatch."""
     logger.info("Starting all services...")
-    try:
-        if not COMPOSE_FILE.exists():
-            error_msg = f'Compose file not found: {COMPOSE_FILE}'
-            logger.error(error_msg)
-            return jsonify({'status': 'error', 'message': error_msg}), 404
-        
-        result = run_compose_command(
-            ['--profile', 'core', '--profile', 'llm', '--profile', 'agent', 
-             'up', '-d', '--pull=missing'],
-            timeout=420
-        )
-        
-        if result.returncode == 0:
-            logger.info("All services started successfully")
-            message = 'All services starting'
-        else:
-            logger.error(f"Failed to start all services. Return code: {result.returncode}")
-            tail = _compose_error_tail(result)
-            message = f'Failed to start all services.\n{tail}' if tail else \
-                'Failed to start all services — see the Coyote UI log for details.'
+    body, code = _dispatch_compose_up(['core', 'llm', 'agent'], 'All services starting')
+    return jsonify(body), code
 
-        return jsonify({
-            'status': 'success' if result.returncode == 0 else 'error',
-            'message': message,
-            'stdout': result.stdout,
-            'stderr': result.stderr,
-            'returncode': result.returncode
-        })
-
-    except subprocess.TimeoutExpired:
-        # Cold first build (image build + 5.6 GB ollama image pull) can outrun the
-        # timeout while docker keeps building in the background — the containers
-        # still come up. The model-ensure daemon fetches the LLM once Ollama is up.
-        logger.warning("start-all: compose up timed out; build likely still running in background")
-        return jsonify({'status': 'success',
-                        'message': 'Services are still starting — the first build can take 10–30+ minutes. '
-                                   'The language model downloads automatically in the background once Ollama '
-                                   'is up; watch System Status.'}), 200
-    except DockerUnavailable as e:
-        return jsonify({'status': 'error', 'message': e.user_message}), 503
-    except Exception as e:
-        logger.error(f"Error starting all: {e}", exc_info=True)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/start-llm', methods=['POST'])
 def start_llm():
-    """Start just the LLM profile (Ollama). The model itself is fetched by the
-    background model-ensure daemon once Ollama is reachable."""
+    """Start just the LLM profile (Ollama) — background dispatch. The model is
+    fetched by the model-ensure daemon once Ollama is reachable."""
     logger.info("Starting LLM services...")
-    try:
-        if not COMPOSE_FILE.exists():
-            error_msg = f'Compose file not found: {COMPOSE_FILE}'
-            logger.error(error_msg)
-            return jsonify({'status': 'error', 'message': error_msg}), 404
-
-        result = run_compose_command(
-            ['--profile', 'llm', 'up', '-d', '--pull=missing'],
-            timeout=240
-        )
-
-        if result.returncode == 0:
-            message = 'LLM services starting'
-        else:
-            logger.error(f"Failed to start LLM services. Return code: {result.returncode}")
-            tail = _compose_error_tail(result)
-            message = f'LLM services failed to start.\n{tail}' if tail else \
-                'LLM services failed to start — see the Coyote UI log for details.'
-
-        return jsonify({
-            'status': 'success' if result.returncode == 0 else 'error',
-            'message': message,
-            'stdout': result.stdout,
-            'stderr': result.stderr,
-            'returncode': result.returncode
-        })
-    except subprocess.TimeoutExpired:
-        # Cold-pulling the 5.6 GB ollama image can outrun the timeout on a slow
-        # connection while docker keeps pulling in the background.
-        logger.warning("start-llm: compose up timed out; image pull likely still running in background")
-        return jsonify({'status': 'success',
-                        'message': 'The LLM service is still starting — Ollama\'s image download can take a few '
-                                   'minutes on a slow connection. The model then downloads automatically; '
-                                   'watch System Status.'}), 200
-    except DockerUnavailable as e:
-        return jsonify({'status': 'error', 'message': e.user_message}), 503
-    except Exception as e:
-        logger.error(f"Error starting LLM: {e}", exc_info=True)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    body, code = _dispatch_compose_up(['llm'], 'LLM service starting')
+    return jsonify(body), code
 
 @app.route('/api/stop', methods=['POST'])
 def stop_services():
