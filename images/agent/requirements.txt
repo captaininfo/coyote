@@ -5,7 +5,11 @@
 streamlit==1.41.1
 python-dotenv==1.0.1
 sentence-transformers==3.3.1
-torch==2.5.1 ; platform_system != "Windows"
+# torch is deliberately NOT pinned here. bot.Dockerfile installs the
+# CPU-only wheel from PyTorch's CPU index in an earlier, separate step
+# (same convention as images/core/core_analysis/requirements.txt).
+# Re-adding it here resolves it from the default PyPI index, which on
+# amd64 is the CUDA build: ~2.7 GB of unusable nvidia-*-cu12 packages.
 
 # LangChain ecosystem (1.x series)
 langchain-core==1.2.16
