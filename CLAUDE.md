@@ -322,10 +322,13 @@ These extend the "Design Vision: Input/Output Separation" section above.
 
 ## Testing
 ```bash
-python -m pytest tests/ -v        # 85 tests (security, sync check, time parsing, wikidata breakers x2)
+make build-core                   # once — builds the image the suite runs in
+make test                         # 390 tests, inside coyote-core:local
+make test-host                    # escape hatch: needs Core's requirements in the active venv
 make sync-shared                  # sync nl2cypher.py before docker build
 make build-agent                  # sync + rebuild bot container
 ```
+The suite runs **inside the Core image**: no host environment here carries Core's deps (`cryptography`, spaCy, torch), and bare `python -m pytest` also fails under pyenv shims (`python` unresolvable). `PYTHONPATH` must be the **repo root ONLY** — adding `images/core/core_analysis` lets its `shared/` regular package shadow the project-root namespace package (see the `tests/conftest.py` docstring).
 
 ## Security Roadmap
 **P1**: ~~LangChain 1.0 migration~~ (done — now on langchain-core 1.2.x, langchain-neo4j 0.7.0)

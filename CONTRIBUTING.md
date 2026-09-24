@@ -41,10 +41,13 @@ make build-all
 ## Tests
 
 ```bash
-make test            # or: python -m pytest tests/ -v
+make build-core      # once — builds the image the tests run in
+make test            # 390 tests
 ```
 
-The suite (300+ tests) covers the Cypher security blocklist, the `shared/` sync guard, time parsing, the WikiData circuit breakers, embeddings, and the demo pure-functions. **Please add tests with your change** — the demos are a good model: pure, stdlib-only functions kept separate from container/DB access so they run host-side without Neo4j (see `tests/test_knowledge_shape_demo.py`).
+The suite runs **inside Coyote's Core container image**, which already carries every dependency the tests import — spaCy, sentence-transformers, torch, cryptography. That's deliberate: installing all of that on your host is a long, heavy setup for a project you need Docker to run anyway. If you'd rather test on the host, `pip install -r images/core/core_analysis/requirements.txt` into a virtualenv and use `make test-host` instead.
+
+The suite covers the Cypher security blocklist, the `shared/` sync guard, time parsing, the WikiData circuit breakers, embeddings, and the demo pure-functions. **Please add tests with your change** — the demos are a good model: pure, stdlib-only functions kept separate from container and DB access, so they need no Neo4j to run (see `tests/test_knowledge_shape_demo.py`).
 
 ## Conventions (please match the surrounding code)
 
