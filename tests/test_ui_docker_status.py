@@ -136,29 +136,81 @@ def test_compose_error_tail_falls_back_to_stdout():
     assert m._compose_error_tail(r) == "some stdout detail"
 
 
+def _reset_compose_op_state():
+    """Clear the single-flight state between dispatch tests.
+
+    `_dispatch_compose_up` claims the slot synchronously, so a leftover
+    "running" state makes the endpoint answer "already starting" instead of
+    dispatching — an order-dependent failure. Keys mirror the module default
+    (coyote_ui_server.py:558).
+    """
+    m._compose_op_state.update(status="idle", detail="", profiles=[],
+                               returncode=None, error_tail="")
+
+
 def _post_start_core(result_mock):
-    """POST /api/start-core with subprocess/compose env/COMPOSE_FILE stubbed."""
+    """POST /api/start-core with subprocess/compose env/COMPOSE_FILE stubbed.
+
+    Since a410674 the endpoint DISPATCHES the real `up` to a background worker
+    and returns immediately, so this also resets the single-flight state and
+    stubs `threading.Thread`: a worker escaping the test would mutate
+    `_compose_op_state` underneath whatever runs next.
+
+    Returns (response, thread_stub) so callers can assert a worker was started.
+    """
     fake_compose_file = mock.MagicMock()
     fake_compose_file.exists.return_value = True
+    _reset_compose_op_state()
     with mock.patch.object(m.subprocess, "run", return_value=result_mock), \
          mock.patch.object(m, "get_compose_env", return_value={}), \
-         mock.patch.object(m, "COMPOSE_FILE", new=fake_compose_file):
+         mock.patch.object(m, "COMPOSE_FILE", new=fake_compose_file), \
+         mock.patch.object(m.threading, "Thread") as thread_stub:
         client = m.app.test_client()
-        return client.post("/api/start-core")
+        return client.post("/api/start-core"), thread_stub
 
 
-def test_start_core_failure_puts_stderr_tail_in_message():
+def test_compose_failure_tail_reaches_status_with_newlines_intact():
+    """Multi-line build failures stay readable on the dashboard.
+
+    Replaces `test_start_core_failure_puts_stderr_tail_in_message`: the failure
+    SURFACE moved in a410674. `up` now runs in a background worker, so a build
+    failure no longer rides back on the POST response — it lands in
+    `_compose_op_state`, which `GET /api/compose-status` serves to the panel.
+
+    What this guards, and nothing else does: the multi-line tail keeps its
+    newlines, which the `#status-summary` pre-wrap rule relies on to render the
+    BuildKit error legibly. `test_ui_compose_up.py::
+    test_bg_up_nonzero_sets_error_with_tail` covers the single-line case.
+    """
     result = mock.Mock(returncode=1, stdout="", stderr=_MULTILINE_STDERR)
-    payload = _post_start_core(result).get_json()
-    assert payload["status"] == "error"
+    _reset_compose_op_state()
+    with mock.patch.object(m, "run_compose_command", return_value=result):
+        m._run_compose_up_bg(["core"], "Core services starting")
+    state = m._compose_op_state
+    assert state["status"] == "error"
+    assert state["returncode"] == 1
     # The decisive tail line is surfaced to the dashboard...
-    assert "failed to solve" in payload["message"]
-    # ...and newlines survive (rendered by the #status-summary pre-wrap rule).
-    assert "\n" in payload["message"]
+    assert "failed to solve" in state["error_tail"]
+    # ...and newlines survive (max_len=800 leaves this fixture untruncated).
+    assert "\n" in state["error_tail"]
 
 
-def test_start_core_success_message_unchanged():
+def test_start_core_success_dispatches_worker_and_returns_202():
+    """Success path is asynchronous since a410674: claim the slot, dispatch a
+    worker, answer 202 immediately.
+
+    Asserts the label PREFIX rather than the whole message. Exact-matching
+    user-facing prose is what made the previous version of this test
+    (`test_start_core_success_message_unchanged`) go stale the moment the
+    build-expectation guidance was added to the reply.
+    """
     result = mock.Mock(returncode=0, stdout="ok", stderr="")
-    payload = _post_start_core(result).get_json()
+    response, thread_stub = _post_start_core(result)
+    payload = response.get_json()
+    assert response.status_code == 202
     assert payload["status"] == "success"
-    assert payload["message"] == "Core services starting"
+    assert payload["message"].startswith("Core services starting")
+    assert "System Status" in payload["message"]
+    # A background worker was dispatched rather than compose running inline.
+    assert thread_stub.called
+    assert thread_stub.return_value.start.called
