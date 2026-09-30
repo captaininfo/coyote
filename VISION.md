@@ -27,9 +27,9 @@ The same geometry that finds your sources can quantify *how far* your take pulls
 **Rung 3 — Longitudinal conceptual change. `vision.`**
 Because the record is continuous and its embeddings are pinned and dated, comparing output-over-time against the inputs that arrived in between could show how your understanding of a topic actually *moved*. The pieces (dated input/output embeddings, one coherent record) exist; the trustworthy analysis over them does not, yet. This is the rung the careful architecture below is *for*.
 
-## The flagship community rung: flat → DAG ontology
+## The flagship community rung: a traversable concept hierarchy
 
-Corpus-level divergence — comparing your writing against the *concept-filtered* input corpus at a chosen level of abstraction — needs the ontology to be a real graph. Today concepts are attached to pages *flat*, and concepts aren't linked to each other, so "the ancestors of concept X" isn't answerable by traversal. Materializing `concept → parent` edges (WikiData P279/P31) turns the hierarchy into a traversable DAG and unlocks the stratification that Rung 2's corpus case depends on. The `knowledge_shape` demo already reconstructs this arrangement *in memory* — this contribution makes it real edges. It's the single highest-leverage community rung, and a strong first issue (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+Corpus-level divergence — comparing your writing against the *concept-filtered* input corpus at a chosen level of abstraction — needs the ontology to be a real graph. Today concepts are attached to pages *flat*, and concepts aren't linked to each other, so "the ancestors of concept X" isn't answerable by traversal. Materializing `concept → parent` edges (WikiData P279/P31) makes the hierarchy traversable and unlocks the stratification that Rung 2's corpus case depends on. The `knowledge_shape` demo already reconstructs this arrangement *in memory* — this contribution makes it real edges. It's the single highest-leverage community rung, and a strong first issue (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Design rules that protect the vision
 

@@ -73,16 +73,16 @@ The suite covers the Cypher security blocklist, the `shared/` sync guard, time p
 
 ## Good first issues
 
-Bite-sized, valuable, and low-context. The first is the flagship.
+The live list is in the tracker, so it can't drift out of step with the code:
 
-1. **Materialize the ontology as a DAG (flagship).** Today each page links *flat* to its concept and to every ancestor, and concepts aren't linked to each other. Model `concept → parent` as `WikiDataOntology → WikiDataOntology` edges (from WikiData P279/P31) so "the shape of what I know about X" becomes a graph traversal. The `knowledge_shape` demo already *reconstructs* this arrangement in memory from the local cache — this issue **materializes** it as real edges. Load-bearing for the corpus-divergence work in [VISION.md](VISION.md). *(Medium; `connect_to_ontology.py`.)*
-2. **A shared `is_serp_url()` predicate.** SERP recognition is currently Google-only, so non-Google results pages get treated as content. Add one predicate covering the major engines (Bing, DuckDuckGo, Brave, Kagi, Ecosia…) and route both the Neo4j `isSERP` flag and the scrape exemption through it. *(Small–medium; `coyote_browser_extension_to_neo4j.py`, `scrape_webpage.py`.)*
-3. **Promote the demos into the dashboard.** `demos/source_inference.py` and `demos/knowledge_shape.py` run from the CLI today; surface them as panels in the UI (the knowledge-shape demo already emits a self-contained interactive HTML visual). *(Medium; `ui/`.)*
-4. **New connectors.** Import from YouTube transcripts, an Obsidian vault, or Zotero into the staging pipeline. *(Medium; new module under `data_sources/`.)*
-5. **PDF extraction fallback.** trafilatura returns empty on PDF URLs; add a `pypdf` content-type-routed fallback in `scrape_webpage.py`. *(Small.)*
-6. **Chrome Web Store submission.** The Chrome (MV3) manifest already exists; verify the service worker survives suspension and prepare a store submission. *(Small–medium; `extension_chrome/`.)*
-7. **Two one-line hygiene fixes:** enable WAL mode for `wikidata_cache.db` in `initialize_databases.py`; make the scrape read-timeout env-configurable in `scrape_webpage.py`. *(Small.)*
+**[→ Open good first issues](https://github.com/captaininfo/coyote/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)**
 
-More candidates live throughout `CLAUDE.md`'s "Known Issues" and "Post-MVP" sections. Not sure where to jump in? Open an issue describing what you'd like to work on and we'll help scope it.
+Each one names the files involved, the traps worth knowing, and roughly how big it is. Area labels (`area: graph`, `area: nlp`, `area: extension`, `area: connectors`) let you filter to the part of Coyote you'd rather work in.
+
+**The flagship** is [making the concept hierarchy traversable](https://github.com/captaininfo/coyote/issues/4) — storing `concept → parent` links as real edges so "the shape of what I know about X" becomes a graph traversal instead of something reconstructed in memory from a cache that expires weekly. It's load-bearing for the corpus-divergence work in [VISION.md](VISION.md), which is why it's the flagship rather than just graph hygiene.
+
+More candidates live throughout `CLAUDE.md`'s "Known Issues" and "Post-MVP" sections — those are written for maintainers rather than newcomers, so they're rougher, but they're honest about what's broken.
+
+Not sure where to jump in? Open an issue describing what you'd like to work on and we'll help scope it.
 
 Questions, ideas, and PRs are all welcome.
