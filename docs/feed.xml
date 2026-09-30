@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Coyote</title>
+    <link>https://captaininfo.github.io/coyote/blog/</link>
+    <description>Developing Coyote in the open — notes on data and analytics for self-directed, informal learning.</description>
+    <language>en-us</language>
+    <atom:link href="https://captaininfo.github.io/coyote/feed.xml" rel="self" type="application/rss+xml"/>
+    <lastBuildDate>Tue, 30 Sep 2026 12:00:00 +0000</lastBuildDate>
+
+    <item>
+      <title>Coyote: A public experiment in data and analytics for self-directed, informal learning</title>
+      <link>https://captaininfo.github.io/coyote/blog/2026-09-30-a-public-experiment.html</link>
+      <guid isPermaLink="true">https://captaininfo.github.io/coyote/blog/2026-09-30-a-public-experiment.html</guid>
+      <pubDate>Tue, 30 Sep 2026 12:00:00 +0000</pubDate>
+      <description>What Coyote is, why it's a public experiment rather than a solution, and how it builds a semantic record of your reading — followed through the morning of a Montana woman who has just read that a company wants to put industrial wastewater into her county's aquifer.</description>
+    </item>
+
+  </channel>
+</rss>

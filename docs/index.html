@@ -1,190 +1,73 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Coyote — Put your online data to use. Locally.</title>
-  <meta name="description" content="Coyote turns your browsing and annotations into a private, local knowledge graph you control — a dynamic PKM and private backend for local LLMs and AI agents." />
-  <meta name="theme-color" content="#4b4235" />
-  <meta property="og:title" content="Coyote — private, local learning analytics" />
-  <meta property="og:description" content="Turn your browsing + annotations into a private knowledge graph you control. Pair it with local LLMs or AI agents." />
-  <meta property="og:type" content="website" />
-  <meta property="og:image" content="" />
-  <link rel="stylesheet" href="./site.css">
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "Coyote",
-    "applicationCategory": "AI / Knowledge Graph / Personal Analytics",
-    "operatingSystem": "Windows, macOS, Linux",
-    "description": "Coyote turns your browsing and annotations into a private, local knowledge graph you control.",
-    "softwareVersion": "0.4.0",
-    "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
-    "downloadUrl": "https://github.com/captaininfo/coyote/releases/latest"
-  }
-  </script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coyote — a private knowledge graph of your own learning</title>
+<meta name="description" content="A free, open-source, local-first tool that turns what you read and write online into a private knowledge graph on your own computer — a searchable record of your self-directed, informal learning.">
+<link rel="stylesheet" href="site.css">
+<link rel="alternate" type="application/rss+xml" title="Coyote — blog" href="feed.xml">
+<link rel="canonical" href="https://captaininfo.github.io/coyote/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Coyote — a private knowledge graph of your own learning">
+<meta property="og:description" content="A free, open-source, local-first tool that turns what you read and write online into a private knowledge graph on your own computer.">
+<meta property="og:url" content="https://captaininfo.github.io/coyote/">
 </head>
 <body>
-  <a class="skip" href="#main">Skip to content</a>
-  <header>
-    <div class="container topbar" role="navigation" aria-label="Primary">
-      <div class="brand"><span class="paw" aria-hidden>🐾</span><span>Coyote</span></div>
-      <nav>
-        <a href="#how">How it works</a>
-        <a href="#privacy">Why privacy</a>
-        <a href="#use-cases">Use cases</a>
-        <a href="#get-involved">Get involved</a>
-      </nav>
-    </div>
-    <div class="container hero">
-      <h1>Put your online data to use. Locally.</h1>
-      <p>Coyote turns your browsing + annotations into a private knowledge graph you control. A dynamic PKM, built for personal data‑driven analysis and to be a 100% private backend for pairing with local LLMs and/or AI agents.</p>
-      <div class="cta" role="group" aria-label="Download Coyote v0.4.0">
-        <a class="btn primary" href="https://github.com/user-attachments/files/23287402/coyote-0.4.0.zip">Download v0.4.0 — Windows (.zip)</a>
-        <a class="btn secondary" href="https://github.com/user-attachments/files/23287403/coyote-0.4.0.tar.gz">Download v0.4.0 — macOS/Linux (.tar.gz)</a>
-      </div>
-    </div>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="horizon" aria-hidden="true">
+  <svg viewBox="0 0 1200 200" preserveAspectRatio="none" role="presentation" focusable="false">
+    <path fill="#1a1810" d="M0,124 L118,110 L186,118 L268,96 L338,106 L430,86 L512,100 L604,90 L700,104 L790,92 L884,102 L978,88 L1066,100 L1140,94 L1200,104 L1200,200 L0,200 Z"/>
+    <path fill="#0a0a0a" d="M0,158 L96,150 L150,152 L212,132 L246,132 L268,150 L352,146 L398,154 L472,140 L540,150 L612,138 L664,148 L742,136 L800,146 L846,128 L880,128 L904,144 L992,140 L1064,150 L1132,142 L1200,152 L1200,200 L0,200 Z"/>
+  </svg>
+</div>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="wordmark">🐾 Coyote</p>
+    <h1>A private knowledge graph of your own learning</h1>
+    <p class="standfirst">A free, open-source, local-first tool that turns what you read and write online into a searchable record of your self-directed, informal learning — on your own computer.</p>
+
+    <nav class="linkrow linkrow--sky" aria-label="Primary">
+      <a class="primary" href="blog/index.html">Read the blog</a>
+      <a href="https://github.com/captaininfo/coyote" target="_blank" rel="noopener">Code on GitHub</a>
+      <a href="https://github.com/captaininfo/coyote#quick-start" target="_blank" rel="noopener">Install guide</a>
+      <a href="feed.xml">RSS</a>
+    </nav>
   </header>
 
-  <main id="main">
-    <section id="how">
-      <div class="container">
-        <h2>How it works</h2>
-        <p class="lede">Three simple steps to turn everyday browsing into a rich, machine‑readable personal knowledge graph.</p>
-        <div class="grid cols-3" style="margin-top:1rem">
-          <article class="card">
-            <h3>1) Capture</h3>
-            <p>Log searches, pages, and annotations automatically via the Coyote browser extension and Hypothes.is integration — with more platforms planned. You stay in control; capture is transparent and local.</p>
-          </article>
-          <article class="card">
-            <h3>2) Understand</h3>
-            <p>Coyote builds a detailed, time‑stamped semantic record structured with <strong>Wikidata‑aligned</strong> entities and relationships. The PKG lives on your device, backed by open‑source <strong>Neo4j</strong>. Coyote never phones home.</p>
-          </article>
-          <article class="card">
-            <h3>3) Research &amp; Model</h3>
-            <p>Query, visualize, and analyze your PKG to model interests and lines of inquiry — or use it as a private backend for <strong>local LLMs</strong> and agent workflows (GraphRAG, RAG, and more).</p>
-          </article>
-        </div>
-      </div>
-    </section>
+  <main id="main" class="sheet">
 
-    <!-- Privacy / urgency section -->
-    <section id="privacy">
-    <div class="container">
-        <h2>The urgency of privacy in the age of AI</h2>
+    <p class="lead">Coyote runs quietly in the background while you browse. It captures what you read, the links you follow, and the passages you annotate, and turns them into a semantic knowledge graph on your own machine — meaning, not just URLs and timestamps. No cloud, no account, no algorithm deciding what matters.</p>
 
-        <p class="lede">
-        You’ll want what AI can do for you—without trading yourself to get it.
-        Coyote’s default is local-first and user-controlled, so capability doesn’t require surrendering your context.
-        </p>
+    <p>Then you can explore that graph visually, or ask questions of it in plain language using a local AI, so the answers draw on your learning history and nothing else.</p>
 
-        <ol class="argument">
-        <li><strong>AI’s upside is real.</strong> You will want the leverage and acceleration it provides.</li>
-        <li><strong>Power flows from personal data.</strong> The more context you give an AI, the better it gets—about you.</li>
-        <li><strong>Ubiquity is coming.</strong> AI will be woven into everyday tools and decisions.</li>
-        <li><strong>The extraction will be deep.</strong> The scope and intimacy of data harvested about your life and mind will be unprecedented.</li>
-        <li><strong>History warns us.</strong> Given past incentives and behavior, we should not expect external platforms to steward this power solely in your interest.
-        </li>
-        </ol>
+    <p>It's built for people who already know they learn seriously outside a classroom — autodidacts, researchers, lifelong and self-directed learners — and want an honest record of it, not the tidy story memory tells afterward.</p>
 
-        <h3>Choose a different path — with Coyote</h3>
-        <div class="grid">
-        <article class="card">
-            <h3>Local by design</h3>
-            <p>Your data is processed and stored on <em>your</em> machine. No accounts. No servers. No telemetry. Coyote never “phones home.”</p>
-        </article>
+    <p class="creed">Coyote furnishes the evidence. You infer the meaning.</p>
 
-        <article class="card">
-            <h3>Transparent &amp; inspectable</h3>
-            <p>Open-source code and a personal knowledge graph you can query and audit. Trust comes from clarity—not black boxes.</p>
-        </article>
+    <p>The record, and every analysis over it, stays deterministic and inspectable — the same page always produces the same result, computed by transparent NLP you can audit. The language model helps you explore and question that record; it never computes or rewrites what actually happened. And it works with whatever local model you run, so nothing here depends on a single vendor.</p>
 
-        <article class="card">
-            <h3>Composable private AI</h3>
-            <p>Pair Coyote with local LLMs and agents to get the benefits of AI that knows you—without the privacy breach.</p>
-        </article>
-        </div>
+    <div class="status-note">
+      <strong>Where things stand.</strong> This is a version 0.5 MVP, built by one person in the open. Capture, the deterministic pipeline, the knowledge graph, visual exploration and GraphRAG chat are running and checkable against the code today. The more ambitious ideas — tracing how your understanding shifts over time, richer graph-based context — are labelled as vision in the repo rather than presented as finished features.
+      <br><br>
+      It asks real friction of you: Docker, a Firefox extension, a multi-gigabyte install. The current release builds its own container images on your machine, which takes 30–40 minutes; <strong>v0.5.2 will ship pre-built images instead</strong>. If you'd rather not babysit a build, watch the repo and you'll see it land.
     </div>
-    </section>
 
-
-    <!-- Use cases: keep existing badges; add descriptive cards for conversion -->
-    <section id="use-cases">
-    <div class="container">
-        <h2>Use cases</h2>
-
-        <div class="badges" aria-label="Example use cases">
-        <span class="badge">Education</span>
-        <span class="badge">PKM</span>
-        <span class="badge">Quantified Self</span>
-        <span class="badge">LLM RAG</span>
-        <span class="badge">Open Recognition</span>
-        <span class="badge">Learning Analytics</span>
-        </div>
-
-        <div class="grid">
-        <article class="card use-case">
-            <h3>Education</h3>
-            <p>Coyote turns students’ open-web reading and Hypothes.is annotations into a private, local knowledge graph for reflective writing, metacognition, and open-pedagogy—without sending data to third parties.</p>
-        </article>
-
-        <article class="card use-case">
-            <h3>PKM</h3>
-            <p>Capture your web research and annotations, enrich with topics/entities, and surface insights in your PKM. Search by semantic “aboutness,” not folders.</p>
-        </article>
-
-        <article class="card use-case">
-            <h3>Quantified Self</h3>
-            <p>A private, local “Fitbit for your mind”—spot patterns in what you read and how they relate to your goals and mood, without platform tracking.</p>
-        </article>
-
-        <article class="card use-case">
-            <h3>LLM RAG</h3>
-            <p>Pair Coyote’s local graph with your local LLM (e.g., Ollama) to run private RAG and agent workflows—no cloud required.</p>
-        </article>
-
-        <article class="card use-case">
-            <h3>Open Recognition</h3>
-            <p>Turn incidental learning into evidence: timestamped events, sources, topics/entities, and summaries you own and can audit—ready to support badges and micro-credentials.</p>
-        </article>
-
-        <article class="card use-case">
-            <h3>Learning Analytics</h3>
-            <p>Personal learning analytics without an LMS—event streams, topics/entities, and queryable graphs on your machine for PD and research. Ethics-first and IRB-friendly by design.</p>
-        </article>
-        </div>
-    </div>
-    </section>
-
-
-    <section id="get-involved">
-      <div class="container">
-        <h2>Get involved</h2>
-        <div class="grid cols-3" style="margin-top:1rem">
-          <a class="card linkcard" href="./good-first-issues.html">
-            <div class="title">Good First Issues <span aria-hidden>→</span></div>
-            <p>Jump in with well‑scoped starter tasks.</p>
-          </a>
-          <a class="card linkcard" href="./roadmap.html">
-            <div class="title">Roadmap <span aria-hidden>→</span></div>
-            <p>Track the MVP and upcoming milestones.</p>
-          </a>
-          <a class="card linkcard" href="mailto:justinmason.mlis@gmail.com?subject=Coyote%20workshops">
-            <div class="title">Workshops <span aria-hidden>→</span></div>
-            <p>Live walkthroughs for setup, GraphRAG, and privacy‑first workflows.</p>
-          </a>
-        </div>
-      </div>
-    </section>
   </main>
 
-  <footer>
-    <div class="container">
-      <small>© <span id="y"></span> Coyote. Code: <a href="https://www.gnu.org/licenses/gpl-3.0.en.html">GPLv3</a> • Docs: <a href="https://creativecommons.org/licenses/by/4.0/">CC‑BY 4.0</a> • <a href="https://github.com/captaininfo/coyote">GitHub</a> • <a href="mailto:justinmason.mlis@gmail.com">Contact</a></small>
-    </div>
+  <footer class="site-foot">
+    <span><a href="blog/index.html">Blog</a></span>
+    <span><a href="feed.xml">RSS</a></span>
+    <span><a href="https://github.com/captaininfo/coyote">GitHub</a></span>
+    <span><a href="https://github.com/captaininfo/coyote/blob/main/CONTRIBUTING.md">Contributing</a></span>
+    <span>GPL-v3 · No trackers, no analytics, no third-party requests</span>
   </footer>
 
-  <script>document.getElementById('y').textContent = new Date().getFullYear()</script>
+</div>
+
 </body>
 </html>
