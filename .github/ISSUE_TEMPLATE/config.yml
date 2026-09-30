@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+
+contact_links:
+  - name: 📓 Good first issues
+    url: https://github.com/captaininfo/coyote/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22
+    about: Scoped, low-context pieces of work that are ready to pick up.
+
+  - name: 🧭 Contributor guide
+    url: https://github.com/captaininfo/coyote/blob/main/CONTRIBUTING.md
+    about: Dev setup, conventions, how to run the tests, and where to start reading.
+
+  - name: 🔭 Where Coyote is headed
+    url: https://github.com/captaininfo/coyote/blob/main/VISION.md
+    about: Which capabilities are real today and which are community work — worth reading before proposing something large.

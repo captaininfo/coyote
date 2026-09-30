@@ -1,0 +1,81 @@
+name: "🐛 Bug report"
+description: "Something isn't working"
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Thanks for helping make Coyote better!
+        Please fill in what you can — required fields are marked **(required)**.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description **(required)**
+      description: Describe the bug — what you expected, and what happened instead.
+      placeholder: |
+        The dashboard says all services are running, but the Visual Explorer
+        shows an empty graph after a day of browsing...
+    validations:
+      required: true
+
+  - type: input
+    id: coyote_version
+    attributes:
+      label: Coyote version **(required)**
+      description: "The release you installed, from the release page or `git describe --tags`."
+      placeholder: "v0.5.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps, starting from a fresh install if you can.
+      placeholder: |
+        1. Unpack the release archive
+        2. Double-click the launcher for my OS
+        3. In the dashboard, click "Start Core Services"
+        4. Browse a few pages, wait ~5 minutes
+        5. Open Explore Visually — graph is empty
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system **(required)**
+      options: ["Linux", "macOS (Apple Silicon)", "macOS (Intel)", "Windows", "Other"]
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      description: "The browser extension is Firefox-only today."
+      options: ["Firefox", "Chrome", "Safari", "Edge", "Other", "Not relevant"]
+
+  - type: input
+    id: docker_version
+    attributes:
+      label: Docker version
+      description: "Run `docker --version` and `docker compose version`."
+      placeholder: "Docker 27.3.1, Compose v2.29.7"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Paste or drag-and-drop whichever is relevant. Both live under your unpacked Coyote folder:
+        - **Core / pipeline:** `compose/volumes/coyote/logs/coyote_server.log`
+        - **Dashboard:** `data/logs/coyote_ui_*.log`
+      placeholder: "Paste the last 50 lines, or attach the file if it's large."
+
+  - type: checkboxes
+    id: willing_to_fix
+    attributes:
+      label: Willing to work on a fix?
+      options:
+        - label: I am willing to submit a PR

@@ -1,0 +1,50 @@
+name: "💡 Feature idea"
+description: "An idea to improve Coyote or its user experience"
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Thanks for helping make Coyote better!
+        Please fill in what you can — required fields are marked **(required)**.
+
+        If you're proposing something large, it's worth skimming
+        [VISION.md](https://github.com/captaininfo/coyote/blob/main/VISION.md)
+        first — it may already be on the map, which saves you writing it out.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description **(required)**
+      description: "What problem would this solve? Describe the idea with as much specific detail as you can."
+      placeholder: |
+        I keep most of my reading notes in Obsidian rather than Hypothes.is, so
+        the output side of my record is nearly empty. A connector that imported
+        a vault would...
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-info
+    attributes:
+      label: Additional info
+      description: "Sketches, mock-ups, links, prior art — anything that helps."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Want to help?
+      options:
+        - label: I would like to help design or build this.
+
+  - type: input
+    id: skills
+    attributes:
+      label: How would you like to help?
+      description: "If you checked the box above — what would you want to take on?"
+      placeholder: "I could mock up the UI, or write the Python side"
+    validations:
+      required: false
