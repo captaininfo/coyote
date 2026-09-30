@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy — Coyote</title>
+<meta name="description" content="What this website does and doesn't do with your data, including the parts that aren't under our control.">
+<link rel="stylesheet" href="site.css">
+<link rel="alternate" type="application/rss+xml" title="Coyote — blog" href="feed.xml">
+<link rel="canonical" href="https://captaininfo.github.io/coyote/privacy.html">
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="horizon" aria-hidden="true">
+  <svg viewBox="0 0 1200 200" preserveAspectRatio="none" role="presentation" focusable="false">
+    <path fill="#1a1810" d="M0,124 L118,110 L186,118 L268,96 L338,106 L430,86 L512,100 L604,90 L700,104 L790,92 L884,102 L978,88 L1066,100 L1140,94 L1200,104 L1200,200 L0,200 Z"/>
+    <path fill="#0a0a0a" d="M0,158 L96,150 L150,152 L212,132 L246,132 L268,150 L352,146 L398,154 L472,140 L540,150 L612,138 L664,148 L742,136 L800,146 L846,128 L880,128 L904,144 L992,140 L1064,150 L1132,142 L1200,152 L1200,200 L0,200 Z"/>
+  </svg>
+</div>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="wordmark"><a href="index.html">🐾 Coyote</a></p>
+    <h1>Privacy</h1>
+    <p class="standfirst">What this website does, what it doesn't, and the part that isn't under my control.</p>
+  </header>
+
+  <main id="main" class="sheet">
+
+    <p class="lead">Coyote is a tool about keeping your own data on your own machine. It would be a poor advertisement for that if its website quietly did the opposite. This page is short because there isn't much to report — but the last section is the one worth reading, because it's the bit I can't promise away.</p>
+
+    <h2>What this site does not do</h2>
+
+    <ul>
+      <li><strong>No analytics.</strong> No Google Analytics, no Plausible, no Fathom, nothing. I have no idea how many people read this and no way to find out.</li>
+      <li><strong>No cookies.</strong> The site sets none at all.</li>
+      <li><strong>Nothing loaded from third parties.</strong> No web fonts, no hosted JavaScript, no embedded videos, no social widgets, no tracking pixels. Every stylesheet and image is served from this site. You can verify it in your browser's network tab in about fifteen seconds, and I'd rather you did than take my word for it.</li>
+      <li><strong>No comment system.</strong> Nothing collects your name, email address, or anything else, because there's no form here to collect it with.</li>
+    </ul>
+
+    <h2>What happens anyway, because of where it's hosted</h2>
+
+    <div class="promise">
+      <span class="promise-title">GitHub logs your IP address when you visit.</span>
+      <p>This site is hosted on GitHub Pages. Like any web host, GitHub's servers receive and log each request: your IP address, the page you asked for, your browser's user-agent string, and the time. GitHub's privacy statement says these logs are kept to maintain the security and integrity of the service, and that they <em>"do not include user tracking or marketing."</em> I have no access to them and cannot turn them off.</p>
+      <p>So "this site collects nothing about you" would be false, and I'm not going to write it. What's true is narrower: <strong>I collect nothing, and the host logs what every host logs.</strong> If that matters for your circumstances, a VPN or Tor addresses it the same way it would for any other website.</p>
+    </div>
+
+    <p>GitHub's own terms are at <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">docs.github.com</a> if you want the primary source rather than my summary of it.</p>
+
+    <h2>If you annotate a post</h2>
+
+    <p>Blog posts here invite annotation through <a href="https://web.hypothes.is/">Hypothes.is</a> instead of a comment box. That choice has a privacy consequence worth being explicit about, in both directions.</p>
+
+    <p><strong>The Hypothes.is client is deliberately not embedded in these pages.</strong> Adding their script would mean every visitor's browser contacted their servers, whether or not they ever annotated anything — which would break the "nothing loaded from third parties" line above for everyone, to provide a feature only a few people want. Instead, annotation runs through your own browser extension or bookmarklet, so Hypothes.is only ever hears from people who actively choose to use it.</p>
+
+    <p>If you do annotate: those annotations live on Hypothes.is's servers under their own privacy policy, not mine, and public annotations are public. I may read them, and I may import them into my own Coyote graph — which is, after all, what Coyote does with annotations. Nothing sneaky there, but worth saying plainly.</p>
+
+    <h2>The software, as opposed to this website</h2>
+
+    <p>Coyote itself is a separate matter and a much longer answer, because it's the whole point of the project. Short version: it runs entirely on your own machine, there are no Coyote servers and no accounts, and the only outbound calls are concept lookups to Wikidata — individual extracted terms, never your pages, URLs, or history — plus Hypothes.is if you connect it.</p>
+
+    <p>The full account, including one honest exception about how the database password is stored, is in the <a href="https://github.com/captaininfo/coyote#privacy--security">Privacy &amp; Security section of the README</a>. If you find something there that doesn't match the code, please <a href="https://github.com/captaininfo/coyote/issues/new/choose">open an issue</a> — that's a bug worth more to me than most.</p>
+
+    <div class="status-note">
+      <strong>Last reviewed:</strong> 30 September 2026. This page describes what the site does today. If it changes — if I ever add analytics, or embed something — this page changes first, and the change will be visible in the repository's commit history like everything else.
+    </div>
+
+  </main>
+
+  <footer class="site-foot">
+    <span><a href="index.html">Coyote</a></span>
+    <span><a href="blog/index.html">Blog</a></span>
+    <span><a href="feed.xml">RSS</a></span>
+    <span><a href="https://github.com/captaininfo/coyote">GitHub</a></span>
+    <span>GPL-v3 · No analytics, no cookies, nothing loaded from third parties · Hosted on GitHub Pages, which logs visitor IPs</span>
+  </footer>
+
+</div>
+
+</body>
+</html>
