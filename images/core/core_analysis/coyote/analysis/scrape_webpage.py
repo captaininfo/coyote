@@ -1,6 +1,8 @@
 # scrape_webpage.py
 
 import logging
+import math
+import os
 from urllib.parse import urlparse
 
 import requests
@@ -25,9 +27,24 @@ _FETCH_HEADERS = {
 # .05 on connect avoids landing on a TCP SYN retry boundary.
 # Read raised 10 -> 30 (2026-07-17): slow-but-healthy hosts were dying at
 # 10s (pressbooks.bccampus.ca serves 200 in ~15.5s); the NLP drain is
-# single-threaded serial, so the worst case is one slow page stalling the
-# queue by 30s, not a concurrency pile-up.
-_FETCH_TIMEOUT = (3.05, 30)
+# single-threaded serial, so slow pages stall the queue rather than creating
+# a concurrency pile-up. The default read timeout remains 30s.
+
+
+def _timeout_from_env(name: str, default: float) -> float:
+    """Read a positive, finite timeout in seconds, falling back on bad input."""
+    try:
+        value = float(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if math.isfinite(value) and value > 0 else default
+
+
+# Deploy-time settings: restart the Core process after changing them.
+_FETCH_TIMEOUT = (
+    _timeout_from_env("COYOTE_FETCH_CONNECT_TIMEOUT", 3.05),
+    _timeout_from_env("COYOTE_FETCH_READ_TIMEOUT", 30),
+)
 
 # Bot/anti-DDoS interstitial detection.
 #
