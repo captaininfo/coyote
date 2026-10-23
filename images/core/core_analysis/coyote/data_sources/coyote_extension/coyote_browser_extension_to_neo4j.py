@@ -8,6 +8,7 @@ import logging
 import json  # Added to perform JSON serialization
 from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
 from shared.embedding_config import EMBEDDING_MODEL_NAME
+from coyote.analysis.serp_detection import is_serp_url
 
 from neo4j import Session, Transaction
 import sqlite3
@@ -294,19 +295,8 @@ def process_coyote_browser_extension_data(
             ]
             entities_json = json.dumps(entities_list)
 
-            # Determine if the webpage is a SERP.
-            #
-            # KNOWN ISSUE — this is NOT a Google dependency, and Coyote does not
-            # expect or prefer that users search with Google. Coyote's data capture
-            # is search-engine-agnostic: pages you visit and links you click are
-            # recorded identically no matter which engine you use (Brave, DuckDuckGo,
-            # Startpage, etc.). This check only *recognizes* a Google results page so
-            # it can be tagged as a search rather than as content. Non-Google results
-            # pages are simply treated as ordinary pages — a data-quality wrinkle, not
-            # a requirement to use Google. Broadening this into a shared
-            # is_serp_url() predicate covering the major engines is on the post-MVP
-            # roadmap (see CLAUDE.md Known Issue: "isSERP detector is Google-only").
-            is_serp = "- Google Search" in title or url.startswith("https://www.google.com/search?")
+            # Use the same deterministic detector as the NLP exemption path.
+            is_serp = is_serp_url(url, title)
 
             logger.info(f"Inserting Webpage with URL: {url} at timestamp: {timestamp}")
             webpage_id = session.execute_write(
